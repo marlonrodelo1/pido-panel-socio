@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
+import { supabase } from '../lib/supabase'
 import { colors, ds, type } from '../lib/uiStyles'
 
 export default function MiMarketplace() {
-  const { socio, updateSocio } = useSocio()
+  const { socio, updateSocio, session } = useSocio()
+  const logoInputRef = useRef(null)
+  const bannerInputRef = useRef(null)
+  const [uploading, setUploading] = useState(null)
   const [form, setForm] = useState({
     nombre_comercial: socio?.nombre_comercial || '',
     descripcion: socio?.descripcion || '',
@@ -32,7 +36,29 @@ export default function MiMarketplace() {
     })
   }, [socio])
 
-  const url = `https://pidoo.es/s/${socio?.slug}`
+  const url = socio?.slug ? `https://pidoo.es/s/${socio.slug}` : null
+
+  const uploadImage = async (file, kind) => {
+    if (!file || !session?.user?.id) return
+    setUploading(kind); setErr(null)
+    try {
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+      const path = `${session.user.id}/${kind}-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('socios-media')
+        .upload(path, file, { cacheControl: '3600', upsert: true, contentType: file.type })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from('socios-media').getPublicUrl(path)
+      const publicUrl = pub.publicUrl
+      setForm(f => ({ ...f, [kind === 'logo' ? 'logo_url' : 'banner_url']: publicUrl }))
+      await updateSocio({ [kind === 'logo' ? 'logo_url' : 'banner_url']: publicUrl })
+      setOk(true); setTimeout(() => setOk(false), 2500)
+    } catch (e) {
+      setErr(`Error subiendo ${kind}: ${e.message}`)
+    } finally {
+      setUploading(null)
+    }
+  }
 
   const save = async () => {
     setSaving(true); setErr(null); setOk(false)
@@ -70,16 +96,20 @@ export default function MiMarketplace() {
       <div style={{ ...ds.card, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase' }}>URL pública</div>
-          <div style={{ fontSize: type.base, fontWeight: 600, color: colors.text }}>{url}</div>
+          <div style={{ fontSize: type.base, fontWeight: 600, color: colors.text }}>
+            {url || <span style={{ color: colors.textMute, fontWeight: 500 }}>Configura tu slug primero en Configuración</span>}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => navigator.clipboard?.writeText(url)} style={ds.secondaryBtn}>Copiar</button>
-          <a href={url} target="_blank" rel="noreferrer" style={{ ...ds.secondaryBtn, textDecoration: 'none' }}>Ver tienda ↗</a>
-          <button onClick={toggleActivo}
-            style={socio?.marketplace_activo ? { ...ds.dangerBtn } : { ...ds.primaryBtn }}>
-            {socio?.marketplace_activo ? 'Desactivar' : 'Activar tienda'}
-          </button>
-        </div>
+        {url && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => navigator.clipboard?.writeText(url)} style={ds.secondaryBtn}>Copiar</button>
+            <a href={url} target="_blank" rel="noreferrer" style={{ ...ds.secondaryBtn, textDecoration: 'none' }}>Ver tienda ↗</a>
+            <button onClick={toggleActivo}
+              style={socio?.marketplace_activo ? { ...ds.dangerBtn } : { ...ds.primaryBtn }}>
+              {socio?.marketplace_activo ? 'Desactivar' : 'Activar tienda'}
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ ...ds.card, marginBottom: 16 }}>
@@ -95,12 +125,34 @@ export default function MiMarketplace() {
               style={{ ...ds.input, padding: 4, cursor: 'pointer' }} />
           </div>
           <div>
-            <label style={ds.label}>Logo URL</label>
-            <input value={form.logo_url} onChange={e => setForm({ ...form, logo_url: e.target.value })} placeholder="https://…" style={ds.input} />
+            <label style={ds.label}>Logo</label>
+            <input ref={logoInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+              onChange={e => uploadImage(e.target.files?.[0], 'logo')} />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              {form.logo_url ? (
+                <img src={form.logo_url} alt="logo" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', border: `1px solid ${colors.border}` }} />
+              ) : (
+                <div style={{ width: 52, height: 52, borderRadius: 12, background: colors.surfaceMute, border: `1px dashed ${colors.border}`, display: 'grid', placeItems: 'center', color: colors.textMute, fontSize: 10 }}>Sin logo</div>
+              )}
+              <button type="button" onClick={() => logoInputRef.current?.click()} disabled={uploading === 'logo'} style={{ ...ds.secondaryBtn, opacity: uploading === 'logo' ? 0.6 : 1 }}>
+                {uploading === 'logo' ? 'Subiendo…' : (form.logo_url ? 'Cambiar logo' : 'Subir logo')}
+              </button>
+            </div>
           </div>
           <div>
-            <label style={ds.label}>Portada URL</label>
-            <input value={form.banner_url} onChange={e => setForm({ ...form, banner_url: e.target.value })} placeholder="https://…" style={ds.input} />
+            <label style={ds.label}>Portada</label>
+            <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+              onChange={e => uploadImage(e.target.files?.[0], 'banner')} />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              {form.banner_url ? (
+                <img src={form.banner_url} alt="portada" style={{ width: 90, height: 52, borderRadius: 10, objectFit: 'cover', border: `1px solid ${colors.border}` }} />
+              ) : (
+                <div style={{ width: 90, height: 52, borderRadius: 10, background: colors.surfaceMute, border: `1px dashed ${colors.border}`, display: 'grid', placeItems: 'center', color: colors.textMute, fontSize: 10 }}>Sin portada</div>
+              )}
+              <button type="button" onClick={() => bannerInputRef.current?.click()} disabled={uploading === 'banner'} style={{ ...ds.secondaryBtn, opacity: uploading === 'banner' ? 0.6 : 1 }}>
+                {uploading === 'banner' ? 'Subiendo…' : (form.banner_url ? 'Cambiar portada' : 'Subir portada')}
+              </button>
+            </div>
           </div>
         </div>
         <div style={{ marginTop: 14 }}>
