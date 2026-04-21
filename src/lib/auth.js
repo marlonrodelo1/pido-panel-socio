@@ -34,13 +34,16 @@ export async function loginGoogle() {
   }
   return supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.origin },
+    options: {
+      redirectTo: `${window.location.origin}/`,
+      queryParams: { access_type: 'offline', prompt: 'consent' },
+    },
   })
 }
 
 export async function resetPassword(email) {
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-    redirectTo: 'https://socios.pidoo.es/reset-password',
+    redirectTo: `${window.location.origin}/reset-password`,
   })
   if (error) throw error
 }
