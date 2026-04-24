@@ -12,8 +12,7 @@ function slugify(s) {
 const STEPS = [
   { id: 1, label: 'Datos' },
   { id: 2, label: 'Marketplace' },
-  { id: 3, label: 'Repartidor' },
-  { id: 4, label: 'Redes' },
+  { id: 3, label: 'Redes' },
 ]
 
 function Stepper({ current }) {
@@ -48,7 +47,7 @@ function Stepper({ current }) {
 }
 
 export default function Onboarding() {
-  const { user, refreshSocio } = useSocio()
+  const { user, refreshSocio, logout } = useSocio()
   const [step, setStep] = useState(1)
   const logoInputRef = useRef(null)
   const bannerInputRef = useRef(null)
@@ -64,9 +63,7 @@ export default function Onboarding() {
     logo_url: '',
     banner_url: '',
     color_primario: '#FF6B2C',
-    // Paso 3
-    shipday_api_key: '',
-    // Paso 4
+    // Paso 3 (todo opcional salvo términos)
     instagram: '',
     tiktok: '',
     web: '',
@@ -74,20 +71,17 @@ export default function Onboarding() {
   })
 
   const [slugCheck, setSlugCheck] = useState({ state: 'idle', disponible: null, error: null })
-  const [shipdayCheck, setShipdayCheck] = useState({ state: 'idle', valid: null, carrier_name: null, error: null })
   const [uploading, setUploading] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [showCancel, setShowCancel] = useState(false)
   const debSlugRef = useRef(null)
-  const debShipdayRef = useRef(null)
 
-  // Autosuggest slug desde nombre_comercial si slug está vacío
   useEffect(() => {
     if (!form.nombre_comercial) return
     setForm(f => f.slug ? f : { ...f, slug: slugify(f.nombre_comercial) })
   }, [form.nombre_comercial])
 
-  // Debounce slug check
   useEffect(() => {
     if (!form.slug || form.slug.length < 3) { setSlugCheck({ state: 'idle', disponible: null }); return }
     clearTimeout(debSlugRef.current)
@@ -111,32 +105,6 @@ export default function Onboarding() {
     }, 500)
     return () => clearTimeout(debSlugRef.current)
   }, [form.slug])
-
-  // Debounce shipday key check
-  useEffect(() => {
-    const key = (form.shipday_api_key || '').trim()
-    if (!key || key.length < 8) { setShipdayCheck({ state: 'idle', valid: null }); return }
-    clearTimeout(debShipdayRef.current)
-    setShipdayCheck({ state: 'checking', valid: null })
-    debShipdayRef.current = setTimeout(async () => {
-      try {
-        const r = await fetch(`${FUNCTIONS_URL}/validar-shipday-key`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shipday_api_key: key }),
-        })
-        const data = await r.json()
-        if (data.valid) {
-          setShipdayCheck({ state: 'ready', valid: true, carrier_name: data.carrier_name || null })
-        } else {
-          setShipdayCheck({ state: 'ready', valid: false, error: data.error || 'API key no válida' })
-        }
-      } catch (e) {
-        setShipdayCheck({ state: 'error', valid: false, error: e.message })
-      }
-    }, 800)
-    return () => clearTimeout(debShipdayRef.current)
-  }, [form.shipday_api_key])
 
   const uploadImage = async (file, kind) => {
     if (!file || !user?.id) return
@@ -167,8 +135,7 @@ export default function Onboarding() {
         && slugCheck.disponible !== false
         && slugCheck.state !== 'checking'
     }
-    if (step === 3) return shipdayCheck.valid === true
-    if (step === 4) return !!form.acepta_terminos
+    if (step === 3) return !!form.acepta_terminos
     return false
   }
 
@@ -200,7 +167,6 @@ export default function Onboarding() {
         logo_url: form.logo_url || null,
         banner_url: form.banner_url || null,
         color_primario: form.color_primario || '#FF6B2C',
-        shipday_api_key: form.shipday_api_key || null,
         redes: {
           instagram: form.instagram || null,
           tiktok: form.tiktok || null,
@@ -221,6 +187,22 @@ export default function Onboarding() {
     } finally { setSaving(false) }
   }
 
+  const saltarYFinalizar = async () => {
+    if (!form.acepta_terminos) {
+      setError('Debes aceptar los términos para poder registrarte.')
+      return
+    }
+    await submit()
+  }
+
+  const cancelar = async () => {
+    try {
+      await logout?.()
+    } catch {
+      await supabase.auth.signOut()
+    }
+  }
+
   const slugHint = () => {
     if (!form.slug) return null
     if (form.slug.length < 3) return { color: colors.textMute, msg: 'Mínimo 3 caracteres' }
@@ -232,24 +214,21 @@ export default function Onboarding() {
   }
   const hint = slugHint()
 
-  const shipdayHint = () => {
-    const key = (form.shipday_api_key || '').trim()
-    if (!key) return null
-    if (key.length < 8) return { color: colors.textMute, msg: 'Pega tu API key de Shipday' }
-    if (shipdayCheck.state === 'checking') return { color: colors.textMute, msg: 'Validando con Shipday…' }
-    if (shipdayCheck.state === 'ready' && shipdayCheck.valid) {
-      return { color: colors.stateOk, msg: `✅ Conectado con Shipday${shipdayCheck.carrier_name ? ` · Carrier: ${shipdayCheck.carrier_name}` : ''}` }
-    }
-    if (shipdayCheck.state === 'ready' && shipdayCheck.valid === false) {
-      return { color: colors.danger, msg: shipdayCheck.error || '❌ API key no válida' }
-    }
-    if (shipdayCheck.state === 'error') return { color: colors.danger, msg: shipdayCheck.error }
-    return null
-  }
-  const shHint = shipdayHint()
-
   return (
-    <div style={{ minHeight: '100vh', background: colors.bg, padding: '32px 16px' }}>
+    <div style={{ minHeight: '100vh', background: colors.bg, padding: '32px 16px', position: 'relative' }}>
+      {/* Botón cancelar arriba derecha */}
+      <button
+        onClick={() => setShowCancel(true)}
+        style={{
+          position: 'absolute', top: 16, right: 16,
+          background: 'transparent', border: `1px solid ${colors.border}`,
+          color: colors.textMute, fontSize: 12, fontWeight: 600,
+          padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        Cancelar
+      </button>
+
       <div style={{ maxWidth: 620, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 22 }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: colors.primary, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Bienvenido a Pidoo Socios</div>
@@ -368,37 +347,9 @@ export default function Onboarding() {
 
           {step === 3 && (
             <>
-              <h2 style={ds.h2}>Tu repartidor (Shipday)</h2>
-              <p style={{ color: colors.textMute, fontSize: type.xs, marginTop: -6, marginBottom: 16 }}>
-                Conectamos tu marketplace con tu cuenta Shipday. Puedes encontrar la API key en tu panel de Shipday → Settings → API.
-              </p>
-              <div style={{ marginBottom: 14 }}>
-                <label style={ds.label}>Shipday API Key *</label>
-                <input
-                  value={form.shipday_api_key}
-                  onChange={e => setForm({ ...form, shipday_api_key: e.target.value })}
-                  placeholder="xXxXxXxXxXx…"
-                  style={ds.input}
-                  autoComplete="off"
-                />
-                {shHint && (
-                  <div style={{
-                    marginTop: 8, padding: '8px 10px', borderRadius: 8,
-                    background: shipdayCheck.valid === true ? colors.stateOkSoft :
-                                shipdayCheck.valid === false ? colors.dangerSoft : colors.surface2,
-                    border: `1px solid ${shHint.color}`,
-                    fontSize: type.xs, color: shHint.color, fontWeight: 600,
-                  }}>{shHint.msg}</div>
-                )}
-              </div>
-            </>
-          )}
-
-          {step === 4 && (
-            <>
               <h2 style={ds.h2}>Redes y términos</h2>
               <p style={{ color: colors.textMute, fontSize: type.xs, marginTop: -6, marginBottom: 16 }}>
-                Último paso: añade tus redes y acepta los términos.
+                Las redes son opcionales. Puedes completarlas ahora o dejarlas para después desde tu panel.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
                 <div>
@@ -432,7 +383,7 @@ export default function Onboarding() {
                   style={{ marginTop: 2, cursor: 'pointer' }}
                 />
                 <span style={{ fontSize: type.xs, color: colors.text, lineHeight: 1.5 }}>
-                  Acepto los <a href="https://pidoo.es/terminos" target="_blank" rel="noreferrer" style={{ color: colors.primary, fontWeight: 600 }}>términos</a> y la <a href="https://pidoo.es/privacidad" target="_blank" rel="noreferrer" style={{ color: colors.primary, fontWeight: 600 }}>política de Pidoo</a> para socios.
+                  Acepto los <a href="https://pidoo.es/terminos" target="_blank" rel="noreferrer" style={{ color: colors.primary, fontWeight: 600 }}>términos</a> y la <a href="https://pidoo.es/privacidad" target="_blank" rel="noreferrer" style={{ color: colors.primary, fontWeight: 600 }}>política de Pidoo</a> para socios. *
                 </span>
               </label>
             </>
@@ -447,7 +398,7 @@ export default function Onboarding() {
           )}
 
           {/* Botones navegación */}
-          <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
+          <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
             {step > 1 && (
               <button
                 onClick={() => setStep(s => Math.max(1, s - 1))}
@@ -457,9 +408,9 @@ export default function Onboarding() {
                 Atrás
               </button>
             )}
-            {step < 4 && (
+            {step < 3 && (
               <button
-                onClick={() => setStep(s => Math.min(4, s + 1))}
+                onClick={() => setStep(s => Math.min(3, s + 1))}
                 disabled={!canNext()}
                 style={{
                   ...ds.primaryBtn, flex: 1, height: 44,
@@ -469,21 +420,53 @@ export default function Onboarding() {
                 Siguiente →
               </button>
             )}
-            {step === 4 && (
+            {step === 3 && (
               <button
-                onClick={submit}
-                disabled={saving || !canNext()}
+                onClick={saltarYFinalizar}
+                disabled={saving || !form.acepta_terminos}
                 style={{
                   ...ds.primaryBtn, flex: 1, height: 44,
-                  opacity: (saving || !canNext()) ? 0.6 : 1,
+                  opacity: (saving || !form.acepta_terminos) ? 0.6 : 1,
                 }}
               >
-                {saving ? 'Creando tu marketplace…' : '✓ Finalizar'}
+                {saving ? 'Creando tu marketplace…' : '✓ Finalizar registro'}
               </button>
             )}
           </div>
+
+          {step === 3 && (
+            <p style={{ fontSize: type.xxs, color: colors.textMute, textAlign: 'center', marginTop: 12 }}>
+              Puedes dejar las redes vacías y completarlas después desde tu panel.
+            </p>
+          )}
         </div>
       </div>
+
+      {showCancel && (
+        <div onClick={() => setShowCancel(false)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: colors.surface, borderRadius: 16, padding: 24, maxWidth: 380, width: '100%',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.22)',
+          }}>
+            <h3 style={{ ...ds.h2, marginBottom: 8 }}>¿Cancelar el registro?</h3>
+            <p style={{ fontSize: type.sm, color: colors.textMute, lineHeight: 1.55, marginTop: 0, marginBottom: 18 }}>
+              Se cerrará tu sesión y volverás a la página principal. Tu cuenta no se creará todavía;
+              podrás registrarte de nuevo cuando quieras.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowCancel(false)} style={ds.secondaryBtn}>
+                Seguir con el registro
+              </button>
+              <button onClick={cancelar} style={ds.dangerBtn}>
+                Cancelar y salir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
