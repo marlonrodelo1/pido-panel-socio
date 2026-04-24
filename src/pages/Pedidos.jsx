@@ -67,7 +67,7 @@ export default function Pedidos() {
       setLoading(true)
       let q = supabase
         .from('pedidos')
-        .select('id, codigo, estado, metodo_pago, total, comision_generada, created_at, establecimiento:establecimientos(nombre)')
+        .select('id, codigo, estado, metodo_pago, total, created_at, establecimiento:establecimientos(nombre), rider_earnings(neto_rider, coste_envio, propina, comision_rider_sobre_subtotal)')
         .eq('socio_id', socio.id)
         .order('created_at', { ascending: false })
         .limit(200)
@@ -76,7 +76,18 @@ export default function Pedidos() {
       if (estado !== 'todos') q = q.eq('estado', estado)
       if (pago !== 'todos') q = q.eq('metodo_pago', pago)
       const { data } = await q
-      setPedidos(data || [])
+      // Normalizar: rider_earnings viene como array — aplanar a comision_generada (neto_rider)
+      const pedidosNorm = (data || []).map(p => {
+        const re = Array.isArray(p.rider_earnings) ? p.rider_earnings[0] : p.rider_earnings
+        return {
+          ...p,
+          comision_generada: re?.neto_rider ?? 0,
+          _re_envio: re?.coste_envio ?? 0,
+          _re_propina: re?.propina ?? 0,
+          _re_comision: re?.comision_rider_sobre_subtotal ?? 0,
+        }
+      })
+      setPedidos(pedidosNorm)
       setLoading(false)
     })()
   }, [socio, rango, estado, pago])

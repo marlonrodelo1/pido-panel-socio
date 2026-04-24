@@ -8,6 +8,9 @@ export default function MiMarketplace() {
   const logoInputRef = useRef(null)
   const bannerInputRef = useRef(null)
   const [uploading, setUploading] = useState(null)
+  const [restaurantes, setRestaurantes] = useState([])
+  const [loadingRest, setLoadingRest] = useState(false)
+  const [urlCopied, setUrlCopied] = useState(false)
   const [form, setForm] = useState({
     nombre_comercial: socio?.nombre_comercial || '',
     descripcion: socio?.descripcion || '',
@@ -37,6 +40,65 @@ export default function MiMarketplace() {
   }, [socio])
 
   const url = socio?.slug ? `https://pidoo.es/s/${socio.slug}` : null
+  const qrUrl = url
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&data=${encodeURIComponent(url)}`
+    : null
+  const qrDownloadUrl = url
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=1024x1024&margin=20&format=png&data=${encodeURIComponent(url)}`
+    : null
+
+  const loadRestaurantes = async () => {
+    if (!socio?.id) return
+    setLoadingRest(true)
+    try {
+      const { data } = await supabase
+        .from('socio_establecimiento')
+        .select('id, destacado, orden_destacado, establecimiento:establecimientos(id, nombre, logo_url, activo)')
+        .eq('socio_id', socio.id)
+        .eq('estado', 'activa')
+        .order('orden_destacado', { ascending: true, nullsFirst: false })
+      setRestaurantes(data || [])
+    } catch (e) { console.error(e) }
+    setLoadingRest(false)
+  }
+
+  useEffect(() => { loadRestaurantes() }, [socio?.id])
+
+  const toggleDestacado = async (link) => {
+    const siguiente = !link.destacado
+    let orden = link.orden_destacado
+    if (siguiente && (orden == null || orden < 0)) {
+      const maxOrden = restaurantes
+        .filter(r => r.destacado)
+        .reduce((m, r) => Math.max(m, r.orden_destacado ?? 0), 0)
+      orden = maxOrden + 1
+    }
+    const { error } = await supabase
+      .from('socio_establecimiento')
+      .update({ destacado: siguiente, orden_destacado: orden })
+      .eq('id', link.id)
+    if (error) { alert(error.message); return }
+    await loadRestaurantes()
+  }
+
+  const moverOrden = async (link, delta) => {
+    const destacados = restaurantes.filter(r => r.destacado)
+      .sort((a, b) => (a.orden_destacado ?? 0) - (b.orden_destacado ?? 0))
+    const idx = destacados.findIndex(r => r.id === link.id)
+    const nuevoIdx = idx + delta
+    if (idx < 0 || nuevoIdx < 0 || nuevoIdx >= destacados.length) return
+    const otro = destacados[nuevoIdx]
+    const ordenA = link.orden_destacado ?? idx + 1
+    const ordenB = otro.orden_destacado ?? nuevoIdx + 1
+    await supabase.from('socio_establecimiento').update({ orden_destacado: ordenB }).eq('id', link.id)
+    await supabase.from('socio_establecimiento').update({ orden_destacado: ordenA }).eq('id', otro.id)
+    await loadRestaurantes()
+  }
+
+  const copyUrl = async () => {
+    if (!url) return
+    try { await navigator.clipboard.writeText(url); setUrlCopied(true); setTimeout(() => setUrlCopied(false), 1800) } catch {}
+  }
 
   const uploadImage = async (file, kind) => {
     if (!file || !session?.user?.id) return
@@ -178,6 +240,95 @@ export default function MiMarketplace() {
             <input value={form.web} onChange={e => setForm({ ...form, web: e.target.value })} placeholder="https://…" style={ds.input} />
           </div>
         </div>
+      </div>
+
+      {url && (
+        <div style={{ ...ds.card, marginBottom: 16 }}>
+          <h2 style={ds.h2}>Compartir tu tienda</h2>
+          <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 0, marginBottom: 14 }}>
+            Descarga el QR e imprime carteles o compártelo en redes. Cuando alguien lo escanee, entra directo a tu marketplace.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '170px 1fr', gap: 18, alignItems: 'center' }}>
+            <div style={{ width: 170, height: 170, background: '#fff', borderRadius: 14, padding: 10, border: `1px solid ${colors.border}` }}>
+              {qrUrl && <img src={qrUrl} alt="QR tienda" style={{ width: '100%', height: '100%', display: 'block' }} />}
+            </div>
+            <div>
+              <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>Tu URL</div>
+              <div style={{ fontSize: type.sm, color: colors.text, fontWeight: 600, marginBottom: 10, wordBreak: 'break-all' }}>{url}</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={copyUrl} style={ds.secondaryBtn}>
+                  {urlCopied ? 'Copiado ✓' : 'Copiar URL'}
+                </button>
+                <a href={qrDownloadUrl} download={`pidoo-${socio?.slug || 'tienda'}-qr.png`}
+                   target="_blank" rel="noreferrer"
+                   style={{ ...ds.secondaryBtn, textDecoration: 'none' }}>
+                  Descargar QR
+                </a>
+                <a href={url} target="_blank" rel="noreferrer"
+                   style={{ ...ds.primaryBtn, textDecoration: 'none' }}>
+                  Abrir tienda ↗
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ ...ds.card, marginBottom: 16 }}>
+        <h2 style={ds.h2}>Restaurantes destacados</h2>
+        <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 0, marginBottom: 14 }}>
+          Los restaurantes destacados aparecen primero en tu marketplace. Usa las flechas para reordenarlos.
+        </p>
+        {loadingRest ? (
+          <div style={{ color: colors.textMute, fontSize: type.sm }}>Cargando…</div>
+        ) : restaurantes.length === 0 ? (
+          <div style={{ fontSize: type.sm, color: colors.textMute }}>
+            Aún no tienes restaurantes activos. Ve a “Restaurantes” para vincular alguno.
+          </div>
+        ) : (
+          <div>
+            {restaurantes.map((link, idx) => {
+              const e = link.establecimiento || {}
+              const destacados = restaurantes.filter(r => r.destacado)
+                .sort((a, b) => (a.orden_destacado ?? 0) - (b.orden_destacado ?? 0))
+              const dIdx = destacados.findIndex(r => r.id === link.id)
+              return (
+                <div key={link.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
+                  borderTop: idx === 0 ? 'none' : `1px solid ${colors.border}`,
+                }}>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: 8, flexShrink: 0,
+                    background: e.logo_url ? `url(${e.logo_url}) center/cover` : colors.surface2,
+                    border: `1px solid ${colors.border}`,
+                  }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: type.sm, color: colors.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.nombre || '—'}
+                    </div>
+                    {link.destacado && (
+                      <div style={{ fontSize: type.xxs, color: colors.textMute }}>
+                        Destacado · posición {dIdx + 1}
+                      </div>
+                    )}
+                  </div>
+                  {link.destacado && (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button onClick={() => moverOrden(link, -1)} disabled={dIdx <= 0}
+                        style={{ ...ds.secondaryBtn, width: 32, height: 32, padding: 0, opacity: dIdx <= 0 ? 0.4 : 1 }} aria-label="Subir">↑</button>
+                      <button onClick={() => moverOrden(link, 1)} disabled={dIdx >= destacados.length - 1}
+                        style={{ ...ds.secondaryBtn, width: 32, height: 32, padding: 0, opacity: dIdx >= destacados.length - 1 ? 0.4 : 1 }} aria-label="Bajar">↓</button>
+                    </div>
+                  )}
+                  <button onClick={() => toggleDestacado(link)}
+                    style={link.destacado ? ds.primaryBtn : ds.secondaryBtn}>
+                    {link.destacado ? '★ Destacado' : '☆ Destacar'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {err && <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: type.xs }}>{err}</div>}
