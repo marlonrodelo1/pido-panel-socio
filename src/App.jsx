@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SocioProvider, useSocio } from './context/SocioContext'
 import Login from './pages/Login'
+import Landing from './pages/Landing'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
 import MiMarketplace from './pages/MiMarketplace'
@@ -16,6 +17,33 @@ import { colors } from './lib/uiStyles'
 function Shell() {
   const { session, socio, loading } = useSocio()
   const [section, setSection] = useState('dashboard')
+  const [vistaPublica, setVistaPublica] = useState(
+    typeof window !== 'undefined' && window.location.pathname.startsWith('/login')
+      ? 'login'
+      : 'landing'
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onPop = () => {
+      setVistaPublica(window.location.pathname.startsWith('/login') ? 'login' : 'landing')
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  const irALogin = () => {
+    setVistaPublica('login')
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.history.pushState({}, '', '/login')
+    }
+  }
+  const irALanding = () => {
+    setVistaPublica('landing')
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.pushState({}, '', '/')
+    }
+  }
 
   if (loading) {
     return (
@@ -28,7 +56,10 @@ function Shell() {
     )
   }
 
-  if (!session) return <Login />
+  if (!session) {
+    if (vistaPublica === 'login') return <Login onBack={irALanding} />
+    return <Landing onLogin={irALogin} />
+  }
   if (!socio) return <Onboarding />
 
   const page = {

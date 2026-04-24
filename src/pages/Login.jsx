@@ -35,7 +35,7 @@ function Field({ label, ...props }) {
   )
 }
 
-export default function Login() {
+export default function Login({ onBack }) {
   const { authError, setAuthError } = useSocio()
   const [modo, setModo] = useState('login')
   const [loading, setLoading] = useState(false)
@@ -74,8 +74,17 @@ export default function Login() {
     <div style={{
       minHeight: '100vh', background: 'var(--c-bg)',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', padding: '32px 20px',
+      justifyContent: 'center', padding: '32px 20px', position: 'relative',
     }}>
+      {onBack && (
+        <button onClick={onBack} style={{
+          position: 'absolute', top: 18, left: 18,
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--c-muted)', fontSize: 13, fontWeight: 600,
+          padding: '8px 12px', borderRadius: 8, fontFamily: 'inherit',
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+        }}>← Volver</button>
+      )}
       <div style={{ width: '100%', maxWidth: 380 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{
