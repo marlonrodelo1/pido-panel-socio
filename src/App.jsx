@@ -8,6 +8,7 @@ import MiMarketplace from './pages/MiMarketplace'
 import Restaurantes from './pages/Restaurantes'
 import Pedidos from './pages/Pedidos'
 import Facturas from './pages/Facturas'
+import Servicios from './pages/Servicios'
 import Configuracion from './pages/Configuracion'
 import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
@@ -68,6 +69,7 @@ function Shell() {
     restaurantes:  <Restaurantes />,
     pedidos:       <Pedidos />,
     facturas:      <Facturas />,
+    servicios:     <Servicios />,
     configuracion: <Configuracion />,
     soporte:       <Soporte />,
   }[section] || <Dashboard setSection={setSection} />
