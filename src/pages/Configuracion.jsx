@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { colors, ds, type } from '../lib/uiStyles'
+import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 
 export default function Configuracion() {
   const { socio, updateSocio, logout } = useSocio()
@@ -166,6 +167,8 @@ export default function Configuracion() {
         </div>
       </div>
 
+      <FacturacionPidooCard socio={socio} />
+
       <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Integración Shipday (rider)</h2>
         <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 10 }}>
@@ -188,3 +191,144 @@ export default function Configuracion() {
     </div>
   )
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Mi facturación Pidoo — plan multi-rider 39€/mes
+// ──────────────────────────────────────────────────────────────────────────────
+function FacturacionPidooCard({ socio }) {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  if (!socio) return null
+
+  const n = socio.n_riders_actual ?? 1
+  const activa = !!socio.facturacion_multirider_activa
+  const estado = socio.multirider_estado || 'al_dia'
+  const proximoPago = socio.multirider_proximo_pago
+
+  const fmtFecha = (iso) => {
+    if (!iso) return '—'
+    try { return new Date(iso).toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' }) }
+    catch { return '—' }
+  }
+
+  const pagarAhora = async () => {
+    setBusy(true); setMsg(null)
+    try {
+      // Reusa la función gestionar — devolverá client_secret para confirmar
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch(`${FUNCTIONS_URL}/gestionar-facturacion-socio-multirider`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ socio_id: socio.id, accion: 'crear' }),
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Error')
+      if (j.client_secret) {
+        setMsg('Para regularizar el pago, contacta a soporte (próximamente: Stripe Checkout integrado).')
+      } else {
+        setMsg('Suscripción reactivada.')
+      }
+    } catch (e) {
+      setMsg(e.message || 'Error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Estado: impago — banner rojo
+  if (activa && estado === 'impago') {
+    return (
+      <div style={{
+        ...ds.card,
+        marginBottom: 16,
+        background: colors.dangerSoft || 'rgba(220,38,38,0.08)',
+        borderColor: colors.danger || '#dc2626',
+        borderWidth: 2,
+        borderStyle: 'solid',
+      }}>
+        <h2 style={{ ...ds.h2, color: colors.danger || '#dc2626' }}>
+          ⚠️ Suscripción multi-rider impagada
+        </h2>
+        <p style={{ fontSize: type.sm, color: colors.text, lineHeight: 1.5, marginBottom: 12 }}>
+          No hemos podido cobrar tu plan multi-rider de <strong>39 €/mes</strong>.
+          Tu marketplace público está <strong>desactivado</strong> y no recibirás pedidos hasta que regularices el pago.
+        </p>
+        <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 12 }}>
+          Tienes {n} rider{n === 1 ? '' : 's'} activo{n === 1 ? '' : 's'} en tu cuenta Shipday.
+        </p>
+        <button
+          onClick={pagarAhora}
+          disabled={busy}
+          style={{
+            ...ds.primaryBtn,
+            background: colors.danger || '#dc2626',
+            borderColor: colors.danger || '#dc2626',
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy ? 'Procesando…' : 'Pagar ahora'}
+        </button>
+        {msg && <div style={{ fontSize: type.xs, color: colors.textDim, marginTop: 10 }}>{msg}</div>}
+      </div>
+    )
+  }
+
+  // Estado: 1 rider — informativo
+  if (n <= 1 && !activa) {
+    return (
+      <div style={{ ...ds.card, marginBottom: 16 }}>
+        <h2 style={ds.h2}>Mi facturación Pidoo</h2>
+        <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5 }}>
+          Ahora tienes <strong style={{ color: colors.text }}>1 rider</strong> en tu cuenta Shipday → no pagas plan multi-rider a Pidoo.
+        </p>
+        <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 8 }}>
+          Si añades 2 o más riders en Shipday, se aplicará automáticamente el plan multi-rider de <strong>39 €/mes</strong>.
+        </p>
+      </div>
+    )
+  }
+
+  // Estado: 2+ riders, al día
+  if (activa && (estado === 'al_dia' || estado === 'reintento1' || estado === 'reintento2')) {
+    return (
+      <div style={{ ...ds.card, marginBottom: 16 }}>
+        <h2 style={ds.h2}>Mi facturación Pidoo</h2>
+        <p style={{ fontSize: type.sm, color: colors.text, lineHeight: 1.5 }}>
+          Estás pagando <strong>39 €/mes</strong> por el plan multi-rider ({n} rider{n === 1 ? '' : 's'} en Shipday).
+        </p>
+        <div style={{
+          marginTop: 10, padding: '10px 12px',
+          background: colors.elev2 || colors.surfaceHover || 'rgba(0,0,0,0.04)',
+          borderRadius: 8, fontSize: type.xs, color: colors.textDim,
+        }}>
+          Próximo cargo: <strong style={{ color: colors.text }}>{fmtFecha(proximoPago)}</strong>
+        </div>
+        {(estado === 'reintento1' || estado === 'reintento2') && (
+          <p style={{ fontSize: type.xs, color: '#ea580c', marginTop: 8 }}>
+            ⚠️ Stripe está reintentando el cobro (intento {estado === 'reintento2' ? '2' : '1'} de 3). Verifica tu método de pago.
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // Estado: 2+ riders pero aún no activa (debería sincronizarse pronto)
+  if (n >= 2 && !activa) {
+    return (
+      <div style={{ ...ds.card, marginBottom: 16 }}>
+        <h2 style={ds.h2}>Mi facturación Pidoo</h2>
+        <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5 }}>
+          Tienes <strong style={{ color: colors.text }}>{n} riders</strong> en Shipday. El plan multi-rider de <strong>39 €/mes</strong> se activará en las próximas horas tras la sincronización automática.
+        </p>
+      </div>
+    )
+  }
+
+  return null
+}
+
