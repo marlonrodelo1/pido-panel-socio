@@ -35,6 +35,21 @@ export default function Restaurantes() {
 
   useEffect(() => { load() }, [socio])
 
+  // Realtime: si el superadmin (o el restaurante) cambia el estado de la
+  // vinculación, refrescamos sin necesidad de F5. Filtra por socio_id para
+  // no recibir cambios ajenos.
+  useEffect(() => {
+    if (!socio?.id) return
+    const channel = supabase
+      .channel(`socio-vinc-${socio.id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'socio_establecimiento',
+        filter: `socio_id=eq.${socio.id}`,
+      }, () => load())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [socio?.id])
+
   const solicitar = async (establecimiento_id) => {
     setEnviando(establecimiento_id)
     try {

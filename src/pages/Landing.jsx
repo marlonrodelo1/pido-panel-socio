@@ -63,12 +63,13 @@ const pasos = [
 
 function Logo({ size = 34 }) {
   return (
-    <div style={{
-      width: size, height: size, borderRadius: 10,
-      background: colors.primary, display: 'grid', placeItems: 'center',
-      color: '#fff', fontSize: size * 0.5, fontWeight: 800, fontFamily: FONT,
-      letterSpacing: '-0.02em',
-    }}>p</div>
+    <img
+      src="/favicon.svg"
+      alt="Pidoo"
+      width={size}
+      height={size}
+      style={{ display: 'block', borderRadius: size * 0.22 }}
+    />
   )
 }
 

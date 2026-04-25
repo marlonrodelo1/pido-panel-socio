@@ -87,13 +87,18 @@ export default function Login({ onBack }) {
       )}
       <div style={{ width: '100%', maxWidth: 380 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{
-            width: 60, height: 60, borderRadius: 16,
-            background: 'linear-gradient(135deg, #FF6B2C 0%, #E85A1F 100%)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 16px', boxShadow: '0 8px 24px rgba(255,107,44,0.30)',
-            color: '#fff', fontSize: 28, fontWeight: 800,
-          }}>S</div>
+          <img
+            src="/favicon.svg"
+            alt="Pidoo"
+            width={88}
+            height={88}
+            style={{
+              display: 'block',
+              margin: '0 auto 16px',
+              borderRadius: 22,
+              boxShadow: '0 8px 24px rgba(255,107,44,0.30)',
+            }}
+          />
           <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--c-text)', letterSpacing: '-0.02em' }}>PIDOO</div>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--c-muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Panel Socios</div>
         </div>
