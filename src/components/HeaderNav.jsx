@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { colors, type } from '../lib/uiStyles'
+import SocioAvatar from './SocioAvatar'
 
 const NAV = [
   { id: 'dashboard',     label: 'Dashboard' },
@@ -45,17 +46,28 @@ export default function HeaderNav({ section, setSection }) {
         padding: '12px 20px',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 8,
-            background: `linear-gradient(135deg, ${colors.primary} 0%, ${colors.primaryDark} 100%)`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontWeight: 800, fontSize: 14,
-          }}>S</div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: colors.text, letterSpacing: '-0.2px' }}>Pidoo Socios</div>
-            <div style={{ fontSize: 11, color: colors.textMute }}>
-              {socio?.nombre_comercial || socio?.nombre || 'Mi cuenta'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <SocioAvatar
+            logo_url={socio?.logo_url}
+            nombre_comercial={socio?.nombre_comercial}
+            color_primario={socio?.color_primario}
+            size={32}
+            radius={8}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: 15, fontWeight: 800, color: colors.text, letterSpacing: '-0.2px',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              maxWidth: 220,
+            }}>
+              {socio?.nombre_comercial || 'Mi marketplace'}
+            </div>
+            <div style={{
+              fontSize: 11, color: colors.textMute,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              maxWidth: 220,
+            }}>
+              {socio?.slug ? `/${socio.slug}` : 'tu marca'}
             </div>
           </div>
         </div>
