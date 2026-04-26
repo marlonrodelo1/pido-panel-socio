@@ -1,8 +1,8 @@
 import { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
-  appId: 'com.pidoo.socios',
-  appName: 'Pidoo Socios',
+  appId: 'com.pido.socio',
+  appName: 'Pidoo Socio',
   webDir: 'dist',
   plugins: {
     SplashScreen: {
