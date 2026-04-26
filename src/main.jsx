@@ -4,14 +4,15 @@ import { Capacitor } from '@capacitor/core'
 import './index.css'
 import App from './App.jsx'
 
-// StatusBar: respetar barra del sistema (no overlay) en Capacitor nativo
+// StatusBar overlay TRUE: la WebView ocupa toda la pantalla y nosotros
+// reservamos espacio en CSS via env(safe-area-inset-top). Es mas predecible
+// que confiar en Android para "empujar" la WebView abajo.
 async function setupStatusBar() {
   if (!Capacitor.isNativePlatform()) return
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar')
-    await StatusBar.setOverlaysWebView({ overlay: false })
+    await StatusBar.setOverlaysWebView({ overlay: true })
     await StatusBar.setStyle({ style: Style.Light }) // iconos oscuros sobre fondo claro
-    await StatusBar.setBackgroundColor({ color: '#FAFAF7' })
   } catch (_) {}
 }
 setupStatusBar()

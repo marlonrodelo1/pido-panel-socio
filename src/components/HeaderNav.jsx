@@ -39,6 +39,7 @@ export default function HeaderNav({ section, setSection }) {
       background: colors.surface,
       borderBottom: `1px solid ${colors.border}`,
       boxShadow: colors.shadow,
+      paddingTop: 'env(safe-area-inset-top)',
     }}>
       <div style={{
         maxWidth: 1280, margin: '0 auto',

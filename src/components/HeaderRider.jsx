@@ -12,7 +12,8 @@ export default function HeaderRider({ title, onMenu, onModeSwitch }) {
       background: colors.surface,
       borderBottom: `1px solid ${colors.border}`,
       display: 'flex', alignItems: 'center', gap: 8,
-      height: 56, padding: '0 12px',
+      padding: 'calc(env(safe-area-inset-top) + 4px) 12px 4px',
+      minHeight: 'calc(56px + env(safe-area-inset-top))',
     }}>
       <button onClick={onMenu} style={{
         background: 'transparent', border: 'none', cursor: 'pointer',
