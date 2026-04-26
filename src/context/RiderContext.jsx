@@ -61,12 +61,7 @@ export function RiderProvider({ children }) {
         .in('estado', ['esperando_aceptacion', 'aceptado'])
         .is('entregado_at', null)
         .order('created_at', { ascending: false })
-      if (!cancel) {
-        setAsignaciones(data || [])
-        // Si al abrir la app hay asignaciones esperando, abrir el modal de la mas reciente
-        const pendiente = (data || []).find((a) => a.estado === 'esperando_aceptacion')
-        if (pendiente) setPendingNew(pendiente)
-      }
+      if (!cancel) setAsignaciones(data || [])
     })()
     const ch = supabase.channel('rider-asign-' + riderAccountId)
       .on('postgres_changes',
@@ -132,55 +127,41 @@ export function RiderProvider({ children }) {
     trackerRef.current?.setActive(hayActiva)
   }, [asignaciones])
 
-  // Acciones del rider
-  const [busyToggle, setBusyToggle] = useState(false)
-
-  const goOnline = useCallback(async () => {
-    if (busyToggle) return
-    setBusyToggle(true)
-    let lat, lng
-    try {
-      const p = await getCurrentPosition()
-      lat = p.lat; lng = p.lng
-      setPos({ lat, lng })
-    } catch (e) {
-      console.warn('[Rider] gps inicial fail', e?.message)
-      // Si el rider denego permisos GPS, le avisamos pero le dejamos
-      // conectarse igual (la edge function tolera lat/lng undefined).
+  // Acciones del rider — toggle instantaneo y optimista. La UI no espera al
+  // servidor: si falla, revertimos.
+  const goOnline = useCallback(() => {
+    setOnline(true) // optimista
+    ;(async () => {
+      let lat, lng
       try {
-        if (typeof window !== 'undefined' && window.alert) {
-          window.alert('Activa la ubicacion para que los pedidos te lleguen mas rapido. Te conectamos sin GPS por ahora.')
-        }
+        const p = await getCurrentPosition()
+        lat = p.lat; lng = p.lng
+        setPos({ lat, lng })
       } catch (_) {}
-    }
-    try {
-      await riderApi.online({ lat, lng })
-      setOnline(true)
-      await refreshSocio()
-    } catch (e) {
-      console.error('[Rider] online failed', e)
-      try { if (window.alert) window.alert('Error al conectarte: ' + (e?.message || 'desconocido')) } catch (_) {}
-    } finally {
-      setBusyToggle(false)
-    }
-  }, [refreshSocio, busyToggle])
+      try {
+        await riderApi.online({ lat, lng })
+        refreshSocio().catch(() => {})
+      } catch (e) {
+        console.error('[Rider] online failed', e)
+        setOnline(false)
+      }
+    })()
+  }, [refreshSocio])
 
-  const goOffline = useCallback(async () => {
-    if (busyToggle) return
-    setBusyToggle(true)
-    try {
-      await riderApi.offline()
-      setOnline(false)
-      trackerRef.current?.stop()
-      trackerRef.current = null
-      await refreshSocio()
-    } catch (e) {
-      console.error('[Rider] offline failed', e)
-      try { if (window.alert) window.alert('Error al desconectarte: ' + (e?.message || 'desconocido')) } catch (_) {}
-    } finally {
-      setBusyToggle(false)
-    }
-  }, [refreshSocio, busyToggle])
+  const goOffline = useCallback(() => {
+    setOnline(false) // optimista
+    trackerRef.current?.stop()
+    trackerRef.current = null
+    ;(async () => {
+      try {
+        await riderApi.offline()
+        refreshSocio().catch(() => {})
+      } catch (e) {
+        console.error('[Rider] offline failed', e)
+        setOnline(true)
+      }
+    })()
+  }, [refreshSocio])
 
   const accept = useCallback(async (asignacionId) => {
     await riderApi.accept(asignacionId)
@@ -209,11 +190,11 @@ export function RiderProvider({ children }) {
   const value = useMemo(() => ({
     online, riderAccountId,
     asignaciones, pendingNew,
-    pos, busyToggle,
+    pos,
     goOnline, goOffline,
     accept, reject, pickup, deliver,
     dismissPending,
-  }), [online, riderAccountId, asignaciones, pendingNew, pos, busyToggle, goOnline, goOffline, accept, reject, pickup, deliver, dismissPending])
+  }), [online, riderAccountId, asignaciones, pendingNew, pos, goOnline, goOffline, accept, reject, pickup, deliver, dismissPending])
 
   return <RiderContext.Provider value={value}>{children}</RiderContext.Provider>
 }

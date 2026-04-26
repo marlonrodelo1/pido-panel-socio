@@ -163,22 +163,6 @@ function Shell() {
     return () => { cancel = true }
   }, [socio?.id])
 
-  // Auto-switch a modo rider cuando llega asignacion pendiente o hay activa.
-  // OJO: estos useEffect deben estar ANTES de cualquier early return (loading,
-  // !session, !socio) para no violar las reglas de hooks de React.
-  useEffect(() => {
-    if (pendingNew && mode !== 'rider' && riderAvailable) {
-      setMode('rider')
-    }
-  }, [pendingNew, mode, riderAvailable])
-
-  const hayActivasNoEntregadas = (asignaciones || []).some((a) => !a.entregado_at)
-  useEffect(() => {
-    if (hayActivasNoEntregadas && mode !== 'rider' && riderAvailable) {
-      setMode('rider')
-    }
-  }, [hayActivasNoEntregadas, mode, riderAvailable])
-
   const irALogin = () => {
     setVistaPublica('login')
     if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
