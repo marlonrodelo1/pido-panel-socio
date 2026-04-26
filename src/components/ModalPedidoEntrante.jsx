@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { colors, type, ds } from '../lib/uiStyles'
 
-const COUNTDOWN_S = 45
+const COUNTDOWN_S = 180 // 3 minutos para aceptar
 
 export default function ModalPedidoEntrante({ asignacion, onAccept, onReject, onClose }) {
   const [secs, setSecs] = useState(COUNTDOWN_S)
@@ -96,8 +96,8 @@ export default function ModalPedidoEntrante({ asignacion, onAccept, onReject, on
           <span style={{ ...ds.badge, background: colors.primarySoft, color: colors.primary, border: `1px solid ${colors.primaryBorder}` }}>
             Nuevo pedido
           </span>
-          <span style={{ fontSize: type.lg, fontWeight: 800, color: secs <= 10 ? colors.danger : colors.text }}>
-            {secs}s
+          <span style={{ fontSize: type.lg, fontWeight: 800, color: secs <= 30 ? colors.danger : colors.text }}>
+            {secs >= 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : `${secs}s`}
           </span>
         </div>
 
