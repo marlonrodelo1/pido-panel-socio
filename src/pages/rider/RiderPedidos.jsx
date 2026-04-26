@@ -1,6 +1,5 @@
-// Lista de pedidos activos del rider con CTA segun estado.
+// Lista de pedidos activos del rider. Tap a la card abre el detalle.
 
-import { useState } from 'react'
 import { colors, type, ds } from '../../lib/uiStyles'
 import { useRider } from '../../context/RiderContext'
 
@@ -16,19 +15,16 @@ function fmtDate(iso) {
   return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })
 }
 
-function openMaps(lat, lng, address) {
-  if (typeof window === 'undefined') return
+function openMaps(lat, lng) {
+  if (typeof window === 'undefined' || !lat || !lng) return
   const ua = navigator.userAgent || ''
   const isIOS = /iPad|iPhone|iPod/.test(ua)
-  const url = isIOS
-    ? `maps:?daddr=${lat},${lng}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+  const url = isIOS ? `maps:?daddr=${lat},${lng}` : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
   window.open(url, '_blank')
 }
 
-export default function RiderPedidos() {
-  const { asignaciones, pickup, deliver } = useRider()
-  const [busyId, setBusyId] = useState(null)
+export default function RiderPedidos({ onOpenDetalle }) {
+  const { asignaciones } = useRider()
 
   if (!asignaciones || asignaciones.length === 0) {
     return (
@@ -39,31 +35,19 @@ export default function RiderPedidos() {
     )
   }
 
-  const handleAction = async (a) => {
-    if (busyId) return
-    setBusyId(a.id)
-    try {
-      if (!a.recogido_at) {
-        await pickup(a.id)
-      } else {
-        await deliver(a.id, null)
-      }
-    } catch (e) {
-      alert('Error: ' + (e?.message || 'desconocido'))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
   return (
     <div style={{ padding: '12px 14px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       {asignaciones.map((a) => {
         const ped = a.pedidos
         const est = ped?.establecimientos
         const recogido = !!a.recogido_at
-        const cta = recogido ? 'Marcar como entregado' : 'Marcar como recogido'
+
+        const stop = (e) => e.stopPropagation()
+
         return (
-          <div key={a.id} style={{ ...ds.card, padding: 14 }}>
+          <div key={a.id} role="button" onClick={() => onOpenDetalle?.(a.id)} style={{
+            ...ds.card, padding: 14, cursor: 'pointer', userSelect: 'none',
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <span style={{
                 ...ds.badge,
@@ -72,17 +56,20 @@ export default function RiderPedidos() {
               }}>
                 {recogido ? 'En camino' : 'Iniciada'}
               </span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button title="Navegar" onClick={() => {
+              <div style={{ display: 'flex', gap: 8 }} onClick={stop}>
+                <button title="Navegar" onClick={(e) => {
+                  stop(e)
                   const lat = recogido ? ped?.lat_entrega : est?.latitud
                   const lng = recogido ? ped?.lng_entrega : est?.longitud
-                  if (lat && lng) openMaps(lat, lng)
+                  openMaps(lat, lng)
                 }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: colors.textMute, padding: 6 }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
                 </button>
-                <a href={`tel:${est?.telefono || ''}`} style={{ color: colors.textMute, padding: 6, lineHeight: 0 }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
-                </a>
+                {est?.telefono && (
+                  <a href={`tel:${est.telefono}`} onClick={stop} style={{ color: colors.textMute, padding: 6, lineHeight: 0 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
+                  </a>
+                )}
               </div>
             </div>
 
@@ -103,18 +90,12 @@ export default function RiderPedidos() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 10 }}>
               <span style={{ marginTop: 4, width: 12, height: 16, background: colors.primary, borderRadius: '50% 50% 50% 0', transform: 'rotate(-45deg)', flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text }}>{ped?.direccion_entrega || '—'}</div>
               </div>
             </div>
-
-            <button onClick={() => handleAction(a)} disabled={busyId === a.id} style={{
-              ...ds.primaryBtn, width: '100%', height: 44, fontSize: type.sm,
-            }}>
-              {busyId === a.id ? 'Procesando…' : cta} →
-            </button>
           </div>
         )
       })}

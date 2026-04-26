@@ -9,7 +9,6 @@ const NAV = [
   { id: 'restaurantes',  label: 'Restaurantes' },
   { id: 'pedidos',       label: 'Pedidos' },
   { id: 'facturas',      label: 'Facturas' },
-  { id: 'servicios',     label: 'Servicios' },
   { id: 'configuracion', label: 'Configuración' },
   { id: 'soporte',       label: 'Soporte' },
 ]

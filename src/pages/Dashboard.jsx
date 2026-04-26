@@ -148,35 +148,6 @@ export default function Dashboard({ setSection }) {
         </div>
       </div>
 
-      {/* Banner Servicios Rogotech (oportunidad extra para el socio) */}
-      <div style={{
-        background: `linear-gradient(135deg, ${colors.primary} 0%, #E85A1F 100%)`,
-        borderRadius: 14, padding: '18px 20px', marginBottom: 20,
-        color: '#fff', display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
-        boxShadow: '0 8px 22px rgba(255,107,44,0.22)', cursor: 'pointer',
-      }} onClick={() => setSection?.('servicios')}>
-        <div style={{
-          width: 46, height: 46, borderRadius: 12,
-          background: 'rgba(255,255,255,0.18)', display: 'grid', placeItems: 'center', flexShrink: 0,
-          fontSize: 24,
-        }}>⚡</div>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <div style={{ fontSize: type.base, fontWeight: 800, marginBottom: 2 }}>
-            Gana comisión recomendando servicios digitales
-          </div>
-          <div style={{ fontSize: type.xs, opacity: 0.95, lineHeight: 1.5 }}>
-            Automatizaciones, webs, apps y ERP de Rogotech. 15% por cada cliente que traigas.
-          </div>
-        </div>
-        <button onClick={(e) => { e.stopPropagation(); setSection?.('servicios') }} style={{
-          padding: '0 18px', height: 36, borderRadius: 9, border: 'none',
-          background: '#fff', color: colors.primary, fontSize: type.xs, fontWeight: 800,
-          cursor: 'pointer', fontFamily: 'inherit',
-        }}>
-          Ver servicios
-        </button>
-      </div>
-
       {topRestaurantes.length > 0 && (
         <div style={{ ...ds.card }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>

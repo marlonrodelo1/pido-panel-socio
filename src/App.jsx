@@ -9,7 +9,6 @@ import MiMarketplace from './pages/MiMarketplace'
 import Restaurantes from './pages/Restaurantes'
 import Pedidos from './pages/Pedidos'
 import Facturas from './pages/Facturas'
-import Servicios from './pages/Servicios'
 import Configuracion from './pages/Configuracion'
 import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
@@ -19,10 +18,9 @@ import BottomNavRider from './components/BottomNavRider'
 import DrawerRider from './components/DrawerRider'
 import ModalPedidoEntrante from './components/ModalPedidoEntrante'
 import RiderPedidos from './pages/rider/RiderPedidos'
-import RiderMapa from './pages/rider/RiderMapa'
 import RiderEsperando from './pages/rider/RiderEsperando'
 import RiderChat from './pages/rider/RiderChat'
-import RiderRendimiento from './pages/rider/RiderRendimiento'
+import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
 import RiderCompletadas from './pages/rider/RiderCompletadas'
 import { colors, type } from './lib/uiStyles'
 
@@ -30,12 +28,10 @@ const MODE_KEY = 'pidoo-socio-mode'
 
 const RIDER_TITLES = {
   'rider-pedidos':     'Pedidos',
-  'rider-mapa':        'Mapa',
   'rider-esperando':   'Órdenes en espera',
   'rider-chat':        'Soporte',
-  'rider-rendimiento': 'Rendimiento',
   'rider-completadas': 'Órdenes completadas',
-  'rider-ajustes':     'Ajustes',
+  'rider-detalle':     'Detalles de orden',
 }
 
 function ShellAdmin({ section, setSection, switchToRider, riderAvailable }) {
@@ -45,7 +41,6 @@ function ShellAdmin({ section, setSection, switchToRider, riderAvailable }) {
     restaurantes:  <Restaurantes />,
     pedidos:       <Pedidos />,
     facturas:      <Facturas />,
-    servicios:     <Servicios />,
     configuracion: <Configuracion />,
     soporte:       <Soporte />,
   }[section] || <Dashboard setSection={setSection} />
@@ -77,24 +72,36 @@ function ShellAdmin({ section, setSection, switchToRider, riderAvailable }) {
 function ShellRider({ switchToAdmin }) {
   const [section, setSection] = useState('rider-pedidos')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [detalleId, setDetalleId] = useState(null)
   const { pendingNew, accept, reject, dismissPending } = useRider()
 
   const handleNavigate = (id) => {
     setDrawerOpen(false)
     if (id === 'admin') { switchToAdmin(); return }
+    setDetalleId(null)
     setSection(id)
   }
 
+  const openDetalle = (asignacionId) => {
+    setDetalleId(asignacionId)
+    setSection('rider-detalle')
+  }
+
+  const closeDetalle = () => {
+    setDetalleId(null)
+    setSection('rider-pedidos')
+  }
+
   const page = (() => {
+    if (section === 'rider-detalle' && detalleId) {
+      return <RiderDetalleOrden asignacionId={detalleId} onBack={closeDetalle} />
+    }
     switch (section) {
-      case 'rider-pedidos':     return <RiderPedidos />
-      case 'rider-mapa':        return <RiderMapa />
-      case 'rider-esperando':   return <RiderEsperando />
+      case 'rider-pedidos':     return <RiderPedidos onOpenDetalle={openDetalle} />
+      case 'rider-esperando':   return <RiderEsperando onGoPedidos={() => setSection('rider-pedidos')} />
       case 'rider-chat':        return <RiderChat />
-      case 'rider-rendimiento': return <RiderRendimiento />
       case 'rider-completadas': return <RiderCompletadas onBack={() => setSection('rider-pedidos')} />
-      case 'rider-ajustes':     return <div style={{ padding: 40, textAlign: 'center', color: colors.textMute }}>Ajustes (proximamente)</div>
-      default:                  return <RiderPedidos />
+      default:                  return <RiderPedidos onOpenDetalle={openDetalle} />
     }
   })()
 
@@ -102,7 +109,7 @@ function ShellRider({ switchToAdmin }) {
     <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 70 }}>
       <HeaderRider title={RIDER_TITLES[section] || ''} onMenu={() => setDrawerOpen(true)} onModeSwitch={switchToAdmin} />
       <main>{page}</main>
-      <BottomNavRider section={section} setSection={setSection} />
+      <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
       <DrawerRider open={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleNavigate} />
       {pendingNew && (
         <ModalPedidoEntrante
@@ -140,7 +147,6 @@ function Shell() {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
-  // Si el socio tiene rider_account activa, modo rider esta disponible
   useEffect(() => {
     let cancel = false
     ;(async () => {
