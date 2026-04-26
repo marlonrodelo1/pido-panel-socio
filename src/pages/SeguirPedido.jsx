@@ -1,8 +1,8 @@
-// Pagina publica de seguimiento estilo Shipday: mapa + rider en tiempo real
-// + stepper + datos del rider + acordeones de pedido y actualizaciones.
+// Pagina publica /seguir/<codigo> con Google Maps + rider en tiempo real.
 
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { loadGoogleMaps } from '../lib/googleMaps'
 
 const STEPS = [
   { id: 'aceptado', label: 'Aceptado' },
@@ -19,31 +19,6 @@ function estadoToStep(estado) {
   return 0
 }
 
-function fmtTime(iso) {
-  if (!iso) return ''
-  return new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-}
-
-// Carga Leaflet desde CDN (una sola vez)
-let leafletLoading = null
-function loadLeaflet() {
-  if (typeof window === 'undefined') return Promise.reject(new Error('no_window'))
-  if (window.L) return Promise.resolve(window.L)
-  if (leafletLoading) return leafletLoading
-  leafletLoading = new Promise((resolve, reject) => {
-    const css = document.createElement('link')
-    css.rel = 'stylesheet'
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
-    document.head.appendChild(css)
-    const script = document.createElement('script')
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-    script.onload = () => resolve(window.L)
-    script.onerror = () => reject(new Error('leaflet_load_fail'))
-    document.head.appendChild(script)
-  })
-  return leafletLoading
-}
-
 export default function SeguirPedido({ codigo }) {
   const [pedido, setPedido] = useState(null)
   const [rider, setRider] = useState(null)
@@ -55,7 +30,6 @@ export default function SeguirPedido({ codigo }) {
   const mapDivRef = useRef(null)
   const markersRef = useRef({})
 
-  // Carga inicial
   useEffect(() => {
     if (!codigo) return
     let cancel = false
@@ -94,11 +68,8 @@ export default function SeguirPedido({ codigo }) {
             rating: s.rating || null,
             lat: s.latitud_actual,
             lng: s.longitud_actual,
-            last: s.last_location_at,
           })
-        } else {
-          setRider(null)
-        }
+        } else { setRider(null) }
       }
       setLoading(false)
     }
@@ -112,66 +83,72 @@ export default function SeguirPedido({ codigo }) {
     return () => { cancel = true; clearInterval(id); try { supabase.removeChannel(ch) } catch (_) {} }
   }, [codigo])
 
-  // Inicializa el mapa
+  // Google Maps init
   useEffect(() => {
     if (!pedido?.establecimientos) return
     let cancel = false
-    loadLeaflet().then((L) => {
+    loadGoogleMaps().then((maps) => {
       if (cancel || !mapDivRef.current || mapRef.current) return
       const restLat = pedido.establecimientos.latitud
       const restLng = pedido.establecimientos.longitud
       if (restLat == null || restLng == null) return
-      const map = L.map(mapDivRef.current, {
-        center: [restLat, restLng],
+      const map = new maps.Map(mapDivRef.current, {
+        center: { lat: restLat, lng: restLng },
         zoom: 14,
+        disableDefaultUI: true,
         zoomControl: true,
-        attributionControl: false,
+        clickableIcons: false,
+        styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }],
       })
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map)
       mapRef.current = map
 
-      const restIcon = L.divIcon({
-        className: 'pidoo-icon',
-        html: '<div style="background:#FF6B2C;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);">🍽️</div>',
-        iconSize: [34, 34], iconAnchor: [17, 17],
+      markersRef.current.rest = new maps.Marker({
+        position: { lat: restLat, lng: restLng },
+        map, title: pedido.establecimientos.nombre || 'Restaurante',
+        icon: {
+          path: maps.SymbolPath.CIRCLE,
+          fillColor: '#FF6B2C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 12,
+        },
+        label: { text: '🍽', fontSize: '14px' },
       })
-      markersRef.current.rest = L.marker([restLat, restLng], { icon: restIcon }).addTo(map)
-        .bindPopup(pedido.establecimientos.nombre || 'Restaurante')
 
       if (pedido.lat_entrega && pedido.lng_entrega) {
-        const cliIcon = L.divIcon({
-          className: 'pidoo-icon',
-          html: '<div style="background:#1F1F1E;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:16px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);">🏠</div>',
-          iconSize: [34, 34], iconAnchor: [17, 17],
+        markersRef.current.cli = new maps.Marker({
+          position: { lat: pedido.lat_entrega, lng: pedido.lng_entrega },
+          map, title: 'Entrega',
+          icon: {
+            path: maps.SymbolPath.CIRCLE,
+            fillColor: '#1F1F1E', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 12,
+          },
+          label: { text: '🏠', fontSize: '14px' },
         })
-        markersRef.current.cli = L.marker([pedido.lat_entrega, pedido.lng_entrega], { icon: cliIcon }).addTo(map)
-          .bindPopup('Entrega')
       }
-    })
+    }).catch((e) => console.warn('[seguir] gmaps load fail', e?.message))
     return () => { cancel = true }
   }, [pedido?.establecimientos?.latitud, pedido?.establecimientos?.longitud, pedido?.lat_entrega])
 
-  // Actualiza marker rider y centra mapa
+  // Update rider marker
   useEffect(() => {
-    if (!mapRef.current || !rider?.lat || !rider?.lng || !window.L) return
-    const L = window.L
+    if (!mapRef.current || !rider?.lat || !rider?.lng || !window.google?.maps) return
+    const maps = window.google.maps
+    const pos = { lat: rider.lat, lng: rider.lng }
     if (!markersRef.current.rider) {
-      const riderIcon = L.divIcon({
-        className: 'pidoo-icon-rider',
-        html: '<div style="background:#16A34A;border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;font-size:18px;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.4);animation:pidoo-pulse 1.5s infinite;">🛵</div>',
-        iconSize: [38, 38], iconAnchor: [19, 19],
+      markersRef.current.rider = new maps.Marker({
+        position: pos, map: mapRef.current, title: rider.nombre,
+        icon: {
+          path: maps.SymbolPath.CIRCLE,
+          fillColor: '#16A34A', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 4, scale: 14,
+        },
+        label: { text: '🛵', fontSize: '16px' },
+        zIndex: 999,
       })
-      markersRef.current.rider = L.marker([rider.lat, rider.lng], { icon: riderIcon }).addTo(mapRef.current)
-        .bindPopup(rider.nombre)
     } else {
-      markersRef.current.rider.setLatLng([rider.lat, rider.lng])
+      markersRef.current.rider.setPosition(pos)
     }
-    // Auto-fit con todos los markers
     try {
-      const all = Object.values(markersRef.current).map((m) => m.getLatLng())
-      if (all.length > 1) {
-        mapRef.current.fitBounds(L.latLngBounds(all).pad(0.4))
-      }
+      const bounds = new maps.LatLngBounds()
+      Object.values(markersRef.current).forEach((m) => bounds.extend(m.getPosition()))
+      mapRef.current.fitBounds(bounds, 70)
     } catch (_) {}
   }, [rider?.lat, rider?.lng])
 
@@ -184,9 +161,6 @@ export default function SeguirPedido({ codigo }) {
 
   return (
     <Layout>
-      <style>{`@keyframes pidoo-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}.leaflet-container{font-family:'Inter',sans-serif}`}</style>
-
-      {/* Header */}
       <header style={S.header}>
         <img src="/favicon.svg" alt="Pidoo" style={{ width: 28, height: 28 }} />
         <div style={{ flex: 1 }}>
@@ -198,39 +172,31 @@ export default function SeguirPedido({ codigo }) {
         </button>
       </header>
 
-      {/* Mapa */}
       <div style={{ position: 'relative', height: 320, background: '#E8E6E0' }}>
         <div ref={mapDivRef} style={{ position: 'absolute', inset: 0 }} />
       </div>
 
-      {/* Info principal */}
       <div style={{ padding: '18px 20px 10px' }}>
         <div style={{ fontSize: 22, fontWeight: 800, color: '#1F1F1E' }}>
           {esTerminado ? '¡Pedido entregado!' : pedido.estado === 'recogido' || pedido.estado === 'en_camino' ? 'Tu pedido está en camino' : 'Repartidor asignado'}
         </div>
         {!esTerminado && pedido.minutos_preparacion && (pedido.estado === 'preparando' || pedido.estado === 'listo') && (
-          <div style={{ fontSize: 13, color: '#777', marginTop: 4 }}>
-            Llegada estimada en ~{pedido.minutos_preparacion} min
-          </div>
+          <div style={{ fontSize: 13, color: '#777', marginTop: 4 }}>Llegada estimada en ~{pedido.minutos_preparacion} min</div>
         )}
       </div>
 
-      {/* Stepper */}
       <div style={S.stepper}>
         {STEPS.map((s, i) => {
           const active = i <= step
           return (
             <div key={s.id} style={{ flex: 1, textAlign: 'center' }}>
               <div style={{ height: 4, borderRadius: 2, background: active ? '#FF6B2C' : '#E8E6E0', marginBottom: 8 }} />
-              <div style={{ fontSize: 11, fontWeight: 700, color: active ? '#1F1F1E' : '#A8A6A0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {s.label}
-              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: active ? '#1F1F1E' : '#A8A6A0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s.label}</div>
             </div>
           )
         })}
       </div>
 
-      {/* Card del rider */}
       {rider && (
         <div style={S.card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -241,7 +207,7 @@ export default function SeguirPedido({ codigo }) {
               {rider.rating > 0 && <div style={{ fontSize: 11, color: '#777' }}>⭐ {Number(rider.rating).toFixed(1)}</div>}
             </div>
             {rider.telefono && (
-              <a href={`tel:${rider.telefono}`} style={S.callBtn} title="Llamar al repartidor">
+              <a href={`tel:${rider.telefono}`} style={S.callBtn} title="Llamar">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
               </a>
             )}
@@ -249,7 +215,6 @@ export default function SeguirPedido({ codigo }) {
         </div>
       )}
 
-      {/* Acordeon de detalles del pedido */}
       <div style={{ ...S.card, padding: 0, overflow: 'hidden' }}>
         <button onClick={() => setAccItems(!accItems)} style={S.accordionHead}>
           <span>Pedido #{pedido.codigo} ({items.length} artículo{items.length === 1 ? '' : 's'})</span>
@@ -264,22 +229,18 @@ export default function SeguirPedido({ codigo }) {
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', fontSize: 14, fontWeight: 800, color: '#1F1F1E' }}>
-              <span>Total</span>
-              <span>{Number(pedido.total || 0).toFixed(2)} €</span>
+              <span>Total</span><span>{Number(pedido.total || 0).toFixed(2)} €</span>
             </div>
           </div>
         )}
       </div>
 
-      {/* Restaurante */}
       <div style={S.card}>
         <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700, marginBottom: 4 }}>Restaurante</div>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#1F1F1E' }}>{est?.nombre}</div>
         <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>{est?.direccion}</div>
         {est?.telefono && (
-          <a href={`tel:${est.telefono}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, fontWeight: 700, color: '#FF6B2C' }}>
-            📞 {est.telefono}
-          </a>
+          <a href={`tel:${est.telefono}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, fontWeight: 700, color: '#FF6B2C' }}>📞 {est.telefono}</a>
         )}
       </div>
 
@@ -299,48 +260,14 @@ function Layout({ children }) {
     </div>
   )
 }
-
-function Centered({ children }) {
-  return <div style={{ padding: 60, textAlign: 'center', color: '#777' }}>{children}</div>
-}
+function Centered({ children }) { return <div style={{ padding: 60, textAlign: 'center', color: '#777' }}>{children}</div> }
 
 const S = {
-  header: {
-    display: 'flex', alignItems: 'center', gap: 10,
-    padding: '14px 18px', borderBottom: '1px solid #EEE',
-    position: 'sticky', top: 0, background: '#fff', zIndex: 5,
-  },
-  iconBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    background: '#F4F2EC', border: 'none', cursor: 'pointer',
-    color: '#1F1F1E', display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
-  stepper: {
-    display: 'flex', gap: 6,
-    padding: '8px 18px 16px',
-  },
-  card: {
-    margin: '12px 14px',
-    padding: '14px 18px',
-    background: '#fff', borderRadius: 12,
-    border: '1px solid #EEE',
-    boxShadow: '0 1px 2px rgba(15,15,15,0.04)',
-  },
-  avatar: {
-    width: 48, height: 48, borderRadius: 24,
-    background: 'rgba(255,107,44,0.15)', color: '#FF6B2C',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontWeight: 800, fontSize: 18,
-  },
-  callBtn: {
-    width: 44, height: 44, borderRadius: 22, background: '#16A34A', color: '#fff',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none',
-    boxShadow: '0 2px 6px rgba(22,163,74,0.4)',
-  },
-  accordionHead: {
-    width: '100%', padding: '14px 18px',
-    background: '#fff', border: 'none', cursor: 'pointer',
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    fontSize: 13, fontWeight: 700, color: '#1F1F1E', textAlign: 'left',
-  },
+  header: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #EEE', position: 'sticky', top: 0, background: '#fff', zIndex: 5 },
+  iconBtn: { width: 36, height: 36, borderRadius: 18, background: '#F4F2EC', border: 'none', cursor: 'pointer', color: '#1F1F1E', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  stepper: { display: 'flex', gap: 6, padding: '8px 18px 16px' },
+  card: { margin: '12px 14px', padding: '14px 18px', background: '#fff', borderRadius: 12, border: '1px solid #EEE', boxShadow: '0 1px 2px rgba(15,15,15,0.04)' },
+  avatar: { width: 48, height: 48, borderRadius: 24, background: 'rgba(255,107,44,0.15)', color: '#FF6B2C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 18 },
+  callBtn: { width: 44, height: 44, borderRadius: 22, background: '#16A34A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', boxShadow: '0 2px 6px rgba(22,163,74,0.4)' },
+  accordionHead: { width: '100%', padding: '14px 18px', background: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#1F1F1E', textAlign: 'left' },
 }

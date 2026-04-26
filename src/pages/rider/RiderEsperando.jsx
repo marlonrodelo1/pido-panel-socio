@@ -1,28 +1,136 @@
-// Pantalla de idle/standby. Mapa + banner inferior. Si hay pedidos activos,
-// el banner pasa a CTA naranja y al tocar lleva a la lista de Pedidos.
+// Pantalla idle del rider: mapa Google con su posicion + restaurantes
+// vinculados al socio + asignaciones activas. Banner inferior con estado.
 
-import { useMemo } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { colors, type } from '../../lib/uiStyles'
 import { useRider } from '../../context/RiderContext'
+import { useSocio } from '../../context/SocioContext'
+import { supabase } from '../../lib/supabase'
+import { loadGoogleMaps } from '../../lib/googleMaps'
 
 export default function RiderEsperando({ onGoPedidos }) {
+  const { socio } = useSocio()
   const { pos, online, asignaciones } = useRider()
+  const mapDivRef = useRef(null)
+  const mapRef = useRef(null)
+  const markersRef = useRef({ rider: null, rests: [], pedidos: [] })
+  const [restaurantes, setRestaurantes] = useState([])
 
-  const url = useMemo(() => {
-    if (!pos) return null
-    const d = 0.005
-    const bbox = `${pos.lng - d},${pos.lat - d},${pos.lng + d},${pos.lat + d}`
-    return `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${pos.lat},${pos.lng}`
-  }, [pos?.lat, pos?.lng])
+  // Cargar restaurantes vinculados al socio
+  useEffect(() => {
+    if (!socio?.id) return
+    let cancel = false
+    ;(async () => {
+      const { data: vinc } = await supabase
+        .from('socio_establecimiento')
+        .select('establecimiento_id, establecimientos!inner(id, nombre, latitud, longitud, activo, estado)')
+        .eq('socio_id', socio.id)
+        .eq('estado', 'activa')
+      if (cancel) return
+      const rests = (vinc || [])
+        .map((v) => v.establecimientos)
+        .filter((e) => e && e.activo && e.latitud && e.longitud)
+      setRestaurantes(rests)
+    })()
+    return () => { cancel = true }
+  }, [socio?.id])
+
+  // Inicializar mapa
+  useEffect(() => {
+    if (!mapDivRef.current || mapRef.current) return
+    const center = pos
+      ? { lat: pos.lat, lng: pos.lng }
+      : restaurantes[0]
+        ? { lat: restaurantes[0].latitud, lng: restaurantes[0].longitud }
+        : { lat: 28.4148, lng: -16.5477 } // Tenerife default
+    let cancel = false
+    loadGoogleMaps().then((maps) => {
+      if (cancel || !mapDivRef.current || mapRef.current) return
+      mapRef.current = new maps.Map(mapDivRef.current, {
+        center, zoom: 13,
+        disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy',
+        clickableIcons: false,
+        styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }],
+      })
+    }).catch((e) => console.warn('[esperando] gmaps load fail', e?.message))
+    return () => { cancel = true }
+  }, [])
+
+  // Marcar restaurantes
+  useEffect(() => {
+    if (!mapRef.current || !window.google?.maps) return
+    const maps = window.google.maps
+    markersRef.current.rests.forEach((m) => m.setMap(null))
+    markersRef.current.rests = restaurantes.map((r) => new maps.Marker({
+      position: { lat: r.latitud, lng: r.longitud },
+      map: mapRef.current, title: r.nombre,
+      icon: {
+        path: maps.SymbolPath.CIRCLE,
+        fillColor: '#FF6B2C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 12,
+      },
+      label: { text: '🍽', fontSize: '14px' },
+    }))
+  }, [restaurantes])
+
+  // Marcar pedidos (asignaciones)
+  useEffect(() => {
+    if (!mapRef.current || !window.google?.maps) return
+    const maps = window.google.maps
+    markersRef.current.pedidos.forEach((m) => m.setMap(null))
+    markersRef.current.pedidos = asignaciones
+      .filter((a) => a.pedidos?.lat_entrega && a.pedidos?.lng_entrega)
+      .map((a) => new maps.Marker({
+        position: { lat: a.pedidos.lat_entrega, lng: a.pedidos.lng_entrega },
+        map: mapRef.current,
+        title: `Pedido #${a.pedidos.codigo}`,
+        icon: {
+          path: maps.SymbolPath.CIRCLE,
+          fillColor: '#1F1F1E', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 11,
+        },
+        label: { text: '📦', fontSize: '12px' },
+      }))
+  }, [asignaciones])
+
+  // Marcador propio + recentrar
+  useEffect(() => {
+    if (!mapRef.current || !window.google?.maps || !pos) return
+    const maps = window.google.maps
+    const p = { lat: pos.lat, lng: pos.lng }
+    if (!markersRef.current.rider) {
+      markersRef.current.rider = new maps.Marker({
+        position: p, map: mapRef.current, title: 'Tú',
+        icon: {
+          path: maps.SymbolPath.CIRCLE,
+          fillColor: '#16A34A', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 4, scale: 13,
+        },
+        zIndex: 999,
+      })
+    } else {
+      markersRef.current.rider.setPosition(p)
+    }
+    try {
+      const bounds = new maps.LatLngBounds()
+      if (markersRef.current.rider) bounds.extend(markersRef.current.rider.getPosition())
+      markersRef.current.rests.forEach((m) => bounds.extend(m.getPosition()))
+      markersRef.current.pedidos.forEach((m) => bounds.extend(m.getPosition()))
+      if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 60)
+    } catch (_) {}
+  }, [pos?.lat, pos?.lng, restaurantes.length, asignaciones.length])
 
   const tienePedidos = asignaciones.length > 0
+  const txtPedidos = asignaciones.length === 1 ? '1 pedido en espera' : `${asignaciones.length} pedidos en espera`
 
   return (
     <div style={{ position: 'relative', height: 'calc(100vh - 56px - 70px - env(safe-area-inset-bottom))' }}>
-      {url ? (
-        <iframe title="Esperando" src={url} style={{ width: '100%', height: '100%', border: 0 }} />
-      ) : (
-        <div style={{ height: '100%', display: 'grid', placeItems: 'center', background: colors.surface2, color: colors.textMute, fontSize: type.xs }}>
+      <div ref={mapDivRef} style={{ position: 'absolute', inset: 0, background: '#E8E6E0' }} />
+
+      {!pos && (
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+          background: 'rgba(255,255,255,0.95)', padding: '12px 18px', borderRadius: 12,
+          fontSize: type.xs, color: colors.textMute, textAlign: 'center',
+          boxShadow: colors.shadowMd,
+        }}>
           Activa la ubicación del teléfono…
         </div>
       )}
@@ -38,12 +146,20 @@ export default function RiderEsperando({ onGoPedidos }) {
           </div>
         ) : tienePedidos ? (
           <button onClick={onGoPedidos} style={{
-            width: '100%', background: colors.surface, padding: '14px 18px', textAlign: 'center',
+            width: '100%', background: colors.surface, padding: '14px 16px',
             borderRadius: 12, border: `1px solid ${colors.border}`, boxShadow: colors.shadowMd,
-            fontSize: type.base, fontWeight: 700, color: colors.primary,
-            cursor: 'pointer',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 10,
           }}>
-            Tienes {asignaciones.length} pedido{asignaciones.length > 1 ? 's' : ''} activo{asignaciones.length > 1 ? 's' : ''} →
+            <div style={{ flex: 1, textAlign: 'left', overflow: 'hidden' }}>
+              <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Tienes
+              </div>
+              <div style={{ fontSize: type.base, fontWeight: 800, color: colors.primary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {txtPedidos}
+              </div>
+            </div>
+            <span style={{ fontSize: type.lg, color: colors.primary, fontWeight: 800, flexShrink: 0 }}>→</span>
           </button>
         ) : (
           <div style={{
