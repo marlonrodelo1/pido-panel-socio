@@ -163,6 +163,22 @@ function Shell() {
     return () => { cancel = true }
   }, [socio?.id])
 
+  // Auto-switch a modo rider cuando llega asignacion pendiente o hay activa.
+  // OJO: estos useEffect deben estar ANTES de cualquier early return (loading,
+  // !session, !socio) para no violar las reglas de hooks de React.
+  useEffect(() => {
+    if (pendingNew && mode !== 'rider' && riderAvailable) {
+      setMode('rider')
+    }
+  }, [pendingNew, mode, riderAvailable])
+
+  const hayActivasNoEntregadas = (asignaciones || []).some((a) => !a.entregado_at)
+  useEffect(() => {
+    if (hayActivasNoEntregadas && mode !== 'rider' && riderAvailable) {
+      setMode('rider')
+    }
+  }, [hayActivasNoEntregadas, mode, riderAvailable])
+
   const irALogin = () => {
     setVistaPublica('login')
     if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
@@ -188,23 +204,6 @@ function Shell() {
     return <Landing onLogin={irALogin} />
   }
   if (!socio) return <Onboarding />
-
-  // Auto-switch a modo rider cuando llega asignacion pendiente,
-  // aunque el socio este en modo admin. Asi el modal full-screen aparece.
-  useEffect(() => {
-    if (pendingNew && mode !== 'rider' && riderAvailable) {
-      setMode('rider')
-    }
-  }, [pendingNew, mode, riderAvailable])
-
-  // Si hay asignaciones activas (aceptadas, no entregadas) tambien forzamos
-  // modo rider al abrir la app (despues de login).
-  const hayActivasNoEntregadas = (asignaciones || []).some((a) => !a.entregado_at)
-  useEffect(() => {
-    if (hayActivasNoEntregadas && mode !== 'rider' && riderAvailable) {
-      setMode('rider')
-    }
-  }, [hayActivasNoEntregadas, mode, riderAvailable])
 
   // Modal de pedido entrante a nivel global (visible en cualquier modo)
   const modalEntrante = pendingNew ? (
