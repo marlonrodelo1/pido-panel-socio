@@ -53,7 +53,7 @@ export function RiderProvider({ children }) {
   useEffect(() => {
     if (!riderAccountId) { setAsignaciones([]); return }
     let cancel = false
-    ;(async () => {
+    async function loadAsignaciones() {
       const { data } = await supabase
         .from('pedido_asignaciones')
         .select('id, pedido_id, estado, intento, distancia_metros, aceptado_at, recogido_at, entregado_at, created_at, pedidos!inner(id, codigo, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, estado, establecimiento_id, establecimientos!inner(id, nombre, direccion, telefono, latitud, longitud))')
@@ -73,7 +73,18 @@ export function RiderProvider({ children }) {
         )
         if (reciente) setPendingNew((prev) => prev?.id === reciente.id ? prev : reciente)
       }
-    })()
+    }
+    loadAsignaciones()
+
+    // Recargar al volver al foreground o al recibir push
+    const onFocus = () => loadAsignaciones()
+    const onPushReceived = () => loadAsignaciones()
+    const onPushTapped = () => loadAsignaciones()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAsignaciones() })
+    window.addEventListener('pidoo-push-received', onPushReceived)
+    window.addEventListener('pidoo-push-tapped', onPushTapped)
+
     const ch = supabase.channel('rider-asign-' + riderAccountId)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'pedido_asignaciones', filter: `rider_account_id=eq.${riderAccountId}` },
@@ -109,6 +120,9 @@ export function RiderProvider({ children }) {
     return () => {
       cancel = true
       try { supabase.removeChannel(ch) } catch (_) {}
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('pidoo-push-received', onPushReceived)
+      window.removeEventListener('pidoo-push-tapped', onPushTapped)
       channelRef.current = null
     }
   }, [riderAccountId])

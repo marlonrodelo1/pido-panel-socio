@@ -116,10 +116,13 @@ export async function registerSocioNativePush(userId, onNotification) {
         })
       } catch (e) { console.warn('[push] local notif fail', e?.message) }
 
+      // Evento global para que RiderContext recargue
+      try { window.dispatchEvent(new CustomEvent('pidoo-push-received', { detail: notification })) } catch (_) {}
       if (onNotification) onNotification(notification, false)
     })
 
     PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+      try { window.dispatchEvent(new CustomEvent('pidoo-push-tapped', { detail: action.notification })) } catch (_) {}
       if (onNotification) onNotification(action.notification, true)
     })
 
