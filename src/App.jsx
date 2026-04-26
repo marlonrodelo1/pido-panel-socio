@@ -75,7 +75,6 @@ function ShellRider({ switchToAdmin }) {
   const [section, setSection] = useState('rider-pedidos')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [detalleId, setDetalleId] = useState(null)
-  const { pendingNew, accept, reject, dismissPending } = useRider()
 
   const handleNavigate = (id) => {
     setDrawerOpen(false)
@@ -113,20 +112,13 @@ function ShellRider({ switchToAdmin }) {
       <main>{page}</main>
       <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
       <DrawerRider open={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleNavigate} />
-      {pendingNew && (
-        <ModalPedidoEntrante
-          asignacion={pendingNew}
-          onAccept={async (id) => { await accept(id); setSection('rider-pedidos') }}
-          onReject={async (id, motivo) => { await reject(id, motivo) }}
-          onClose={dismissPending}
-        />
-      )}
     </div>
   )
 }
 
 function Shell() {
   const { session, socio, loading } = useSocio()
+  const { pendingNew, accept, reject, dismissPending, asignaciones } = useRider()
   const [adminSection, setAdminSection] = useState('dashboard')
   // En APK/IPA nativa siempre arrancamos en Login (la landing es solo
   // para la web socio.pidoo.es).
@@ -197,15 +189,48 @@ function Shell() {
   }
   if (!socio) return <Onboarding />
 
+  // Auto-switch a modo rider cuando llega asignacion pendiente,
+  // aunque el socio este en modo admin. Asi el modal full-screen aparece.
+  useEffect(() => {
+    if (pendingNew && mode !== 'rider' && riderAvailable) {
+      setMode('rider')
+    }
+  }, [pendingNew, mode, riderAvailable])
+
+  // Si hay asignaciones activas (aceptadas, no entregadas) tambien forzamos
+  // modo rider al abrir la app (despues de login).
+  const hayActivasNoEntregadas = (asignaciones || []).some((a) => !a.entregado_at)
+  useEffect(() => {
+    if (hayActivasNoEntregadas && mode !== 'rider' && riderAvailable) {
+      setMode('rider')
+    }
+  }, [hayActivasNoEntregadas, mode, riderAvailable])
+
+  // Modal de pedido entrante a nivel global (visible en cualquier modo)
+  const modalEntrante = pendingNew ? (
+    <ModalPedidoEntrante
+      asignacion={pendingNew}
+      onAccept={async (id) => { await accept(id); setMode('rider') }}
+      onReject={async (id, motivo) => { await reject(id, motivo) }}
+      onClose={dismissPending}
+    />
+  ) : null
+
   if (mode === 'rider' && riderAvailable) {
-    return <ShellRider switchToAdmin={() => setMode('admin')} />
+    return <>
+      <ShellRider switchToAdmin={() => setMode('admin')} />
+      {modalEntrante}
+    </>
   }
-  return <ShellAdmin
-    section={adminSection}
-    setSection={setAdminSection}
-    switchToRider={() => setMode('rider')}
-    riderAvailable={riderAvailable}
-  />
+  return <>
+    <ShellAdmin
+      section={adminSection}
+      setSection={setAdminSection}
+      switchToRider={() => setMode('rider')}
+      riderAvailable={riderAvailable}
+    />
+    {modalEntrante}
+  </>
 }
 
 export default function App() {

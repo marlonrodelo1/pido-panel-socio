@@ -60,7 +60,22 @@ export async function registerSocioNativePush(userId, onNotification) {
       await debugLog('plugin_registration_error', { error: err?.error || String(err) })
     })
 
-    PushNotifications.addListener('pushNotificationReceived', (notification) => {
+    PushNotifications.addListener('pushNotificationReceived', async (notification) => {
+      // Siempre mostrar LocalNotification visible (aunque la app este en foreground,
+      // Android no la pinta automaticamente. Lo forzamos).
+      try {
+        const { LocalNotifications } = await import('@capacitor/local-notifications')
+        await LocalNotifications.schedule({
+          notifications: [{
+            id: Math.floor(Math.random() * 100000),
+            title: notification.title || 'Pidoo',
+            body: notification.body || '',
+            sound: null,
+            extra: notification.data || {},
+            smallIcon: 'ic_stat_icon_config_sample',
+          }],
+        })
+      } catch (e) { console.warn('[push] local notif fail', e?.message) }
       if (onNotification) onNotification(notification, false)
     })
 
