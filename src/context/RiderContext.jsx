@@ -61,7 +61,18 @@ export function RiderProvider({ children }) {
         .in('estado', ['esperando_aceptacion', 'aceptado'])
         .is('entregado_at', null)
         .order('created_at', { ascending: false })
-      if (!cancel) setAsignaciones(data || [])
+      if (!cancel) {
+        setAsignaciones(data || [])
+        // Si hay una asignacion esperando_aceptacion creada en los ultimos 3 min,
+        // abrir el modal automaticamente (el rider abrio la app justo cuando le
+        // llego un pedido pendiente).
+        const ahora = Date.now()
+        const reciente = (data || []).find((a) =>
+          a.estado === 'esperando_aceptacion'
+          && (ahora - new Date(a.created_at).getTime()) < 180_000
+        )
+        if (reciente) setPendingNew((prev) => prev?.id === reciente.id ? prev : reciente)
+      }
     })()
     const ch = supabase.channel('rider-asign-' + riderAccountId)
       .on('postgres_changes',

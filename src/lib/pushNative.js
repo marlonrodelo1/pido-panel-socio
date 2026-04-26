@@ -75,8 +75,31 @@ export async function registerSocioNativePush(userId, onNotification) {
     })
 
     PushNotifications.addListener('pushNotificationReceived', async (notification) => {
-      // Siempre mostrar LocalNotification visible con sonido + vibracion
-      // (en foreground Android no muestra el push del SO automaticamente).
+      // 1) Sonido inmediato via Web Audio API (no depende de canales Android)
+      try {
+        const Ctx = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext)
+        if (Ctx) {
+          const ctx = new Ctx()
+          for (let i = 0; i < 3; i++) {
+            setTimeout(() => {
+              try {
+                const osc = ctx.createOscillator(); const gain = ctx.createGain()
+                osc.type = 'sine'; osc.frequency.value = 880
+                gain.gain.setValueAtTime(0, ctx.currentTime)
+                gain.gain.linearRampToValueAtTime(0.5, ctx.currentTime + 0.02)
+                gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4)
+                osc.connect(gain).connect(ctx.destination)
+                osc.start(); osc.stop(ctx.currentTime + 0.5)
+              } catch (_) {}
+            }, i * 600)
+          }
+        }
+      } catch (_) {}
+
+      // 2) Vibracion
+      try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400, 200, 400]) } catch (_) {}
+
+      // 3) LocalNotification visual (sin channelId, deja que use default)
       try {
         const { LocalNotifications } = await import('@capacitor/local-notifications')
         try { await LocalNotifications.requestPermissions() } catch (_) {}
@@ -85,16 +108,14 @@ export async function registerSocioNativePush(userId, onNotification) {
             id: Math.floor(Math.random() * 100000),
             title: notification.title || 'Pidoo',
             body: notification.body || '',
-            sound: 'default',
-            channelId: 'pedidos',
+            sound: null, // ya sonamos con WebAudio arriba
             ongoing: false,
             autoCancel: true,
             extra: notification.data || {},
           }],
         })
       } catch (e) { console.warn('[push] local notif fail', e?.message) }
-      // Vibrar fuerte si esta disponible
-      try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]) } catch (_) {}
+
       if (onNotification) onNotification(notification, false)
     })
 
