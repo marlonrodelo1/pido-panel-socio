@@ -6,7 +6,7 @@ import { useRider } from '../context/RiderContext'
 
 export default function DrawerRider({ open, onClose, onNavigate }) {
   const { socio, logout } = useSocio()
-  const { online, goOffline, goOnline } = useRider()
+  const { online, goOffline, goOnline, busyToggle } = useRider()
 
   if (!open) return null
 
@@ -65,17 +65,19 @@ export default function DrawerRider({ open, onClose, onNavigate }) {
 
         <div style={{ padding: '14px 18px calc(14px + env(safe-area-inset-bottom))' }}>
           {online ? (
-            <button onClick={async () => { await goOffline(); onClose?.() }} style={{
+            <button onClick={async () => { await goOffline(); onClose?.() }} disabled={busyToggle} style={{
               ...ds.dangerBtn, width: '100%', height: 48, fontSize: type.base,
               background: colors.danger, color: '#fff', border: `1px solid ${colors.danger}`,
+              opacity: busyToggle ? 0.6 : 1,
             }}>
-              Salir de linea
+              {busyToggle ? 'Desconectando…' : 'Salir de línea'}
             </button>
           ) : (
-            <button onClick={async () => { await goOnline(); onClose?.() }} style={{
+            <button onClick={async () => { await goOnline(); onClose?.() }} disabled={busyToggle} style={{
               ...ds.primaryBtn, width: '100%', height: 48, fontSize: type.base,
+              opacity: busyToggle ? 0.6 : 1,
             }}>
-              Conectarme
+              {busyToggle ? 'Conectando…' : 'Conectarme'}
             </button>
           )}
         </div>

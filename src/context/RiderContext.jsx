@@ -133,7 +133,11 @@ export function RiderProvider({ children }) {
   }, [asignaciones])
 
   // Acciones del rider
+  const [busyToggle, setBusyToggle] = useState(false)
+
   const goOnline = useCallback(async () => {
+    if (busyToggle) return
+    setBusyToggle(true)
     let lat, lng
     try {
       const p = await getCurrentPosition()
@@ -141,19 +145,42 @@ export function RiderProvider({ children }) {
       setPos({ lat, lng })
     } catch (e) {
       console.warn('[Rider] gps inicial fail', e?.message)
+      // Si el rider denego permisos GPS, le avisamos pero le dejamos
+      // conectarse igual (la edge function tolera lat/lng undefined).
+      try {
+        if (typeof window !== 'undefined' && window.alert) {
+          window.alert('Activa la ubicacion para que los pedidos te lleguen mas rapido. Te conectamos sin GPS por ahora.')
+        }
+      } catch (_) {}
     }
-    await riderApi.online({ lat, lng })
-    setOnline(true)
-    await refreshSocio()
-  }, [refreshSocio])
+    try {
+      await riderApi.online({ lat, lng })
+      setOnline(true)
+      await refreshSocio()
+    } catch (e) {
+      console.error('[Rider] online failed', e)
+      try { if (window.alert) window.alert('Error al conectarte: ' + (e?.message || 'desconocido')) } catch (_) {}
+    } finally {
+      setBusyToggle(false)
+    }
+  }, [refreshSocio, busyToggle])
 
   const goOffline = useCallback(async () => {
-    await riderApi.offline()
-    setOnline(false)
-    trackerRef.current?.stop()
-    trackerRef.current = null
-    await refreshSocio()
-  }, [refreshSocio])
+    if (busyToggle) return
+    setBusyToggle(true)
+    try {
+      await riderApi.offline()
+      setOnline(false)
+      trackerRef.current?.stop()
+      trackerRef.current = null
+      await refreshSocio()
+    } catch (e) {
+      console.error('[Rider] offline failed', e)
+      try { if (window.alert) window.alert('Error al desconectarte: ' + (e?.message || 'desconocido')) } catch (_) {}
+    } finally {
+      setBusyToggle(false)
+    }
+  }, [refreshSocio, busyToggle])
 
   const accept = useCallback(async (asignacionId) => {
     await riderApi.accept(asignacionId)
@@ -182,11 +209,11 @@ export function RiderProvider({ children }) {
   const value = useMemo(() => ({
     online, riderAccountId,
     asignaciones, pendingNew,
-    pos,
+    pos, busyToggle,
     goOnline, goOffline,
     accept, reject, pickup, deliver,
     dismissPending,
-  }), [online, riderAccountId, asignaciones, pendingNew, pos, goOnline, goOffline, accept, reject, pickup, deliver, dismissPending])
+  }), [online, riderAccountId, asignaciones, pendingNew, pos, busyToggle, goOnline, goOffline, accept, reject, pickup, deliver, dismissPending])
 
   return <RiderContext.Provider value={value}>{children}</RiderContext.Provider>
 }

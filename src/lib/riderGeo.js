@@ -15,17 +15,25 @@ async function getCapPlugin() {
   return CapacitorGeolocation
 }
 
+export async function ensureLocationPermission() {
+  const cap = await getCapPlugin()
+  if (!cap) return true
+  try {
+    const perm = await cap.checkPermissions()
+    if (perm.location === 'granted' || perm.coarseLocation === 'granted') return true
+    const req = await cap.requestPermissions()
+    return req.location === 'granted' || req.coarseLocation === 'granted'
+  } catch (_) {
+    return false
+  }
+}
+
 export async function getCurrentPosition() {
   const cap = await getCapPlugin()
   if (cap) {
-    try {
-      const perm = await cap.checkPermissions()
-      if (perm.location !== 'granted') {
-        const req = await cap.requestPermissions()
-        if (req.location !== 'granted') throw new Error('permission_denied')
-      }
-    } catch (_) {}
-    const pos = await cap.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 })
+    const granted = await ensureLocationPermission()
+    if (!granted) throw new Error('permission_denied')
+    const pos = await cap.getCurrentPosition({ enableHighAccuracy: false, timeout: 6000, maximumAge: 30000 })
     return { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }
   }
   return new Promise((resolve, reject) => {
@@ -33,7 +41,7 @@ export async function getCurrentPosition() {
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }),
       (err) => reject(err),
-      { enableHighAccuracy: true, timeout: 15000 },
+      { enableHighAccuracy: false, timeout: 6000, maximumAge: 30000 },
     )
   })
 }

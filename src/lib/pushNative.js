@@ -24,6 +24,20 @@ export async function registerSocioNativePush(userId, onNotification) {
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
 
+    // Crea el canal 'pedidos' con prioridad alta + sonido + vibracion
+    try {
+      await PushNotifications.createChannel({
+        id: 'pedidos',
+        name: 'Pedidos nuevos',
+        description: 'Avisos de pedidos para repartir',
+        importance: 5, // IMPORTANCE_HIGH (heads-up + sound)
+        sound: 'default',
+        vibration: true,
+        lights: true,
+        visibility: 1, // Public
+      })
+    } catch (_) {}
+
     async function linkOrphanFcmToUser() {
       const { data, error } = await supabase.rpc('claim_orphan_push_tokens', { p_user_type: 'socio' })
       if (error) await debugLog('claim_rpc_error', { message: error.message })
@@ -61,21 +75,26 @@ export async function registerSocioNativePush(userId, onNotification) {
     })
 
     PushNotifications.addListener('pushNotificationReceived', async (notification) => {
-      // Siempre mostrar LocalNotification visible (aunque la app este en foreground,
-      // Android no la pinta automaticamente. Lo forzamos).
+      // Siempre mostrar LocalNotification visible con sonido + vibracion
+      // (en foreground Android no muestra el push del SO automaticamente).
       try {
         const { LocalNotifications } = await import('@capacitor/local-notifications')
+        try { await LocalNotifications.requestPermissions() } catch (_) {}
         await LocalNotifications.schedule({
           notifications: [{
             id: Math.floor(Math.random() * 100000),
             title: notification.title || 'Pidoo',
             body: notification.body || '',
-            sound: null,
+            sound: 'default',
+            channelId: 'pedidos',
+            ongoing: false,
+            autoCancel: true,
             extra: notification.data || {},
-            smallIcon: 'ic_stat_icon_config_sample',
           }],
         })
       } catch (e) { console.warn('[push] local notif fail', e?.message) }
+      // Vibrar fuerte si esta disponible
+      try { if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]) } catch (_) {}
       if (onNotification) onNotification(notification, false)
     })
 
