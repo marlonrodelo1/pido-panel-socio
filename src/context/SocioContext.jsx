@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { registerSocioPush, unregisterSocioPush } from '../lib/webPush'
+import { registerSocioNativePush, unregisterSocioNativePush } from '../lib/pushNative'
 
 const SocioContext = createContext(null)
 
@@ -66,7 +67,7 @@ export function SocioProvider({ children }) {
     }
   }, [fetchSocio])
 
-  // Registrar push una vez por sesión
+  // Registrar push una vez por sesión (web VAPID + nativo FCM/APNs)
   async function maybeRegisterPush(uid) {
     if (pushRegisteredRef.current) return
     pushRegisteredRef.current = true
@@ -75,9 +76,10 @@ export function SocioProvider({ children }) {
       if (res.reason === 'no-vapid') {
         setPushToast({ type: 'info', message: 'Para notificaciones configura VAPID key' })
       } else if (res.reason !== 'denied' && res.reason !== 'unsupported') {
-        console.warn('[SocioContext] push no registrado:', res.reason)
+        console.warn('[SocioContext] web push no registrado:', res.reason)
       }
     }
+    try { await registerSocioNativePush(uid) } catch (e) { console.warn('[SocioContext] native push fail', e?.message) }
   }
 
   // Registrar push al tener user+socio (evita doble SIGNED_IN races)
@@ -143,6 +145,7 @@ export function SocioProvider({ children }) {
 
   const logout = async () => {
     try { if (user?.id) await unregisterSocioPush(user.id) } catch (_) {}
+    try { await unregisterSocioNativePush() } catch (_) {}
     pushRegisteredRef.current = false
     await supabase.auth.signOut()
     setSocio(null)

@@ -15,10 +15,25 @@ const config: CapacitorConfig = {
     StatusBar: {
       style: 'LIGHT',
       backgroundColor: '#FAFAF7',
+      overlaysWebView: true,
+    },
+    PushNotifications: {
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
+    LocalNotifications: {
+      smallIcon: 'ic_stat_icon_config_sample',
+      iconColor: '#FF6B2C',
+      sound: 'beep.wav',
+    },
+    Geolocation: {
+      // Capacitor delega permisos a Info.plist (iOS) y AndroidManifest (Android)
     },
   },
   server: {
     androidScheme: 'https',
+  },
+  ios: {
+    contentInset: 'always',
   },
 }
 
