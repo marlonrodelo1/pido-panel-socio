@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { SocioProvider, useSocio } from './context/SocioContext'
 import { RiderProvider, useRider } from './context/RiderContext'
 import Login from './pages/Login'
@@ -22,6 +23,7 @@ import RiderEsperando from './pages/rider/RiderEsperando'
 import RiderChat from './pages/rider/RiderChat'
 import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
 import RiderCompletadas from './pages/rider/RiderCompletadas'
+import SeguirPedido from './pages/SeguirPedido'
 import { colors, type } from './lib/uiStyles'
 
 const MODE_KEY = 'pidoo-socio-mode'
@@ -126,8 +128,12 @@ function ShellRider({ switchToAdmin }) {
 function Shell() {
   const { session, socio, loading } = useSocio()
   const [adminSection, setAdminSection] = useState('dashboard')
+  // En APK/IPA nativa siempre arrancamos en Login (la landing es solo
+  // para la web socio.pidoo.es).
+  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform?.()
   const [vistaPublica, setVistaPublica] = useState(
-    typeof window !== 'undefined' && window.location.pathname.startsWith('/login') ? 'login' : 'landing'
+    isNative ? 'login'
+      : (typeof window !== 'undefined' && window.location.pathname.startsWith('/login') ? 'login' : 'landing')
   )
   const [mode, setMode] = useState(() => {
     if (typeof window === 'undefined') return 'admin'
@@ -203,6 +209,13 @@ function Shell() {
 }
 
 export default function App() {
+  // Tracking publico /seguir/<codigo> sin auth ni providers
+  if (typeof window !== 'undefined') {
+    const m = window.location.pathname.match(/^\/seguir\/([^/]+)/)
+    if (m) {
+      return <SeguirPedido codigo={decodeURIComponent(m[1])} />
+    }
+  }
   return (
     <SocioProvider>
       <RiderProvider>
