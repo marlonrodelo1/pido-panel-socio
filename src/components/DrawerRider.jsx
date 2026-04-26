@@ -65,14 +65,14 @@ export default function DrawerRider({ open, onClose, onNavigate }) {
 
         <div style={{ padding: '14px 18px calc(14px + env(safe-area-inset-bottom))' }}>
           {online ? (
-            <button onClick={() => { goOffline(); onClose?.() }} style={{
+            <button onClick={() => goOffline()} style={{
               ...ds.dangerBtn, width: '100%', height: 48, fontSize: type.base,
               background: colors.danger, color: '#fff', border: `1px solid ${colors.danger}`,
             }}>
               Salir de línea
             </button>
           ) : (
-            <button onClick={() => { goOnline(); onClose?.() }} style={{
+            <button onClick={() => goOnline()} style={{
               ...ds.primaryBtn, width: '100%', height: 48, fontSize: type.base,
             }}>
               Conectarme
