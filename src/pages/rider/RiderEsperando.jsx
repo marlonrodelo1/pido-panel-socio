@@ -7,6 +7,7 @@ import { useRider } from '../../context/RiderContext'
 import { useSocio } from '../../context/SocioContext'
 import { supabase } from '../../lib/supabase'
 import { loadGoogleMaps } from '../../lib/googleMaps'
+import { emojiIcon, imageRoundIcon } from '../../lib/mapMarkers'
 
 export default function RiderEsperando({ onGoPedidos }) {
   const { socio } = useSocio()
@@ -23,7 +24,7 @@ export default function RiderEsperando({ onGoPedidos }) {
     ;(async () => {
       const { data: vinc } = await supabase
         .from('socio_establecimiento')
-        .select('establecimiento_id, establecimientos!inner(id, nombre, latitud, longitud, activo, estado)')
+        .select('establecimiento_id, establecimientos!inner(id, nombre, latitud, longitud, activo, estado, logo_url)')
         .eq('socio_id', socio.id)
         .eq('estado', 'activa')
       if (cancel) return
@@ -56,23 +57,30 @@ export default function RiderEsperando({ onGoPedidos }) {
     return () => { cancel = true }
   }, [])
 
-  // Marcar restaurantes
+  // Marcar restaurantes (logo redondo o emoji)
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return
     const maps = window.google.maps
     markersRef.current.rests.forEach((m) => m.setMap(null))
-    markersRef.current.rests = restaurantes.map((r) => new maps.Marker({
-      position: { lat: r.latitud, lng: r.longitud },
-      map: mapRef.current, title: r.nombre,
-      icon: {
-        path: maps.SymbolPath.CIRCLE,
-        fillColor: '#FF6B2C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 12,
-      },
-      label: { text: '🍽', fontSize: '14px' },
-    }))
+    markersRef.current.rests = []
+    ;(async () => {
+      const newMarkers = []
+      for (const r of restaurantes) {
+        const icon = r.logo_url
+          ? await imageRoundIcon(r.logo_url, '#FF6B2C')
+          : emojiIcon('🍽️', '#FF6B2C')
+        if (!mapRef.current) return
+        newMarkers.push(new maps.Marker({
+          position: { lat: r.latitud, lng: r.longitud },
+          map: mapRef.current, title: r.nombre,
+          icon,
+        }))
+      }
+      markersRef.current.rests = newMarkers
+    })()
   }, [restaurantes])
 
-  // Marcar pedidos (asignaciones)
+  // Marcar pedidos (casa cliente)
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return
     const maps = window.google.maps
@@ -83,15 +91,11 @@ export default function RiderEsperando({ onGoPedidos }) {
         position: { lat: a.pedidos.lat_entrega, lng: a.pedidos.lng_entrega },
         map: mapRef.current,
         title: `Pedido #${a.pedidos.codigo}`,
-        icon: {
-          path: maps.SymbolPath.CIRCLE,
-          fillColor: '#1F1F1E', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 11,
-        },
-        label: { text: '📦', fontSize: '12px' },
+        icon: emojiIcon('🏠', '#1F1F1E'),
       }))
   }, [asignaciones])
 
-  // Marcador propio + recentrar
+  // Marcador propio (rider con emoji moto)
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps || !pos) return
     const maps = window.google.maps
@@ -99,10 +103,7 @@ export default function RiderEsperando({ onGoPedidos }) {
     if (!markersRef.current.rider) {
       markersRef.current.rider = new maps.Marker({
         position: p, map: mapRef.current, title: 'Tú',
-        icon: {
-          path: maps.SymbolPath.CIRCLE,
-          fillColor: '#16A34A', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 4, scale: 13,
-        },
+        icon: emojiIcon('🛵', '#16A34A'),
         zIndex: 999,
       })
     } else {

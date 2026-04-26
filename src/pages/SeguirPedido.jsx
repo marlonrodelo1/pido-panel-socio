@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { loadGoogleMaps } from '../lib/googleMaps'
+import { emojiIcon, imageRoundIcon } from '../lib/mapMarkers'
 
 const STEPS = [
   { id: 'aceptado', label: 'Aceptado' },
@@ -37,7 +38,7 @@ export default function SeguirPedido({ codigo }) {
     async function load() {
       const { data: ped, error: pedErr } = await supabase
         .from('pedidos')
-        .select('id, codigo, estado, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, recogido_at, entregado_at, minutos_preparacion, establecimiento_id, establecimientos(nombre, telefono, direccion, latitud, longitud)')
+        .select('id, codigo, estado, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, recogido_at, entregado_at, minutos_preparacion, establecimiento_id, establecimientos(nombre, telefono, direccion, latitud, longitud, logo_url)')
         .eq('codigo', (codigo || '').toUpperCase())
         .maybeSingle()
       if (cancel) return
@@ -102,25 +103,25 @@ export default function SeguirPedido({ codigo }) {
       })
       mapRef.current = map
 
-      markersRef.current.rest = new maps.Marker({
-        position: { lat: restLat, lng: restLng },
-        map, title: pedido.establecimientos.nombre || 'Restaurante',
-        icon: {
-          path: maps.SymbolPath.CIRCLE,
-          fillColor: '#FF6B2C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 12,
-        },
-        label: { text: '🍽', fontSize: '14px' },
-      })
+      // Restaurante: logo redondo con borde naranja, fallback emoji
+      ;(async () => {
+        const restIcon = pedido.establecimientos?.logo_url
+          ? await imageRoundIcon(pedido.establecimientos.logo_url, '#FF6B2C')
+          : emojiIcon('🍽️', '#FF6B2C')
+        if (cancel) return
+        markersRef.current.rest = new maps.Marker({
+          position: { lat: restLat, lng: restLng },
+          map, title: pedido.establecimientos.nombre || 'Restaurante',
+          icon: restIcon,
+        })
+      })()
 
+      // Cliente: emoji casa
       if (pedido.lat_entrega && pedido.lng_entrega) {
         markersRef.current.cli = new maps.Marker({
           position: { lat: pedido.lat_entrega, lng: pedido.lng_entrega },
           map, title: 'Entrega',
-          icon: {
-            path: maps.SymbolPath.CIRCLE,
-            fillColor: '#1F1F1E', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3, scale: 12,
-          },
-          label: { text: '🏠', fontSize: '14px' },
+          icon: emojiIcon('🏠', '#1F1F1E'),
         })
       }
     }).catch((e) => console.warn('[seguir] gmaps load fail', e?.message))
@@ -135,11 +136,7 @@ export default function SeguirPedido({ codigo }) {
     if (!markersRef.current.rider) {
       markersRef.current.rider = new maps.Marker({
         position: pos, map: mapRef.current, title: rider.nombre,
-        icon: {
-          path: maps.SymbolPath.CIRCLE,
-          fillColor: '#16A34A', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 4, scale: 14,
-        },
-        label: { text: '🛵', fontSize: '16px' },
+        icon: emojiIcon('🛵', '#16A34A'),
         zIndex: 999,
       })
     } else {

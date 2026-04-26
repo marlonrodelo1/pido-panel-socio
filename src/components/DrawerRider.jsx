@@ -34,7 +34,7 @@ export default function DrawerRider({ open, onClose, onNavigate }) {
         position: 'fixed', top: 0, left: 0, bottom: 0, width: '85%', maxWidth: 360, zIndex: 50,
         background: colors.surface, display: 'flex', flexDirection: 'column',
       }}>
-        <header style={{ padding: '20px 18px 16px', borderBottom: `1px solid ${colors.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <header style={{ padding: 'calc(env(safe-area-inset-top) + 20px) 18px 16px', borderBottom: `1px solid ${colors.border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
             width: 48, height: 48, borderRadius: 24,
             background: colors.primarySoft, color: colors.primary,
