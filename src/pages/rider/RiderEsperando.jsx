@@ -16,6 +16,10 @@ export default function RiderEsperando({ onGoPedidos }) {
   const mapRef = useRef(null)
   const markersRef = useRef({ rider: null, rests: [], pedidos: [] })
   const [restaurantes, setRestaurantes] = useState([])
+  // mapReady fuerza un re-render cuando el mapa esta listo, para que los
+  // efectos de marcadores se vuelvan a disparar aunque sus datos ya estuvieran
+  // cargados antes que la API de Google.
+  const [mapReady, setMapReady] = useState(false)
 
   // Cargar restaurantes vinculados al socio
   useEffect(() => {
@@ -53,36 +57,39 @@ export default function RiderEsperando({ onGoPedidos }) {
         clickableIcons: false,
         styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }],
       })
+      setMapReady(true)
     }).catch((e) => console.warn('[esperando] gmaps load fail', e?.message))
     return () => { cancel = true }
   }, [])
 
   // Marcar restaurantes (logo redondo o emoji)
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps) return
+    if (!mapReady || !mapRef.current || !window.google?.maps) return
     const maps = window.google.maps
     markersRef.current.rests.forEach((m) => m.setMap(null))
     markersRef.current.rests = []
+    let cancel = false
     ;(async () => {
       const newMarkers = []
       for (const r of restaurantes) {
         const icon = r.logo_url
           ? await imageRoundIcon(r.logo_url, '#FF6B2C')
           : emojiIcon('🍽️', '#FF6B2C')
-        if (!mapRef.current) return
+        if (cancel || !mapRef.current) return
         newMarkers.push(new maps.Marker({
           position: { lat: r.latitud, lng: r.longitud },
           map: mapRef.current, title: r.nombre,
           icon,
         }))
       }
-      markersRef.current.rests = newMarkers
+      if (!cancel) markersRef.current.rests = newMarkers
     })()
-  }, [restaurantes])
+    return () => { cancel = true }
+  }, [mapReady, restaurantes])
 
   // Marcar pedidos (casa cliente)
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps) return
+    if (!mapReady || !mapRef.current || !window.google?.maps) return
     const maps = window.google.maps
     markersRef.current.pedidos.forEach((m) => m.setMap(null))
     markersRef.current.pedidos = asignaciones
@@ -93,11 +100,11 @@ export default function RiderEsperando({ onGoPedidos }) {
         title: `Pedido #${a.pedidos.codigo}`,
         icon: emojiIcon('🏠', '#1F1F1E'),
       }))
-  }, [asignaciones])
+  }, [mapReady, asignaciones])
 
   // Marcador propio (rider con emoji moto)
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps || !pos) return
+    if (!mapReady || !mapRef.current || !window.google?.maps || !pos) return
     const maps = window.google.maps
     const p = { lat: pos.lat, lng: pos.lng }
     if (!markersRef.current.rider) {
@@ -116,7 +123,7 @@ export default function RiderEsperando({ onGoPedidos }) {
       markersRef.current.pedidos.forEach((m) => bounds.extend(m.getPosition()))
       if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 60)
     } catch (_) {}
-  }, [pos?.lat, pos?.lng, restaurantes.length, asignaciones.length])
+  }, [mapReady, pos?.lat, pos?.lng, restaurantes.length, asignaciones.length])
 
   const tienePedidos = asignaciones.length > 0
   const txtPedidos = asignaciones.length === 1 ? '1 pedido en espera' : `${asignaciones.length} pedidos en espera`

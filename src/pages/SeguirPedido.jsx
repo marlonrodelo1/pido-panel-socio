@@ -30,6 +30,10 @@ export default function SeguirPedido({ codigo }) {
   const mapRef = useRef(null)
   const mapDivRef = useRef(null)
   const markersRef = useRef({})
+  // mapReady fuerza un re-render cuando el mapa esta listo, para que los
+  // efectos de marcadores se vuelvan a disparar aunque sus datos ya
+  // estuvieran cargados antes de que la API de Google se inicializara.
+  const [mapReady, setMapReady] = useState(false)
 
   useEffect(() => {
     if (!codigo) return
@@ -84,16 +88,17 @@ export default function SeguirPedido({ codigo }) {
     return () => { cancel = true; clearInterval(id); try { supabase.removeChannel(ch) } catch (_) {} }
   }, [codigo])
 
-  // Google Maps init
+  // Google Maps init (solo el mapa; los marcadores van en efectos separados)
   useEffect(() => {
     if (!pedido?.establecimientos) return
+    if (mapRef.current) return
+    const restLat = pedido.establecimientos.latitud
+    const restLng = pedido.establecimientos.longitud
+    if (restLat == null || restLng == null) return
     let cancel = false
     loadGoogleMaps().then((maps) => {
       if (cancel || !mapDivRef.current || mapRef.current) return
-      const restLat = pedido.establecimientos.latitud
-      const restLng = pedido.establecimientos.longitud
-      if (restLat == null || restLng == null) return
-      const map = new maps.Map(mapDivRef.current, {
+      mapRef.current = new maps.Map(mapDivRef.current, {
         center: { lat: restLat, lng: restLng },
         zoom: 14,
         disableDefaultUI: true,
@@ -101,36 +106,53 @@ export default function SeguirPedido({ codigo }) {
         clickableIcons: false,
         styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }],
       })
-      mapRef.current = map
-
-      // Restaurante: logo redondo con borde naranja, fallback emoji
-      ;(async () => {
-        const restIcon = pedido.establecimientos?.logo_url
-          ? await imageRoundIcon(pedido.establecimientos.logo_url, '#FF6B2C')
-          : emojiIcon('🍽️', '#FF6B2C')
-        if (cancel) return
-        markersRef.current.rest = new maps.Marker({
-          position: { lat: restLat, lng: restLng },
-          map, title: pedido.establecimientos.nombre || 'Restaurante',
-          icon: restIcon,
-        })
-      })()
-
-      // Cliente: emoji casa
-      if (pedido.lat_entrega && pedido.lng_entrega) {
-        markersRef.current.cli = new maps.Marker({
-          position: { lat: pedido.lat_entrega, lng: pedido.lng_entrega },
-          map, title: 'Entrega',
-          icon: emojiIcon('🏠', '#1F1F1E'),
-        })
-      }
+      setMapReady(true)
     }).catch((e) => console.warn('[seguir] gmaps load fail', e?.message))
     return () => { cancel = true }
-  }, [pedido?.establecimientos?.latitud, pedido?.establecimientos?.longitud, pedido?.lat_entrega])
+  }, [pedido?.establecimientos?.latitud, pedido?.establecimientos?.longitud])
 
-  // Update rider marker
+  // Marcador del restaurante (logo redondo con borde naranja, fallback emoji)
   useEffect(() => {
-    if (!mapRef.current || !rider?.lat || !rider?.lng || !window.google?.maps) return
+    if (!mapReady || !mapRef.current || !window.google?.maps) return
+    const maps = window.google.maps
+    const restLat = pedido?.establecimientos?.latitud
+    const restLng = pedido?.establecimientos?.longitud
+    if (restLat == null || restLng == null) return
+    let cancel = false
+    ;(async () => {
+      const restIcon = pedido.establecimientos?.logo_url
+        ? await imageRoundIcon(pedido.establecimientos.logo_url, '#FF6B2C')
+        : emojiIcon('🍽️', '#FF6B2C')
+      if (cancel || !mapRef.current) return
+      if (markersRef.current.rest) markersRef.current.rest.setMap(null)
+      markersRef.current.rest = new maps.Marker({
+        position: { lat: restLat, lng: restLng },
+        map: mapRef.current,
+        title: pedido.establecimientos.nombre || 'Restaurante',
+        icon: restIcon,
+      })
+    })()
+    return () => { cancel = true }
+  }, [mapReady, pedido?.establecimientos?.latitud, pedido?.establecimientos?.longitud, pedido?.establecimientos?.logo_url])
+
+  // Marcador del cliente (casa)
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !window.google?.maps) return
+    const maps = window.google.maps
+    if (markersRef.current.cli) { markersRef.current.cli.setMap(null); markersRef.current.cli = null }
+    if (pedido?.lat_entrega && pedido?.lng_entrega) {
+      markersRef.current.cli = new maps.Marker({
+        position: { lat: pedido.lat_entrega, lng: pedido.lng_entrega },
+        map: mapRef.current,
+        title: 'Entrega',
+        icon: emojiIcon('🏠', '#1F1F1E'),
+      })
+    }
+  }, [mapReady, pedido?.lat_entrega, pedido?.lng_entrega])
+
+  // Marcador del rider (socio)
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !rider?.lat || !rider?.lng || !window.google?.maps) return
     const maps = window.google.maps
     const pos = { lat: rider.lat, lng: rider.lng }
     if (!markersRef.current.rider) {
@@ -144,10 +166,10 @@ export default function SeguirPedido({ codigo }) {
     }
     try {
       const bounds = new maps.LatLngBounds()
-      Object.values(markersRef.current).forEach((m) => bounds.extend(m.getPosition()))
-      mapRef.current.fitBounds(bounds, 70)
+      Object.values(markersRef.current).forEach((m) => { if (m) bounds.extend(m.getPosition()) })
+      if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 70)
     } catch (_) {}
-  }, [rider?.lat, rider?.lng])
+  }, [mapReady, rider?.lat, rider?.lng])
 
   if (loading) return <Layout><Centered>Cargando…</Centered></Layout>
   if (error || !pedido) return <Layout><Centered>{error || 'Pedido no encontrado'}</Centered></Layout>
