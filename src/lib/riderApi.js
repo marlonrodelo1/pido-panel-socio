@@ -56,4 +56,5 @@ export const riderApi = {
   reject:        (asignacion_id, motivo) => call('rider-reject-order', { asignacion_id, motivo }),
   pickup:        (asignacion_id) => call('rider-pickup', { asignacion_id }),
   deliver:       (asignacion_id, foto_url) => call('rider-deliver', { asignacion_id, foto_url: foto_url || null }),
+  failDeliver:   (asignacion_id, motivo) => call('rider-fail-delivery', { asignacion_id, motivo }),
 }

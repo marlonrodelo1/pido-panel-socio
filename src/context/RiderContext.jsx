@@ -210,6 +210,11 @@ export function RiderProvider({ children }) {
     setAsignaciones((prev) => prev.filter((a) => a.id !== asignacionId))
   }, [])
 
+  const failDeliver = useCallback(async (asignacionId, motivo) => {
+    await riderApi.failDeliver(asignacionId, motivo)
+    setAsignaciones((prev) => prev.filter((a) => a.id !== asignacionId))
+  }, [])
+
   const dismissPending = useCallback(() => setPendingNew(null), [])
 
   const value = useMemo(() => ({
@@ -217,9 +222,9 @@ export function RiderProvider({ children }) {
     asignaciones, pendingNew,
     pos,
     goOnline, goOffline,
-    accept, reject, pickup, deliver,
+    accept, reject, pickup, deliver, failDeliver,
     dismissPending,
-  }), [online, riderAccountId, asignaciones, pendingNew, pos, goOnline, goOffline, accept, reject, pickup, deliver, dismissPending])
+  }), [online, riderAccountId, asignaciones, pendingNew, pos, goOnline, goOffline, accept, reject, pickup, deliver, failDeliver, dismissPending])
 
   return <RiderContext.Provider value={value}>{children}</RiderContext.Provider>
 }

@@ -37,6 +37,7 @@ const RIDER_TITLES = {
 }
 
 function ShellAdmin({ section, setSection, switchToRider, riderAvailable }) {
+  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform?.()
   const page = {
     dashboard:     <Dashboard setSection={setSection} />,
     marketplace:   <MiMarketplace />,
@@ -50,7 +51,7 @@ function ShellAdmin({ section, setSection, switchToRider, riderAvailable }) {
   return (
     <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 80 }}>
       <HeaderNav section={section} setSection={setSection} />
-      {riderAvailable && (
+      {riderAvailable && isNative && (
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 20px 0' }}>
           <button onClick={switchToRider} style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -129,7 +130,11 @@ function Shell() {
   )
   const [mode, setMode] = useState(() => {
     if (typeof window === 'undefined') return 'admin'
-    return localStorage.getItem(MODE_KEY) || 'admin'
+    // En web (panel del socio) siempre admin: el reparto solo tiene sentido
+    // desde la APK del movil. En APK/IPA respetamos preferencia, default rider.
+    if (!Capacitor.isNativePlatform?.()) return 'admin'
+    const saved = localStorage.getItem(MODE_KEY)
+    return saved === 'admin' ? 'admin' : 'rider'
   })
   const [riderAvailable, setRiderAvailable] = useState(false)
 
@@ -199,7 +204,7 @@ function Shell() {
     />
   ) : null
 
-  if (mode === 'rider' && riderAvailable) {
+  if (mode === 'rider' && riderAvailable && isNative) {
     return <>
       <ShellRider switchToAdmin={() => setMode('admin')} />
       {modalEntrante}

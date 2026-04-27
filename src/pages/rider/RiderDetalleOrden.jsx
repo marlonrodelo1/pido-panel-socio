@@ -22,9 +22,11 @@ function openMaps(lat, lng) {
 }
 
 export default function RiderDetalleOrden({ asignacionId, onBack }) {
-  const { asignaciones, pickup, deliver } = useRider()
+  const { asignaciones, pickup, deliver, failDeliver } = useRider()
   const [extra, setExtra] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [showFailModal, setShowFailModal] = useState(false)
+  const [failMotivo, setFailMotivo] = useState('')
 
   const asig = asignaciones.find((a) => a.id === asignacionId)
 
@@ -59,16 +61,44 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
     ? { label: 'Recolectado', bg: colors.statePrepSoft, color: colors.statePrep }
     : { label: 'Iniciada', bg: colors.statePrepSoft, color: colors.statePrep }
 
-  const handleMain = async () => {
+  const handlePickup = async () => {
     if (busy) return
     setBusy(true)
     try {
-      if (!recogido) {
-        await pickup(asig.id)
-      } else {
-        await deliver(asig.id, null)
-        onBack?.()
-      }
+      await pickup(asig.id)
+    } catch (e) {
+      alert('Error: ' + (e?.message || 'desconocido'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleComplete = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await deliver(asig.id, null)
+      onBack?.()
+    } catch (e) {
+      alert('Error: ' + (e?.message || 'desconocido'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleFailConfirm = async () => {
+    const motivo = failMotivo.trim()
+    if (!motivo) {
+      alert('Indica un motivo para la entrega fallida.')
+      return
+    }
+    if (busy) return
+    setBusy(true)
+    try {
+      await failDeliver(asig.id, motivo)
+      setShowFailModal(false)
+      setFailMotivo('')
+      onBack?.()
     } catch (e) {
       alert('Error: ' + (e?.message || 'desconocido'))
     } finally {
@@ -167,13 +197,105 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
 
       {/* CTA fijo abajo */}
       <div style={{ position: 'fixed', bottom: 'calc(70px + env(safe-area-inset-bottom))', left: 0, right: 0, padding: '0 14px', zIndex: 5 }}>
-        <button onClick={handleMain} disabled={busy} style={{
-          ...ds.primaryBtn, width: '100%', height: 48, fontSize: type.base,
-          boxShadow: colors.shadowMd,
-        }}>
-          {busy ? 'Procesando…' : recogido ? 'Marcar como entregado →' : 'Marcar como recogido →'}
-        </button>
+        {!recogido ? (
+          <button onClick={handlePickup} disabled={busy} style={{
+            ...ds.primaryBtn, width: '100%', height: 48, fontSize: type.base,
+            boxShadow: colors.shadowMd,
+          }}>
+            {busy ? 'Procesando…' : 'Marcar como recogido →'}
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => setShowFailModal(true)} disabled={busy} style={{
+              flex: 1, height: 48, fontSize: type.base, fontWeight: 700,
+              background: '#fff', color: colors.danger,
+              border: `1.5px solid ${colors.danger}`, borderRadius: 12,
+              cursor: 'pointer', boxShadow: colors.shadowMd,
+            }}>
+              Entrega fallida
+            </button>
+            <button onClick={handleComplete} disabled={busy} style={{
+              flex: 1, height: 48, fontSize: type.base, fontWeight: 700,
+              background: colors.primary, color: '#fff', border: 'none',
+              borderRadius: 12, cursor: 'pointer', boxShadow: colors.shadowMd,
+            }}>
+              {busy ? 'Procesando…' : 'Entrega completada'}
+            </button>
+          </div>
+        )}
       </div>
+
+      {showFailModal && (
+        <div
+          onClick={() => !busy && setShowFailModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+            zIndex: 50,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: colors.surface, borderRadius: '16px 16px 0 0',
+              width: '100%', maxWidth: 520, padding: 20,
+              paddingBottom: 'calc(20px + env(safe-area-inset-bottom))',
+            }}
+          >
+            <div style={{ fontSize: type.lg, fontWeight: 800, color: colors.text, marginBottom: 6 }}>
+              Marcar entrega como fallida
+            </div>
+            <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 14 }}>
+              Indica el motivo. Esta accion cierra el pedido como fallido y no
+              se reasigna a otro rider.
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              {['Cliente no aparece', 'Direccion incorrecta', 'No contesta al telefono', 'Comercio cerrado', 'Producto deteriorado'].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setFailMotivo(m)}
+                  style={{
+                    background: failMotivo === m ? colors.primary : colors.surface2,
+                    color:      failMotivo === m ? '#fff' : colors.text,
+                    border: `1px solid ${failMotivo === m ? colors.primary : colors.border}`,
+                    padding: '6px 12px', borderRadius: 999,
+                    fontSize: type.xs, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >{m}</button>
+              ))}
+            </div>
+
+            <textarea
+              value={failMotivo}
+              onChange={(e) => setFailMotivo(e.target.value)}
+              placeholder="Motivo de la entrega fallida"
+              rows={3}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: colors.bg, color: colors.text,
+                border: `1px solid ${colors.border}`, borderRadius: 10,
+                padding: 12, fontSize: type.sm, resize: 'vertical',
+                marginBottom: 14, fontFamily: 'inherit',
+              }}
+            />
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowFailModal(false)} disabled={busy} style={{
+                ...ds.secondaryBtn, flex: 1, height: 44,
+              }}>Cancelar</button>
+              <button onClick={handleFailConfirm} disabled={busy || !failMotivo.trim()} style={{
+                flex: 1, height: 44, fontSize: type.sm, fontWeight: 700,
+                background: colors.danger, color: '#fff', border: 'none',
+                borderRadius: 10, cursor: busy || !failMotivo.trim() ? 'not-allowed' : 'pointer',
+                opacity: busy || !failMotivo.trim() ? 0.6 : 1,
+              }}>
+                {busy ? 'Enviando…' : 'Confirmar fallo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
