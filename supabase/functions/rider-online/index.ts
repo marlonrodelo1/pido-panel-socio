@@ -17,13 +17,17 @@ serve(async (req) => {
   try { body = await req.json() } catch (_) {}
 
   const sb = adminClient()
+  // SIEMPRE actualizar last_location_at = now() al ponerse online. Si llega
+  // lat/lng se actualiza tambien la posicion. Si no llega (permiso GPS lento
+  // o emulador sin location), igual lo marcamos vivo para que dispatch-order
+  // no lo excluya en los siguientes minutos.
   const update: Record<string, unknown> = {
     en_servicio: true,
+    last_location_at: new Date().toISOString(),
   }
   if (typeof body.lat === 'number' && typeof body.lng === 'number') {
     update.latitud_actual = body.lat
     update.longitud_actual = body.lng
-    update.last_location_at = new Date().toISOString()
   }
 
   const { error } = await sb.from('socios').update(update).eq('id', auth.socioId)

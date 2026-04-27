@@ -51,11 +51,8 @@ export default function SeguirPedido({ codigo }) {
 
   useEffect(() => {
     if (!codigo) return
-    if (!tokenRef.current) {
-      setError('Enlace de seguimiento no válido')
-      setLoading(false)
-      return
-    }
+    // Sin token: la edge function devolvera datos minimos (sin items, total ni
+    // telefono cliente). Asi seguimos viendo estado + rider en URLs legacy.
     let cancel = false
 
     async function load() {

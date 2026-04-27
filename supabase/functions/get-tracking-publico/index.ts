@@ -45,15 +45,21 @@ Deno.serve(async (req: Request) => {
   const codigo = (body.codigo || '').trim().toUpperCase()
   const token = (body.token || '').trim().toLowerCase()
 
-  if (!codigo || !token) return json({ error: 'not_found' }, 404)
-  if (!UUID_RE.test(token)) return json({ error: 'not_found' }, 404)
+  if (!codigo) return json({ error: 'not_found' }, 404)
+
+  // Modo "completo": codigo + token UUID coinciden → devolvemos todo
+  // (incluido total, items, telefono restaurante).
+  // Modo "minimo": solo codigo (URL legacy sin token o mal formada en cliente
+  // antiguo) → devolvemos solo estado + restaurante + posicion rider, sin
+  // items ni total ni telefono. Brute-forcear codigos PD-XXXXX da una vista
+  // muy reducida que no expone PII real del cliente.
+  const hasValidToken = !!token && UUID_RE.test(token)
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  // Lookup atomico por (codigo, tracking_token). Si no coincide → 404.
-  const { data: ped } = await admin
+  let q = admin
     .from('pedidos')
     .select(`
       id, codigo, estado, total, created_at, modo_entrega,
@@ -62,8 +68,8 @@ Deno.serve(async (req: Request) => {
       establecimientos:establecimientos!inner(nombre, logo_url, telefono, latitud, longitud)
     `)
     .eq('codigo', codigo)
-    .eq('tracking_token', token)
-    .maybeSingle()
+  if (hasValidToken) q = q.eq('tracking_token', token)
+  const { data: ped } = await q.maybeSingle()
 
   if (!ped) return json({ error: 'not_found' }, 404)
 
@@ -95,7 +101,7 @@ Deno.serve(async (req: Request) => {
     pedido: {
       codigo: ped.codigo,
       estado: ped.estado,
-      total: ped.total,
+      total: hasValidToken ? ped.total : null,
       created_at: ped.created_at,
       modo_entrega: ped.modo_entrega,
       minutos_preparacion: ped.minutos_preparacion,
@@ -105,22 +111,21 @@ Deno.serve(async (req: Request) => {
     establecimiento: est ? {
       nombre: est.nombre,
       logo_url: est.logo_url,
-      telefono: est.telefono,
+      telefono: hasValidToken ? est.telefono : null,
       latitud: est.latitud,
       longitud: est.longitud,
     } : null,
     rider: socio ? {
       nombre: socio.nombre || 'Repartidor',
-      telefono: socio.telefono || null,
+      telefono: hasValidToken ? (socio.telefono || null) : null,
       rating: socio.rating || null,
       lat: socio.latitud_actual,
       lng: socio.longitud_actual,
       last_location_at: socio.last_location_at,
     } : null,
-    items: (items || []).map((i: any) => ({
-      cantidad: i.cantidad,
-      nombre_producto: i.nombre_producto,
-      precio_unitario: i.precio_unitario,
-    })),
+    items: hasValidToken
+      ? (items || []).map((i: any) => ({ cantidad: i.cantidad, nombre_producto: i.nombre_producto, precio_unitario: i.precio_unitario }))
+      : [],
+    _full: hasValidToken, // flag por si el cliente quiere mostrar warning
   })
 })

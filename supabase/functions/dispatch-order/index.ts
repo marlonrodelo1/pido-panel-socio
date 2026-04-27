@@ -32,7 +32,11 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
 }
 
 const CARGA_PESO_METROS = 1500
-const VENTANA_GPS_MINUTOS = 3
+// GPS antiguo se tolera hasta 30 min (antes 3). El plugin
+// background-geolocation puede tardar varios minutos en mandar el primer
+// tick si el rider acaba de salir de un tunel o la red mobile esta lenta.
+// Mejor asignar al rider con GPS de 10 min que dejarle sin pedidos.
+const VENTANA_GPS_MINUTOS = 30
 const FIREBASE_PROJECT_ID = Deno.env.get('FIREBASE_PROJECT_ID') || 'pidoo-push'
 const FIREBASE_CLIENT_EMAIL = Deno.env.get('FIREBASE_CLIENT_EMAIL') || 'firebase-adminsdk-fbsvc@pidoo-push.iam.gserviceaccount.com'
 const FIREBASE_PRIVATE_KEY = Deno.env.get('FIREBASE_PRIVATE_KEY') || ''
