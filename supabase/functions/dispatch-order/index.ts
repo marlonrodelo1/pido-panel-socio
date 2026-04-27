@@ -164,25 +164,52 @@ serve(async (req) => {
     shipday_status: 'created',
   }).eq('id', pedido.id)
 
-  // Push al rider elegido
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    await fetch(`${supabaseUrl}/functions/v1/enviar_push`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-      },
-      body: JSON.stringify({
-        user_ids: [elegido.user_id],
-        title: `Nuevo pedido · ${est.nombre}`,
-        body: `#${pedido.codigo} · ${(elegido.distancia / 1000).toFixed(1)} km`,
-        data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion.id },
-      }),
-    })
-  } catch (e) {
-    console.error('[dispatch-order] push fail', e)
+  // Push al rider elegido. Logueamos en push_debug_logs para diagnostico
+  // (console.log de edge functions se pierde rapido). Si el fetch falla,
+  // intentamos un segundo path llamando enviar_push con anon key.
+  const dbg = async (event: string, details: any) => {
+    try {
+      await sb.from('push_debug_logs').insert({
+        platform: 'edge', event: 'dispatch:' + event,
+        details: details ? JSON.stringify(details).slice(0, 1500) : null,
+      })
+    } catch (_) {}
   }
 
-  return jsonResponse({ ok: true, asignacion_id: asignacion.id, rider_account_id: elegido.rider_account_id, intento, distancia_metros: elegido.distancia })
+  await dbg('elegido', { user_id: elegido.user_id, rider_account_id: elegido.rider_account_id, asignacion_id: asignacion.id, codigo: pedido.codigo })
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || ''
+  const pushBody = JSON.stringify({
+    user_ids: [elegido.user_id],
+    title: `Nuevo pedido · ${est.nombre}`,
+    body: `#${pedido.codigo} · ${(elegido.distancia / 1000).toFixed(1)} km`,
+    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion.id },
+  })
+
+  async function tryPush(authToken: string, label: string) {
+    try {
+      const r = await fetch(`${supabaseUrl}/functions/v1/enviar_push`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+          apikey: anonKey,
+        },
+        body: pushBody,
+      })
+      const text = await r.text()
+      await dbg('push_' + label, { status: r.status, body: text.slice(0, 400) })
+      return r.ok
+    } catch (e: any) {
+      await dbg('push_' + label + '_throw', { msg: e?.message || String(e) })
+      return false
+    }
+  }
+
+  let ok = await tryPush(serviceKey, 'service')
+  if (!ok) ok = await tryPush(anonKey, 'anon')
+
+  return jsonResponse({ ok: true, asignacion_id: asignacion.id, rider_account_id: elegido.rider_account_id, intento, distancia_metros: elegido.distancia, push_ok: ok })
 })
