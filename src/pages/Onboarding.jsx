@@ -196,11 +196,14 @@ export default function Onboarding() {
   }
 
   const cancelar = async () => {
-    try {
-      await logout?.()
-    } catch {
-      await supabase.auth.signOut()
-    }
+    // signOut directo sin esperar a unregisterPush (puede colgar). El listener
+    // onAuthStateChange del SocioContext limpiara el estado al detectar el
+    // SIGNED_OUT, asi que basta con esto.
+    try { await supabase.auth.signOut() } catch (_) {}
+    // Fallback: si por algun motivo el listener no nos saca a Login, recargamos.
+    setTimeout(() => {
+      try { if (typeof window !== 'undefined') window.location.reload() } catch (_) {}
+    }, 800)
   }
 
   const slugHint = () => {
@@ -216,9 +219,9 @@ export default function Onboarding() {
 
   return (
     <div style={{ minHeight: '100vh', background: colors.bg, padding: 'calc(env(safe-area-inset-top) + 32px) 16px 32px', position: 'relative' }}>
-      {/* Botón cancelar arriba derecha */}
+      {/* Botón cancelar arriba derecha — sale a Login directamente */}
       <button
-        onClick={() => setShowCancel(true)}
+        onClick={cancelar}
         style={{
           position: 'absolute', top: 'calc(env(safe-area-inset-top) + 16px)', right: 16,
           background: 'transparent', border: `1px solid ${colors.border}`,
@@ -226,7 +229,7 @@ export default function Onboarding() {
           padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
         }}
       >
-        Cancelar
+        Cerrar sesión
       </button>
 
       <div style={{ maxWidth: 620, margin: '0 auto' }}>
