@@ -215,12 +215,12 @@ export default function Onboarding() {
   const hint = slugHint()
 
   return (
-    <div style={{ minHeight: '100vh', background: colors.bg, padding: '32px 16px', position: 'relative' }}>
+    <div style={{ minHeight: '100vh', background: colors.bg, padding: 'calc(env(safe-area-inset-top) + 32px) 16px 32px', position: 'relative' }}>
       {/* Botón cancelar arriba derecha */}
       <button
         onClick={() => setShowCancel(true)}
         style={{
-          position: 'absolute', top: 16, right: 16,
+          position: 'absolute', top: 'calc(env(safe-area-inset-top) + 16px)', right: 16,
           background: 'transparent', border: `1px solid ${colors.border}`,
           color: colors.textMute, fontSize: 12, fontWeight: 600,
           padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',

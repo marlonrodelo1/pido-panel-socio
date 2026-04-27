@@ -74,11 +74,13 @@ export default function Login({ onBack }) {
     <div style={{
       minHeight: '100vh', background: 'var(--c-bg)',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', padding: '32px 20px', position: 'relative',
+      justifyContent: 'center',
+      padding: 'calc(env(safe-area-inset-top) + 32px) 20px 32px',
+      position: 'relative',
     }}>
       {onBack && (
         <button onClick={onBack} style={{
-          position: 'absolute', top: 18, left: 18,
+          position: 'absolute', top: 'calc(env(safe-area-inset-top) + 18px)', left: 18,
           background: 'none', border: 'none', cursor: 'pointer',
           color: 'var(--c-muted)', fontSize: 13, fontWeight: 600,
           padding: '8px 12px', borderRadius: 8, fontFamily: 'inherit',
