@@ -33,7 +33,7 @@ async function getBgGeo() {
   if (BgGeo) return BgGeo
   if (!isNative()) return null
   try {
-    const mod = await import('@capacitor-community/background-geolocation')
+    const mod = await import(/* @vite-ignore */ '@capacitor-community/background-geolocation')
     // El plugin exporta `BackgroundGeolocation` con metodos estaticos.
     BgGeo = mod.BackgroundGeolocation || mod.default || mod
     return BgGeo
