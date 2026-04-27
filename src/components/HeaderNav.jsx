@@ -8,7 +8,6 @@ const NAV = [
   { id: 'marketplace',   label: 'Mi marketplace' },
   { id: 'restaurantes',  label: 'Restaurantes' },
   { id: 'pedidos',       label: 'Pedidos' },
-  { id: 'facturas',      label: 'Facturas' },
   { id: 'configuracion', label: 'Configuración' },
   { id: 'soporte',       label: 'Soporte' },
 ]
@@ -74,7 +73,8 @@ export default function HeaderNav({ section, setSection }) {
 
         <nav style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} className="socio-nav-desktop">
           {NAV.map(n => {
-            const active = section === n.id
+            const effectiveSection = (section === 'restaurante-detalle' || section === 'facturas') ? 'restaurantes' : section
+            const active = effectiveSection === n.id
             return (
               <button key={n.id} onClick={() => setSection(n.id)} style={{
                 padding: '8px 12px', borderRadius: 8,

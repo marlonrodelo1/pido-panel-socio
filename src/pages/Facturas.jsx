@@ -262,12 +262,33 @@ export default function Facturas() {
             maxHeight: '85vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <h2 style={{ ...ds.h2, margin: 0 }}>{detalle.row.establecimiento_nombre}</h2>
+              <h2 style={{ ...ds.h2, margin: 0 }}>{detalle.row.establecimiento_nombre || 'Restaurante'}</h2>
               <button onClick={() => setDetalle(null)} style={ds.secondaryBtn}>Cerrar</button>
             </div>
             <p style={{ fontSize: type.sm, color: colors.textMute, margin: '0 0 14px' }}>
               {detalle.items.length} pedido{detalle.items.length !== 1 ? 's' : ''} pendiente{detalle.items.length !== 1 ? 's' : ''} de facturar
             </p>
+
+            {/* Warning datos fiscales incompletos del restaurante (no bloquea ver el detalle) */}
+            {(!detalle.row.establecimiento_nif || !detalle.row.establecimiento_razon_social) && (
+              <div style={{
+                background: 'rgba(245,158,11,0.12)', color: '#B45309',
+                border: '1px solid rgba(245,158,11,0.35)',
+                padding: '10px 12px', borderRadius: 10, marginBottom: 12,
+                fontSize: type.xs, lineHeight: 1.5,
+              }}>
+                ⚠️ Restaurante sin datos fiscales completos — no se puede emitir factura aún.
+                {!detalle.row.establecimiento_razon_social && ' Falta razón social.'}
+                {!detalle.row.establecimiento_nif && ' Falta CIF/NIF.'}
+              </div>
+            )}
+
+            {detalle.items.length === 0 && (
+              <div style={{ ...ds.card, textAlign: 'center', padding: 18, marginBottom: 8, fontSize: type.sm, color: colors.textMute }}>
+                No se han encontrado pedidos pendientes para este restaurante.
+              </div>
+            )}
+
             <div style={{ ...ds.card, padding: 0, overflow: 'hidden' }}>
               <div style={{
                 display: 'grid', gridTemplateColumns: '110px 1fr 80px 80px 80px 90px',

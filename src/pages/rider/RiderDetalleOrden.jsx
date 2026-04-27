@@ -171,15 +171,37 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
           <span style={{ marginTop: 4, width: 14, height: 18, background: colors.primary, borderRadius: '50% 50% 50% 0', transform: 'rotate(-45deg)', flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
             <span style={{ fontSize: type.xs, color: colors.textMute, fontWeight: 600 }}>Entrega</span>
-            <div style={{ fontSize: type.base, fontWeight: 700, color: colors.text, marginTop: 4 }}>
+            {(() => {
+              const u = ped?.usuarios
+              const nombreCli = `${u?.nombre || ''} ${u?.apellido || ''}`.trim()
+              return nombreCli ? (
+                <div style={{ fontSize: type.base, fontWeight: 700, color: colors.text, marginTop: 4 }}>
+                  {nombreCli}
+                </div>
+              ) : null
+            })()}
+            <div style={{ fontSize: type.sm, fontWeight: 600, color: colors.text, marginTop: 4 }}>
               {ped?.direccion_entrega || '—'}
             </div>
-            {ped?.lat_entrega && ped?.lng_entrega && (
-              <button onClick={() => openMaps(ped.lat_entrega, ped.lng_entrega)} style={{ marginTop: 8, background: 'transparent', border: 'none', color: colors.primary, fontSize: type.sm, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-                Navegar
-              </button>
+            {ped?.notas && (
+              <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 4, fontStyle: 'italic' }}>
+                Nota: {ped.notas}
+              </div>
             )}
+            <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+              {ped?.usuarios?.telefono && (
+                <a href={`tel:${ped.usuarios.telefono}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: colors.text, fontSize: type.sm, textDecoration: 'none' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
+                  {ped.usuarios.telefono}
+                </a>
+              )}
+              {ped?.lat_entrega && ped?.lng_entrega && (
+                <button onClick={() => openMaps(ped.lat_entrega, ped.lng_entrega)} style={{ background: 'transparent', border: 'none', color: colors.primary, fontSize: type.sm, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                  Navegar
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

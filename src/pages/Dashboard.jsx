@@ -17,7 +17,7 @@ function endOfToday() {
 }
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
 
-export default function Dashboard({ setSection }) {
+export default function Dashboard({ setSection, openRestaurante }) {
   const { socio } = useSocio()
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
@@ -103,7 +103,10 @@ export default function Dashboard({ setSection }) {
       {!fiscalCompleto && (
         <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '12px 14px', borderRadius: 10, marginBottom: 14, fontSize: type.sm, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span>⚠️ Completa tus datos fiscales para poder emitir facturas a los restaurantes.</span>
-          <button onClick={() => setSection?.('configuracion')}
+          <button onClick={() => {
+            if (setSection) setSection('configuracion')
+            else window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'configuracion' }))
+          }}
              style={{ ...ds.dangerBtn, height: 32, fontSize: type.xs }}>
             Completar ahora
           </button>
@@ -140,11 +143,11 @@ export default function Dashboard({ setSection }) {
         </div>
 
         <div style={ds.card}>
-          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Facturas</div>
+          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Facturación</div>
           <div style={{ fontSize: type.sm, color: colors.textDim, marginBottom: 10 }}>
-            Emite facturas por los pedidos que has repartido. El restaurante te paga fuera de Pidoo.
+            Emite facturas semanales por los pedidos que has repartido a cada restaurante.
           </div>
-          <button onClick={() => setSection?.('facturas')} style={ds.primaryBtn}>Ir a facturas</button>
+          <button onClick={() => setSection?.('restaurantes')} style={ds.primaryBtn}>Ir a restaurantes</button>
         </div>
       </div>
 
@@ -152,13 +155,18 @@ export default function Dashboard({ setSection }) {
         <div style={{ ...ds.card }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
             <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Top restaurantes por cobrar</div>
-            <button onClick={() => setSection?.('facturas')} style={{ ...ds.secondaryBtn, height: 28, fontSize: type.xxs }}>Ver todo</button>
+            <button onClick={() => setSection?.('restaurantes')} style={{ ...ds.secondaryBtn, height: 28, fontSize: type.xxs }}>Ver todo</button>
           </div>
           {topRestaurantes.map(r => (
-            <div key={r.establecimiento_id} style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
-              borderTop: `1px solid ${colors.border}`,
-            }}>
+            <div
+              key={r.establecimiento_id}
+              onClick={() => openRestaurante?.(r.establecimiento_id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
+                borderTop: `1px solid ${colors.border}`,
+                cursor: openRestaurante ? 'pointer' : 'default',
+              }}
+            >
               <div style={{
                 width: 36, height: 36, borderRadius: 8, flexShrink: 0,
                 background: r.establecimiento_logo ? `url(${r.establecimiento_logo}) center/cover` : colors.surface2,
@@ -175,6 +183,7 @@ export default function Dashboard({ setSection }) {
               <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text }}>
                 {euro(r.total_neto)}
               </div>
+              {openRestaurante && <span style={{ color: colors.textMute, fontSize: type.lg, marginLeft: 4 }}>›</span>}
             </div>
           ))}
         </div>

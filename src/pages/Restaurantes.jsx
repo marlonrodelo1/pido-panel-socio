@@ -3,7 +3,7 @@ import { useSocio } from '../context/SocioContext'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 
-export default function Restaurantes() {
+export default function Restaurantes({ onOpenRestaurante }) {
   const { socio } = useSocio()
   const [tab, setTab] = useState('vinculados')
   const [vinculados, setVinculados] = useState([])
@@ -114,20 +114,34 @@ export default function Restaurantes() {
             {vinculados.map(v => {
               const e = v.establecimiento || {}
               const badge = stateBadge(v.estado)
+              const clickable = !!e.id && (v.estado === 'activa' || v.estado === 'solicitada')
               return (
-                <div key={v.id} style={ds.card}>
+                <div
+                  key={v.id}
+                  onClick={() => { if (clickable && onOpenRestaurante) onOpenRestaurante(e.id) }}
+                  style={{
+                    ...ds.card,
+                    cursor: clickable ? 'pointer' : 'default',
+                    transition: 'transform 0.15s, box-shadow 0.15s',
+                  }}
+                  onMouseEnter={(ev) => { if (clickable) { ev.currentTarget.style.transform = 'translateY(-2px)'; ev.currentTarget.style.boxShadow = colors.shadowLg } }}
+                  onMouseLeave={(ev) => { ev.currentTarget.style.transform = 'translateY(0)'; ev.currentTarget.style.boxShadow = '' }}
+                >
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
                     <div style={{
                       width: 44, height: 44, borderRadius: 8, flexShrink: 0,
                       background: e.logo_url ? `url(${e.logo_url}) center/cover` : colors.surface2,
                       border: `1px solid ${colors.border}`,
                     }} />
-                    <div style={{ minWidth: 0 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: type.base, fontWeight: 600, color: colors.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {e.nombre || '—'}
                       </div>
                       <div style={{ fontSize: type.xs, color: colors.textMute }}>{e.tipo}</div>
                     </div>
+                    {clickable && (
+                      <span style={{ color: colors.textMute, fontSize: type.lg }}>›</span>
+                    )}
                   </div>
                   <div style={{ ...badge }}>{badge._label}</div>
                 </div>

@@ -119,10 +119,14 @@ export default function RiderEsperando({ onGoPedidos }) {
   }, [pos?.lat, pos?.lng, restaurantes.length, asignaciones.length])
 
   const tienePedidos = asignaciones.length > 0
-  const txtPedidos = asignaciones.length === 1 ? '1 pedido en espera' : `${asignaciones.length} pedidos en espera`
+  const labelPedidos = asignaciones.length === 1 ? 'pedido en espera' : 'pedidos en espera'
 
   return (
-    <div style={{ position: 'relative', height: 'calc(100vh - 56px - 70px - env(safe-area-inset-bottom))' }}>
+    <div style={{
+      position: 'relative',
+      // Compensa header rider (incluye safe-area-top) + bottom nav rider (70 + safe-area-bottom)
+      height: 'calc(100vh - 56px - env(safe-area-inset-top) - 70px - env(safe-area-inset-bottom))',
+    }}>
       <div ref={mapDivRef} style={{ position: 'absolute', inset: 0, background: '#E8E6E0' }} />
 
       {!pos && (
@@ -136,7 +140,7 @@ export default function RiderEsperando({ onGoPedidos }) {
         </div>
       )}
 
-      <div style={{ position: 'absolute', bottom: 12, left: 12, right: 12 }}>
+      <div style={{ position: 'absolute', bottom: 16, left: 12, right: 12 }}>
         {!online ? (
           <div style={{
             background: colors.surface, padding: '14px 18px', textAlign: 'center',
@@ -147,28 +151,47 @@ export default function RiderEsperando({ onGoPedidos }) {
           </div>
         ) : tienePedidos ? (
           <button onClick={onGoPedidos} style={{
-            width: '100%', background: colors.surface, padding: '14px 16px',
-            borderRadius: 12, border: `1px solid ${colors.border}`, boxShadow: colors.shadowMd,
+            width: '100%', background: colors.surface, padding: '14px 18px',
+            borderRadius: 12, border: `1px solid ${colors.primaryBorder}`, boxShadow: colors.shadowMd,
             cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: 10,
+            gap: 12, fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
           }}>
-            <div style={{ flex: 1, textAlign: 'left', overflow: 'hidden' }}>
-              <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                Tienes
-              </div>
-              <div style={{ fontSize: type.base, fontWeight: 800, color: colors.primary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {txtPedidos}
-              </div>
+            <div style={{ flex: 1, textAlign: 'left', overflow: 'hidden', display: 'flex', alignItems: 'baseline', gap: 10 }}>
+              <span style={{
+                fontSize: 32, lineHeight: 1, fontWeight: 800,
+                color: colors.primary, letterSpacing: '-0.5px',
+                flexShrink: 0,
+              }}>
+                {asignaciones.length}
+              </span>
+              <span style={{
+                fontSize: type.sm, fontWeight: 600,
+                color: colors.text, overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {labelPedidos}
+              </span>
             </div>
-            <span style={{ fontSize: type.lg, color: colors.primary, fontWeight: 800, flexShrink: 0 }}>→</span>
+            <span style={{
+              fontSize: 22, color: colors.primary, fontWeight: 800,
+              flexShrink: 0, lineHeight: 1,
+            }}>→</span>
           </button>
         ) : (
           <div style={{
             background: colors.surface, padding: '14px 18px', textAlign: 'center',
             borderRadius: 12, border: `1px solid ${colors.border}`, boxShadow: colors.shadowMd,
             fontSize: type.sm, fontWeight: 700, color: colors.text,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            width: '100%', boxSizing: 'border-box',
           }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: 4,
+              background: colors.primary,
+              animation: 'pidoo-pulse 1.4s ease-in-out infinite',
+            }} />
             Esperando pedidos…
+            <style>{`@keyframes pidoo-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }`}</style>
           </div>
         )}
       </div>

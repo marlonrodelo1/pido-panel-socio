@@ -8,8 +8,8 @@ import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
 import MiMarketplace from './pages/MiMarketplace'
 import Restaurantes from './pages/Restaurantes'
+import RestauranteDetalle from './pages/RestauranteDetalle'
 import Pedidos from './pages/Pedidos'
-import Facturas from './pages/Facturas'
 import Configuracion from './pages/Configuracion'
 import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
@@ -36,17 +36,21 @@ const RIDER_TITLES = {
   'rider-detalle':     'Detalles de orden',
 }
 
-function ShellAdmin({ section, setSection, switchToRider, riderAvailable }) {
+function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante, switchToRider, riderAvailable }) {
   const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform?.()
+  // Compat: 'facturas' redirige a 'restaurantes' (la pestaña fue eliminada)
+  const effectiveSection = section === 'facturas' ? 'restaurantes' : section
   const page = {
-    dashboard:     <Dashboard setSection={setSection} />,
-    marketplace:   <MiMarketplace />,
-    restaurantes:  <Restaurantes />,
-    pedidos:       <Pedidos />,
-    facturas:      <Facturas />,
-    configuracion: <Configuracion />,
-    soporte:       <Soporte />,
-  }[section] || <Dashboard setSection={setSection} />
+    dashboard:            <Dashboard setSection={setSection} openRestaurante={openRestaurante} />,
+    marketplace:          <MiMarketplace />,
+    restaurantes:         <Restaurantes onOpenRestaurante={openRestaurante} />,
+    'restaurante-detalle': detalleEstId
+      ? <RestauranteDetalle establecimiento_id={detalleEstId} onBack={closeRestaurante} />
+      : <Restaurantes onOpenRestaurante={openRestaurante} />,
+    pedidos:              <Pedidos />,
+    configuracion:        <Configuracion />,
+    soporte:              <Soporte />,
+  }[effectiveSection] || <Dashboard setSection={setSection} openRestaurante={openRestaurante} />
 
   return (
     <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 80 }}>
@@ -121,6 +125,33 @@ function Shell() {
   const { session, socio, loading } = useSocio()
   const { pendingNew, accept, reject, dismissPending, asignaciones } = useRider()
   const [adminSection, setAdminSection] = useState('dashboard')
+  const [detalleEstId, setDetalleEstId] = useState(null)
+
+  const openRestaurante = (id) => {
+    if (!id) return
+    setDetalleEstId(id)
+    setAdminSection('restaurante-detalle')
+  }
+  const closeRestaurante = () => {
+    setDetalleEstId(null)
+    setAdminSection('restaurantes')
+  }
+
+  // Listener global para navegacion entre secciones via window event.
+  // Permite a cualquier componente cambiar de pestana sin pasar setSection por props.
+  useEffect(() => {
+    const handler = (e) => {
+      const target = e?.detail
+      if (typeof target === 'string') {
+        // Compat: 'facturas' redirige a 'restaurantes'
+        setAdminSection(target === 'facturas' ? 'restaurantes' : target)
+      } else if (target && typeof target === 'object' && target.section === 'restaurante-detalle' && target.id) {
+        openRestaurante(target.id)
+      }
+    }
+    window.addEventListener('pidoo:goto', handler)
+    return () => window.removeEventListener('pidoo:goto', handler)
+  }, [])
   // En APK/IPA nativa siempre arrancamos en Login (la landing es solo
   // para la web socio.pidoo.es).
   const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform?.()
@@ -214,6 +245,9 @@ function Shell() {
     <ShellAdmin
       section={adminSection}
       setSection={setAdminSection}
+      detalleEstId={detalleEstId}
+      openRestaurante={openRestaurante}
+      closeRestaurante={closeRestaurante}
       switchToRider={() => setMode('rider')}
       riderAvailable={riderAvailable}
     />

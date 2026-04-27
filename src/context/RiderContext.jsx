@@ -56,7 +56,7 @@ export function RiderProvider({ children }) {
     async function loadAsignaciones() {
       const { data } = await supabase
         .from('pedido_asignaciones')
-        .select('id, pedido_id, estado, intento, distancia_metros, aceptado_at, recogido_at, entregado_at, created_at, pedidos!inner(id, codigo, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, estado, establecimiento_id, establecimientos!inner(id, nombre, direccion, telefono, latitud, longitud))')
+        .select('id, pedido_id, estado, intento, distancia_metros, aceptado_at, recogido_at, entregado_at, created_at, pedidos!inner(id, codigo, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, estado, establecimiento_id, usuario_id, notas, usuarios(nombre, apellido, telefono), establecimientos!inner(id, nombre, direccion, telefono, latitud, longitud))')
         .eq('rider_account_id', riderAccountId)
         .in('estado', ['esperando_aceptacion', 'aceptado'])
         .is('entregado_at', null)
@@ -92,7 +92,7 @@ export function RiderProvider({ children }) {
           // Cargar fila completa con joins
           const { data } = await supabase
             .from('pedido_asignaciones')
-            .select('id, pedido_id, estado, intento, distancia_metros, aceptado_at, recogido_at, entregado_at, created_at, pedidos!inner(id, codigo, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, estado, establecimiento_id, establecimientos!inner(id, nombre, direccion, telefono, latitud, longitud))')
+            .select('id, pedido_id, estado, intento, distancia_metros, aceptado_at, recogido_at, entregado_at, created_at, pedidos!inner(id, codigo, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, estado, establecimiento_id, usuario_id, notas, usuarios(nombre, apellido, telefono), establecimientos!inner(id, nombre, direccion, telefono, latitud, longitud))')
             .eq('id', payload.new.id)
             .maybeSingle()
           if (!data) return

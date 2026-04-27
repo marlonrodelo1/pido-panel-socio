@@ -14,9 +14,12 @@ const ESTADOS = [
   { id: 'todos', label: 'Todos' },
   { id: 'nuevo', label: 'Nuevo' },
   { id: 'preparando', label: 'Preparando' },
+  { id: 'listo', label: 'Listo' },
+  { id: 'recogido', label: 'Recogido' },
   { id: 'en_camino', label: 'En camino' },
   { id: 'entregado', label: 'Entregado' },
   { id: 'cancelado', label: 'Cancelado' },
+  { id: 'fallido', label: 'Fallido' },
 ]
 
 const PAGOS = [
@@ -65,12 +68,42 @@ export default function Pedidos() {
     if (!socio?.id) return
     ;(async () => {
       setLoading(true)
+      // El socio ve TODOS los pedidos en los que ha trabajado:
+      // 1) los de su marketplace (pedidos.socio_id = socio.id)
+      // 2) los que ha repartido aunque vengan de pidoo.es (rider_account.socio_id = socio.id)
+      // Cogemos el conjunto union: ids de pedidos que cumplan cualquiera.
+      const { data: riderAccs } = await supabase
+        .from('rider_accounts')
+        .select('id')
+        .eq('socio_id', socio.id)
+      const riderAccIds = (riderAccs || []).map((r) => r.id)
+
+      let pedidoIds = []
+      if (riderAccIds.length > 0) {
+        // Trae TODOS los pedidos en los que cualquier rider del socio fue
+        // asignado (aceptado, rechazado, esperando_aceptacion, etc.).
+        // Esto incluye historico de entregados.
+        const { data: asigs } = await supabase
+          .from('pedido_asignaciones')
+          .select('pedido_id')
+          .in('rider_account_id', riderAccIds)
+        pedidoIds = Array.from(new Set((asigs || []).map((a) => a.pedido_id)))
+      }
+
       let q = supabase
         .from('pedidos')
         .select('id, codigo, estado, metodo_pago, total, created_at, establecimiento:establecimientos(nombre), rider_earnings(neto_rider, coste_envio, propina, comision_rider_sobre_subtotal)')
-        .eq('socio_id', socio.id)
         .order('created_at', { ascending: false })
         .limit(200)
+
+      if (pedidoIds.length > 0) {
+        // Or: socio_id == X OR id IN (...)
+        const idList = pedidoIds.map((x) => `"${x}"`).join(',')
+        q = q.or(`socio_id.eq.${socio.id},id.in.(${idList})`)
+      } else {
+        q = q.eq('socio_id', socio.id)
+      }
+
       const desde = rangoToDesde(rango)
       if (desde) q = q.gte('created_at', desde)
       if (estado !== 'todos') q = q.eq('estado', estado)
@@ -102,7 +135,7 @@ export default function Pedidos() {
     <div>
       <h1 style={ds.h1}>Pedidos</h1>
       <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4, marginBottom: 18 }}>
-        Todos los pedidos realizados a través de tu marketplace.
+        Pedidos de tu marketplace y los que has repartido.
       </p>
 
       {/* Filtros */}

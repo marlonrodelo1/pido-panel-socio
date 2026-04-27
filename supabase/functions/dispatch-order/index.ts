@@ -194,7 +194,17 @@ serve(async (req) => {
     .select().single()
   if (asignErr) { await dbg('insert_failed', { err: asignErr.message }); return jsonResponse({ error: 'insert_failed', detail: asignErr.message }, 500) }
 
-  await sb.from('pedidos').update({ rider_account_id: elegido.rider_account_id, intento_asignacion: intento, assigned_at: new Date().toISOString(), shipday_status: 'created' }).eq('id', pedido.id)
+  // shipday_tracking_url ahora apunta al tracking propio en socio.pidoo.es
+  // (sustituye al iframe Shipday). Solo se escribe si no existe ya, para no
+  // pisar URLs legacy de pedidos antiguos servidos por Shipday.
+  const trackingUrl = `https://socio.pidoo.es/seguir/${pedido.codigo}`
+  await sb.from('pedidos').update({
+    rider_account_id: elegido.rider_account_id,
+    intento_asignacion: intento,
+    assigned_at: new Date().toISOString(),
+    shipday_status: 'created',
+    shipday_tracking_url: trackingUrl,
+  }).eq('id', pedido.id)
   await dbg('elegido', { user_id: elegido.user_id, asignacion_id: asignacion.id, codigo: pedido.codigo })
 
   // Push DIRECTO via FCM (sin pasar por enviar_push, que falla por JWT entre edge fn)
