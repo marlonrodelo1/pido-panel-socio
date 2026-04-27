@@ -68,5 +68,16 @@
     <!-- Geolocation (rider tracking) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Background location: necesario para que el GPS siga enviando coordenadas
+         cuando el rider tiene la app en background o el movil en el bolsillo
+         con la pantalla apagada. Android 10+ exige permiso aparte (el usuario
+         tiene que escoger "Permitir todo el tiempo" en ajustes). -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Foreground service: notificacion persistente "Pidoo - Recibiendo pedidos"
+         que mantiene el proceso vivo mientras el rider esta online. Sin esto
+         Android mata el proceso a los pocos minutos. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+: hay que declarar el tipo concreto (location). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>

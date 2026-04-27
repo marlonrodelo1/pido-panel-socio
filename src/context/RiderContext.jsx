@@ -8,7 +8,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { riderApi } from '../lib/riderApi'
-import { makeRiderTracker, getCurrentPosition } from '../lib/riderGeo'
+import { makeRiderTracker, getCurrentPosition, ensureBackgroundLocationPermission } from '../lib/riderGeo'
 import { useSocio } from './SocioContext'
 
 const RiderContext = createContext(null)
@@ -20,6 +20,12 @@ export function RiderProvider({ children }) {
   const [asignaciones, setAsignaciones] = useState([])
   const [pendingNew, setPendingNew] = useState(null) // asignacion_id pendiente de aceptar/rechazar
   const [pos, setPos] = useState(null)
+  // gpsStatus: { ok: bool, reason?: string, code?: string }
+  // - ok=true sin reason -> tracker corriendo bien
+  // - ok=false -> mostrar banner rojo en HeaderRider con boton "Reintentar"
+  const [gpsStatus, setGpsStatus] = useState({ ok: true })
+  // gpsToast: mensaje informativo no bloqueante (ej. "permiso parcial")
+  const [gpsToast, setGpsToast] = useState(null)
   const trackerRef = useRef(null)
   const channelRef = useRef(null)
 
@@ -137,9 +143,21 @@ export function RiderProvider({ children }) {
     const t = makeRiderTracker({
       onTick: async ({ lat, lng }) => {
         setPos({ lat, lng })
+        // Si llega un tick limpio el banner de GPS bloqueado.
+        setGpsStatus((prev) => prev.ok ? prev : { ok: true })
         try { await riderApi.updateLocation({ lat, lng }) } catch (e) { console.warn('[Rider] update-location fail', e?.message) }
       },
-      onError: (e) => console.warn('[Rider] gps fail', e?.message),
+      onError: (e) => {
+        console.warn('[Rider] gps fail', e?.message)
+        // No marcamos ok=false aqui: que sea el onStatusChange quien decida.
+        // Esto evita parpadeos por errores transitorios (timeout, etc.).
+      },
+      onStatusChange: (s) => {
+        // s = { kind, ok, reason?, code?, message? }
+        if (s.ok === false) {
+          setGpsStatus({ ok: false, reason: s.reason || s.code || 'gps_error', message: s.message })
+        }
+      },
     })
     trackerRef.current = t
     t.start()
@@ -157,6 +175,19 @@ export function RiderProvider({ children }) {
   const goOnline = useCallback(() => {
     setOnline(true) // optimista
     ;(async () => {
+      // Pedir permiso "todo el tiempo" ANTES de arrancar el tracker. Si el
+      // usuario solo concede "while in use", seguimos pero avisamos: en
+      // background no llegaran ubicaciones y por tanto no recibira pedidos.
+      try {
+        const perm = await ensureBackgroundLocationPermission()
+        if (!perm.foreground) {
+          setGpsToast({ type: 'error', message: 'Sin permiso de ubicacion no puedes recibir pedidos. Activalo en Ajustes.' })
+          // Igual seguimos: el rider puede usar la app aunque no reparta.
+        } else if (!perm.background) {
+          setGpsToast({ type: 'warn', message: 'Para recibir pedidos con la pantalla bloqueada, cambia el permiso de ubicacion a "Permitir todo el tiempo" en Ajustes.' })
+        }
+      } catch (_) {}
+
       let lat, lng
       try {
         const p = await getCurrentPosition()
@@ -217,14 +248,29 @@ export function RiderProvider({ children }) {
 
   const dismissPending = useCallback(() => setPendingNew(null), [])
 
+  // Reintenta el tracker tras un error de GPS (banner "Reintentar"). Para el
+  // tracker actual y deja que el efecto de `online` lo recree.
+  const retryGps = useCallback(() => {
+    if (!online) return
+    setGpsStatus({ ok: true })
+    try { trackerRef.current?.stop() } catch (_) {}
+    trackerRef.current = null
+    // Pequeno toggle para forzar re-ejecucion del effect.
+    setOnline(false)
+    setTimeout(() => setOnline(true), 50)
+  }, [online])
+
+  const dismissGpsToast = useCallback(() => setGpsToast(null), [])
+
   const value = useMemo(() => ({
     online, riderAccountId,
     asignaciones, pendingNew,
     pos,
+    gpsStatus, gpsToast, retryGps, dismissGpsToast,
     goOnline, goOffline,
     accept, reject, pickup, deliver, failDeliver,
     dismissPending,
-  }), [online, riderAccountId, asignaciones, pendingNew, pos, goOnline, goOffline, accept, reject, pickup, deliver, failDeliver, dismissPending])
+  }), [online, riderAccountId, asignaciones, pendingNew, pos, gpsStatus, gpsToast, retryGps, dismissGpsToast, goOnline, goOffline, accept, reject, pickup, deliver, failDeliver, dismissPending])
 
   return <RiderContext.Provider value={value}>{children}</RiderContext.Provider>
 }

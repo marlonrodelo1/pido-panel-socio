@@ -11,6 +11,7 @@ import Restaurantes from './pages/Restaurantes'
 import RestauranteDetalle from './pages/RestauranteDetalle'
 import Pedidos from './pages/Pedidos'
 import Configuracion from './pages/Configuracion'
+import EliminarCuenta from './pages/EliminarCuenta'
 import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
 import BottomNav from './components/BottomNav'
@@ -49,6 +50,7 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
       : <Restaurantes onOpenRestaurante={openRestaurante} />,
     pedidos:              <Pedidos />,
     configuracion:        <Configuracion />,
+    'eliminar-cuenta':    <EliminarCuenta onBack={() => setSection('configuracion')} />,
     soporte:              <Soporte />,
   }[effectiveSection] || <Dashboard setSection={setSection} openRestaurante={openRestaurante} />
 

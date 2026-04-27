@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { loginEmail, registerEmail, resetPassword } from '../lib/auth'
 import GoogleButton from '../components/GoogleButton'
@@ -43,6 +43,16 @@ export default function Login({ onBack }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [resetSent, setResetSent] = useState(false)
+
+  // Si venimos de eliminar cuenta, mostramos mensaje informativo
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('pidoo_cuenta_eliminada') === '1') {
+        setError('Tu cuenta ha sido eliminada correctamente.')
+        localStorage.removeItem('pidoo_cuenta_eliminada')
+      }
+    } catch (_) {}
+  }, [])
 
   function translate(msg) {
     if (!msg) return 'Error desconocido'

@@ -1,12 +1,9 @@
-// dispatch-order — sustituye a create-shipday-order cuando
-// establecimientos.usa_dispatcher_propio = true.
+// dispatch-order — dispatcher propio de Pidoo (Shipday eliminado).
 //
 // Body: { pedido_id }
 // 1. Lee pedido + establecimiento (lat/lng).
-// 2. Si establecimiento.usa_dispatcher_propio = false → reenvia a
-//    create-shipday-order (compatibilidad mientras dura la migracion).
-// 3. Si true → busca socios online del establecimiento, ranquea por score y
-//    crea fila en pedido_asignaciones + push DIRECTO al socio elegido.
+// 2. Busca socios online del establecimiento, ranquea por score y crea
+//    fila en pedido_asignaciones + push DIRECTO al socio elegido.
 //
 // IMPORTANTE: el push se envia DIRECTO a FCM desde aqui (sin pasar por la
 // edge function enviar_push) porque el gateway de Supabase rechaza con 401
@@ -112,7 +109,7 @@ serve(async (req) => {
 
   const { data: pedido, error: pedErr } = await sb
     .from('pedidos')
-    .select('id, codigo, establecimiento_id, lat_entrega, lng_entrega, intento_asignacion, modo_entrega, estado')
+    .select('id, codigo, establecimiento_id, lat_entrega, lng_entrega, intento_asignacion, modo_entrega, estado, tracking_token')
     .eq('id', body.pedido_id)
     .maybeSingle()
   if (pedErr || !pedido) { await dbg('pedido_not_found', { err: pedErr?.message }); return jsonResponse({ error: 'pedido_not_found' }, 404) }
@@ -120,21 +117,10 @@ serve(async (req) => {
 
   const { data: est } = await sb
     .from('establecimientos')
-    .select('id, latitud, longitud, usa_dispatcher_propio, nombre')
+    .select('id, latitud, longitud, nombre')
     .eq('id', pedido.establecimiento_id)
     .maybeSingle()
   if (!est) return jsonResponse({ error: 'establecimiento_not_found' }, 404)
-
-  if (!est.usa_dispatcher_propio) {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const r = await fetch(`${supabaseUrl}/functions/v1/create-shipday-order`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: req.headers.get('Authorization') || `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}` },
-      body: JSON.stringify({ pedido_id: pedido.id }),
-    })
-    const txt = await r.text()
-    return new Response(txt, { status: r.status, headers: { 'Content-Type': 'application/json' } })
-  }
 
   const { data: vinculos } = await sb
     .from('restaurante_riders')
@@ -194,10 +180,13 @@ serve(async (req) => {
     .select().single()
   if (asignErr) { await dbg('insert_failed', { err: asignErr.message }); return jsonResponse({ error: 'insert_failed', detail: asignErr.message }, 500) }
 
-  // shipday_tracking_url ahora apunta al tracking propio en socio.pidoo.es
-  // (sustituye al iframe Shipday). Solo se escribe si no existe ya, para no
-  // pisar URLs legacy de pedidos antiguos servidos por Shipday.
-  const trackingUrl = `https://socio.pidoo.es/seguir/${pedido.codigo}`
+  // La columna `shipday_tracking_url` (legacy) ahora se rellena con la URL
+  // del tracking propio en socio.pidoo.es, incluyendo el tracking_token (UUID
+  // secreto) como query string para evitar que un atacante con solo el codigo
+  // (PD-XXXXX, bruteforce-able) pueda ver datos del pedido.
+  const trackingUrl = pedido.tracking_token
+    ? `https://socio.pidoo.es/seguir/${pedido.codigo}?t=${pedido.tracking_token}`
+    : `https://socio.pidoo.es/seguir/${pedido.codigo}` // fallback legacy (rompera 404)
   await sb.from('pedidos').update({
     rider_account_id: elegido.rider_account_id,
     intento_asignacion: intento,

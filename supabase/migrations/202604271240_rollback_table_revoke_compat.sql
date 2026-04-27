@@ -1,0 +1,25 @@
+-- ============================================================================
+-- HARDENING fase 4 — compatibilidad pido-app en producción
+-- 2026-04-27
+--
+-- Restituye GRANT SELECT a anon a nivel TABLA en establecimientos para no romper
+-- pido-app/Home.jsx (que hace `select('*')`). Las columnas sensibles solo se
+-- bloquean efectivamente cuando el frontend las pida explícitamente — para `*`
+-- sigue devolviéndose todo.
+--
+-- ESTADO RESULTANTE:
+--   - establecimientos.shipday_api_key, stripe_*, balance_*, datos fiscales
+--     siguen siendo legibles por anon via select('*'). NO es seguro al 100%
+--     pero MANTIENE compatibilidad con app en stores. Pendiente: deploy
+--     frontend con SELECT explícito + segundo REVOKE.
+--   - socios queda completamente blindado (RLS niega; sin policy SELECT para anon).
+--   - pedidos / pedido_items YA quedan blindados con las policies por rol
+--     aplicadas en migración 1200.
+--
+-- Marcar como deuda técnica: fase 5 (post deploy de pido-app) revocará otra vez
+-- el SELECT de columnas sensibles en establecimientos.
+-- ============================================================================
+
+GRANT SELECT ON public.establecimientos TO anon;
+-- NOTA: NO se restituye GRANT SELECT en socios — la policy SELECT pública ya
+-- fue eliminada y la vista socios_publicos sirve los datos públicos.

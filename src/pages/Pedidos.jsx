@@ -448,7 +448,7 @@ function DetalleModal({ pedidoId, onClose }) {
                   href={pedido.shipday_tracking_url}
                   target="_blank" rel="noreferrer"
                   style={{ ...ds.primaryBtn, textDecoration: 'none', display: 'inline-flex' }}
-                >Ver tracking en Shipday</a>
+                >Ver seguimiento</a>
               </div>
             )}
           </div>

@@ -8,7 +8,6 @@ export default function Configuracion() {
   const [form, setForm] = useState({
     nombre: socio?.nombre || '',
     telefono: socio?.telefono || '',
-    shipday_api_key: socio?.shipday_api_key || '',
     razon_social: socio?.razon_social || '',
     nif: socio?.nif || '',
     direccion_fiscal: socio?.direccion_fiscal || '',
@@ -28,7 +27,6 @@ export default function Configuracion() {
     setForm({
       nombre: socio.nombre || '',
       telefono: socio.telefono || '',
-      shipday_api_key: socio.shipday_api_key || '',
       razon_social: socio.razon_social || '',
       nif: socio.nif || '',
       direccion_fiscal: socio.direccion_fiscal || '',
@@ -49,7 +47,6 @@ export default function Configuracion() {
       await updateSocio({
         nombre: form.nombre,
         telefono: form.telefono || null,
-        shipday_api_key: form.shipday_api_key || null,
         razon_social: form.razon_social || null,
         nif: form.nif ? form.nif.trim().toUpperCase() : null,
         direccion_fiscal: form.direccion_fiscal || null,
@@ -169,16 +166,6 @@ export default function Configuracion() {
 
       <FacturacionPidooCard socio={socio} />
 
-      <div style={{ ...ds.card, marginBottom: 16 }}>
-        <h2 style={ds.h2}>Integración Shipday (rider)</h2>
-        <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 10 }}>
-          Si eres rider además de socio, vincula aquí tu cuenta Shipday.
-        </p>
-        <label style={ds.label}>API Key de Shipday</label>
-        <input value={form.shipday_api_key} onChange={e => setForm({ ...form, shipday_api_key: e.target.value })}
-          placeholder="Pega aquí tu API key…" style={ds.input} />
-      </div>
-
       {err && <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: type.xs }}>{err}</div>}
       {ok && <div style={{ background: colors.stateOkSoft, color: colors.stateOk, padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: type.xs }}>Cambios guardados.</div>}
 
@@ -187,6 +174,32 @@ export default function Configuracion() {
           {saving ? 'Guardando…' : 'Guardar cambios'}
         </button>
         <button onClick={logout} style={ds.dangerBtn}>Cerrar sesión</button>
+      </div>
+
+      {/* Zona peligrosa */}
+      <div style={{
+        marginTop: 28, padding: 16,
+        border: `1px solid rgba(220,38,38,0.25)`,
+        borderRadius: 12, background: colors.dangerSoft,
+      }}>
+        <div style={{
+          fontSize: type.xxs, fontWeight: 800, color: colors.danger,
+          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6,
+        }}>
+          Zona peligrosa
+        </div>
+        <p style={{ fontSize: type.xs, color: colors.textDim, lineHeight: 1.5, marginBottom: 12 }}>
+          Borra tu cuenta y todos los datos personales asociados. Esta acción es irreversible.
+        </p>
+        <button
+          onClick={() => { try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'eliminar-cuenta' })) } catch (_) {} }}
+          style={{
+            ...ds.dangerBtn,
+            background: 'transparent',
+          }}
+        >
+          Eliminar cuenta
+        </button>
       </div>
     </div>
   )
@@ -259,7 +272,7 @@ function FacturacionPidooCard({ socio }) {
           Tu marketplace público está <strong>desactivado</strong> y no recibirás pedidos hasta que regularices el pago.
         </p>
         <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 12 }}>
-          Tienes {n} rider{n === 1 ? '' : 's'} activo{n === 1 ? '' : 's'} en tu cuenta Shipday.
+          Tienes {n} rider{n === 1 ? '' : 's'} activo{n === 1 ? '' : 's'} en tu cuenta.
         </p>
         <button
           onClick={pagarAhora}
@@ -284,10 +297,10 @@ function FacturacionPidooCard({ socio }) {
       <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Mi facturación Pidoo</h2>
         <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5 }}>
-          Ahora tienes <strong style={{ color: colors.text }}>1 rider</strong> en tu cuenta Shipday → no pagas plan multi-rider a Pidoo.
+          Ahora tienes <strong style={{ color: colors.text }}>1 rider</strong> en tu cuenta → no pagas plan multi-rider a Pidoo.
         </p>
         <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 8 }}>
-          Si añades 2 o más riders en Shipday, se aplicará automáticamente el plan multi-rider de <strong>39 €/mes</strong>.
+          Si añades 2 o más riders, se aplicará automáticamente el plan multi-rider de <strong>39 €/mes</strong>.
         </p>
       </div>
     )
@@ -299,7 +312,7 @@ function FacturacionPidooCard({ socio }) {
       <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Mi facturación Pidoo</h2>
         <p style={{ fontSize: type.sm, color: colors.text, lineHeight: 1.5 }}>
-          Estás pagando <strong>39 €/mes</strong> por el plan multi-rider ({n} rider{n === 1 ? '' : 's'} en Shipday).
+          Estás pagando <strong>39 €/mes</strong> por el plan multi-rider ({n} rider{n === 1 ? '' : 's'} en tu cuenta).
         </p>
         <div style={{
           marginTop: 10, padding: '10px 12px',
@@ -323,7 +336,7 @@ function FacturacionPidooCard({ socio }) {
       <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Mi facturación Pidoo</h2>
         <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5 }}>
-          Tienes <strong style={{ color: colors.text }}>{n} riders</strong> en Shipday. El plan multi-rider de <strong>39 €/mes</strong> se activará en las próximas horas tras la sincronización automática.
+          Tienes <strong style={{ color: colors.text }}>{n} riders</strong> en tu cuenta. El plan multi-rider de <strong>39 €/mes</strong> se activará en las próximas horas tras la sincronización automática.
         </p>
       </div>
     )

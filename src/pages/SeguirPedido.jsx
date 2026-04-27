@@ -1,9 +1,20 @@
-// Pagina publica /seguir/<codigo> con Google Maps + rider en tiempo real.
+// Pagina publica /seguir/<codigo>?t=<token> con Google Maps + rider en tiempo real.
+//
+// SEGURIDAD: ahora consulta exclusivamente la edge function get-tracking-publico
+// con un token UUID v4 que se pasa por query string. Sin token valido o con
+// codigo inexistente la edge devuelve 404 → mostramos "Enlace no valido".
+//
+// Cambios vs version anterior (problema A.3 frontend security):
+// - Cero PII del cliente expuesta: NO se devuelve direccion/lat/lng del cliente.
+// - El mapa muestra solo el restaurante y el rider, no el destino.
+// - Polling cada 15s a la edge function; antes era cada 8s a Supabase directo.
 
 import { useEffect, useRef, useState } from 'react'
-import { supabase } from '../lib/supabase'
 import { loadGoogleMaps } from '../lib/googleMaps'
 import { emojiIcon, imageRoundIcon } from '../lib/mapMarkers'
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 const STEPS = [
   { id: 'aceptado', label: 'Aceptado' },
@@ -20,78 +31,80 @@ function estadoToStep(estado) {
   return 0
 }
 
+function getTrackingTokenFromUrl() {
+  if (typeof window === 'undefined') return ''
+  try {
+    const url = new URL(window.location.href)
+    return (url.searchParams.get('t') || '').trim()
+  } catch { return '' }
+}
+
 export default function SeguirPedido({ codigo }) {
-  const [pedido, setPedido] = useState(null)
-  const [rider, setRider] = useState(null)
-  const [items, setItems] = useState([])
+  const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [accItems, setAccItems] = useState(false)
   const mapRef = useRef(null)
   const mapDivRef = useRef(null)
   const markersRef = useRef({})
+  const tokenRef = useRef(getTrackingTokenFromUrl())
 
   useEffect(() => {
     if (!codigo) return
+    if (!tokenRef.current) {
+      setError('Enlace de seguimiento no válido')
+      setLoading(false)
+      return
+    }
     let cancel = false
 
     async function load() {
-      const { data: ped, error: pedErr } = await supabase
-        .from('pedidos')
-        .select('id, codigo, estado, total, direccion_entrega, lat_entrega, lng_entrega, modo_entrega, recogido_at, entregado_at, minutos_preparacion, establecimiento_id, establecimientos(nombre, telefono, direccion, latitud, longitud, logo_url)')
-        .eq('codigo', (codigo || '').toUpperCase())
-        .maybeSingle()
-      if (cancel) return
-      if (pedErr || !ped) { setError('Pedido no encontrado'); setLoading(false); return }
-      setPedido(ped)
-
-      const { data: pedItems } = await supabase
-        .from('pedido_items')
-        .select('nombre_producto, cantidad, precio_unitario')
-        .eq('pedido_id', ped.id)
-      if (!cancel) setItems(pedItems || [])
-
-      const { data: asig } = await supabase
-        .from('pedido_asignaciones')
-        .select('estado, aceptado_at, recogido_at, entregado_at, rider_accounts!inner(socios!inner(id, nombre, telefono, rating, latitud_actual, longitud_actual, last_location_at))')
-        .eq('pedido_id', ped.id)
-        .in('estado', ['aceptado'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (!cancel) {
-        const s = asig?.rider_accounts?.socios
-        if (s) {
-          setRider({
-            id: s.id,
-            nombre: s.nombre || 'Repartidor',
-            telefono: s.telefono || null,
-            rating: s.rating || null,
-            lat: s.latitud_actual,
-            lng: s.longitud_actual,
-          })
-        } else { setRider(null) }
+      try {
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/get-tracking-publico`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': ANON,
+            'Authorization': `Bearer ${ANON}`,
+          },
+          body: JSON.stringify({ codigo, token: tokenRef.current }),
+        })
+        if (cancel) return
+        if (r.status === 404) {
+          setError('Enlace de seguimiento no válido')
+          setLoading(false)
+          return
+        }
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          setError(j.error || 'No se pudo cargar el pedido')
+          setLoading(false)
+          return
+        }
+        setData(j)
+        setError(null)
+        setLoading(false)
+      } catch (e) {
+        if (cancel) return
+        setError('No se pudo cargar el pedido')
+        setLoading(false)
       }
-      setLoading(false)
     }
 
     load()
-    const id = setInterval(load, 8000)
-    const ch = supabase.channel('seguir-' + codigo)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'pedidos', filter: `codigo=eq.${(codigo || '').toUpperCase()}` },
-        (payload) => setPedido((prev) => prev ? { ...prev, ...payload.new } : prev))
-      .subscribe()
-    return () => { cancel = true; clearInterval(id); try { supabase.removeChannel(ch) } catch (_) {} }
+    const id = setInterval(load, 15000)
+    return () => { cancel = true; clearInterval(id) }
   }, [codigo])
 
-  // Google Maps init
+  // Init Google Maps con marker del restaurante
   useEffect(() => {
-    if (!pedido?.establecimientos) return
+    const est = data?.establecimiento
+    if (!est) return
     let cancel = false
     loadGoogleMaps().then((maps) => {
       if (cancel || !mapDivRef.current || mapRef.current) return
-      const restLat = pedido.establecimientos.latitud
-      const restLng = pedido.establecimientos.longitud
+      const restLat = est.latitud
+      const restLng = est.longitud
       if (restLat == null || restLng == null) return
       const map = new maps.Map(mapDivRef.current, {
         center: { lat: restLat, lng: restLng },
@@ -103,33 +116,24 @@ export default function SeguirPedido({ codigo }) {
       })
       mapRef.current = map
 
-      // Restaurante: logo redondo con borde naranja, fallback emoji
       ;(async () => {
-        const restIcon = pedido.establecimientos?.logo_url
-          ? await imageRoundIcon(pedido.establecimientos.logo_url, '#FF6B2C')
+        const restIcon = est.logo_url
+          ? await imageRoundIcon(est.logo_url, '#FF6B2C')
           : emojiIcon('🍽️', '#FF6B2C')
         if (cancel) return
         markersRef.current.rest = new maps.Marker({
           position: { lat: restLat, lng: restLng },
-          map, title: pedido.establecimientos.nombre || 'Restaurante',
+          map, title: est.nombre || 'Restaurante',
           icon: restIcon,
         })
       })()
-
-      // Cliente: emoji casa
-      if (pedido.lat_entrega && pedido.lng_entrega) {
-        markersRef.current.cli = new maps.Marker({
-          position: { lat: pedido.lat_entrega, lng: pedido.lng_entrega },
-          map, title: 'Entrega',
-          icon: emojiIcon('🏠', '#1F1F1E'),
-        })
-      }
     }).catch((e) => console.warn('[seguir] gmaps load fail', e?.message))
     return () => { cancel = true }
-  }, [pedido?.establecimientos?.latitud, pedido?.establecimientos?.longitud, pedido?.lat_entrega])
+  }, [data?.establecimiento?.latitud, data?.establecimiento?.longitud])
 
   // Update rider marker
   useEffect(() => {
+    const rider = data?.rider
     if (!mapRef.current || !rider?.lat || !rider?.lng || !window.google?.maps) return
     const maps = window.google.maps
     const pos = { lat: rider.lat, lng: rider.lng }
@@ -147,13 +151,18 @@ export default function SeguirPedido({ codigo }) {
       Object.values(markersRef.current).forEach((m) => bounds.extend(m.getPosition()))
       mapRef.current.fitBounds(bounds, 70)
     } catch (_) {}
-  }, [rider?.lat, rider?.lng])
+  }, [data?.rider?.lat, data?.rider?.lng])
 
   if (loading) return <Layout><Centered>Cargando…</Centered></Layout>
-  if (error || !pedido) return <Layout><Centered>{error || 'Pedido no encontrado'}</Centered></Layout>
+  if (error) return <Layout><Centered>{error}</Centered></Layout>
+  if (!data?.pedido) return <Layout><Centered>Pedido no encontrado</Centered></Layout>
+
+  const pedido = data.pedido
+  const est = data.establecimiento
+  const rider = data.rider
+  const items = data.items || []
 
   const step = estadoToStep(pedido.estado)
-  const est = pedido.establecimientos
   const esTerminado = pedido.estado === 'entregado' || pedido.estado === 'cancelado'
 
   return (
@@ -235,7 +244,6 @@ export default function SeguirPedido({ codigo }) {
       <div style={S.card}>
         <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700, marginBottom: 4 }}>Restaurante</div>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#1F1F1E' }}>{est?.nombre}</div>
-        <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>{est?.direccion}</div>
         {est?.telefono && (
           <a href={`tel:${est.telefono}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, fontWeight: 700, color: '#FF6B2C' }}>📞 {est.telefono}</a>
         )}
