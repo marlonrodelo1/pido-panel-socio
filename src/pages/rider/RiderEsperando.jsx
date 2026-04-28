@@ -9,35 +9,61 @@ import { useSocio } from '../../context/SocioContext'
 import { supabase } from '../../lib/supabase'
 import { loadGoogleMaps } from '../../lib/googleMaps'
 import { emojiIcon, imageRoundIcon } from '../../lib/mapMarkers'
+import { getCurrentPosition } from '../../lib/riderGeo'
+import { formatTarifa } from '../../lib/tarifas'
 
 export default function RiderEsperando({ onGoPedidos }) {
   const { socio } = useSocio()
-  const { pos, online, asignaciones } = useRider()
+  const { pos: ridPos, online, asignaciones } = useRider()
   const mapDivRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({ rider: null, rests: [], pedidos: [] })
   const radioCircleRef = useRef(null)
   const [restaurantes, setRestaurantes] = useState([])
   const [selectedRestId, setSelectedRestId] = useState(null)
+  // Posicion local: prefiere la del context (live), si no la pide al GPS al
+  // montar para mostrar el marker incluso cuando el rider no esta "online".
+  const [localPos, setLocalPos] = useState(null)
+  const pos = ridPos || localPos
 
-  // Cargar restaurantes vinculados al socio (incluye radio_cobertura_km)
+  // Cargar restaurantes vinculados al socio + tarifa pactada del par
   useEffect(() => {
     if (!socio?.id) return
     let cancel = false
     ;(async () => {
       const { data: vinc } = await supabase
         .from('socio_establecimiento')
-        .select('establecimiento_id, establecimientos!inner(id, nombre, latitud, longitud, activo, estado, logo_url, radio_cobertura_km)')
+        .select('establecimiento_id, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, establecimientos!inner(id, nombre, latitud, longitud, activo, estado, logo_url, radio_cobertura_km)')
         .eq('socio_id', socio.id)
         .eq('estado', 'activa')
       if (cancel) return
       const rests = (vinc || [])
-        .map((v) => v.establecimientos)
-        .filter((e) => e && e.activo && e.latitud && e.longitud)
+        .filter((v) => v.establecimientos && v.establecimientos.activo
+          && v.establecimientos.latitud && v.establecimientos.longitud)
+        .map((v) => ({
+          ...v.establecimientos,
+          tarifa_base: v.tarifa_base,
+          tarifa_radio_base_km: v.tarifa_radio_base_km,
+          tarifa_precio_km: v.tarifa_precio_km,
+          tarifa_maxima: v.tarifa_maxima,
+        }))
       setRestaurantes(rests)
     })()
     return () => { cancel = true }
   }, [socio?.id])
+
+  // Pedir posicion al GPS al montar (one-shot) si no la tenemos via context.
+  useEffect(() => {
+    if (ridPos) return
+    let cancel = false
+    ;(async () => {
+      try {
+        const p = await getCurrentPosition()
+        if (!cancel && p?.lat && p?.lng) setLocalPos({ lat: p.lat, lng: p.lng })
+      } catch (_) {}
+    })()
+    return () => { cancel = true }
+  }, [ridPos])
 
   // Inicializar mapa
   useEffect(() => {
@@ -192,23 +218,36 @@ export default function RiderEsperando({ onGoPedidos }) {
           <div style={{
             background: colors.surface, padding: '10px 14px',
             borderRadius: 12, border: `1px solid ${colors.primaryBorder}`,
-            boxShadow: colors.shadowMd, display: 'flex', alignItems: 'center', gap: 10,
+            boxShadow: colors.shadowMd, display: 'flex', alignItems: 'flex-start', gap: 10,
           }}>
             <div style={{
-              width: 8, height: 8, borderRadius: 4, background: colors.primary, flexShrink: 0,
+              width: 8, height: 8, borderRadius: 4, background: colors.primary,
+              flexShrink: 0, marginTop: 6,
             }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {restSeleccionado.nombre}
+                {' · '}
+                <span style={{ color: colors.primary }}>
+                  {Number(restSeleccionado.radio_cobertura_km) || 3} km
+                </span>
               </div>
-              <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 1 }}>
-                Radio de entrega: {Number(restSeleccionado.radio_cobertura_km) || 3} km
+              <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2,
+                lineHeight: 1.35 }}>
+                <span style={{ fontWeight: 600, color: colors.text }}>Te paga: </span>
+                {formatTarifa({
+                  tarifa_base: restSeleccionado.tarifa_base,
+                  tarifa_radio_base_km: restSeleccionado.tarifa_radio_base_km,
+                  tarifa_precio_km: restSeleccionado.tarifa_precio_km,
+                  tarifa_maxima: restSeleccionado.tarifa_maxima,
+                })}
               </div>
             </div>
             <button onClick={() => setSelectedRestId(null)} style={{
               background: 'transparent', border: 'none', cursor: 'pointer',
               padding: 4, color: colors.textMute, display: 'inline-flex',
+              marginTop: 2,
             }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 strokeWidth="2.4" strokeLinecap="round">
