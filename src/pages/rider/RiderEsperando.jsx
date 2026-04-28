@@ -1,5 +1,6 @@
 // Pantalla idle del rider: mapa Google con su posicion + restaurantes
 // vinculados al socio + asignaciones activas. Banner inferior con estado.
+// Al tocar un restaurante muestra un circulo con su radio de cobertura.
 
 import { useEffect, useRef, useState } from 'react'
 import { colors, type } from '../../lib/uiStyles'
@@ -15,16 +16,18 @@ export default function RiderEsperando({ onGoPedidos }) {
   const mapDivRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({ rider: null, rests: [], pedidos: [] })
+  const radioCircleRef = useRef(null)
   const [restaurantes, setRestaurantes] = useState([])
+  const [selectedRestId, setSelectedRestId] = useState(null)
 
-  // Cargar restaurantes vinculados al socio
+  // Cargar restaurantes vinculados al socio (incluye radio_cobertura_km)
   useEffect(() => {
     if (!socio?.id) return
     let cancel = false
     ;(async () => {
       const { data: vinc } = await supabase
         .from('socio_establecimiento')
-        .select('establecimiento_id, establecimientos!inner(id, nombre, latitud, longitud, activo, estado, logo_url)')
+        .select('establecimiento_id, establecimientos!inner(id, nombre, latitud, longitud, activo, estado, logo_url, radio_cobertura_km)')
         .eq('socio_id', socio.id)
         .eq('estado', 'activa')
       if (cancel) return
@@ -53,11 +56,13 @@ export default function RiderEsperando({ onGoPedidos }) {
         clickableIcons: false,
         styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }],
       })
+      // Tocar fuera de un marker -> cerrar circulo
+      mapRef.current.addListener('click', () => setSelectedRestId(null))
     }).catch((e) => console.warn('[esperando] gmaps load fail', e?.message))
     return () => { cancel = true }
   }, [])
 
-  // Marcar restaurantes (logo redondo o emoji)
+  // Marcar restaurantes (logo redondo o emoji) — con click listener
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return
     const maps = window.google.maps
@@ -70,15 +75,52 @@ export default function RiderEsperando({ onGoPedidos }) {
           ? await imageRoundIcon(r.logo_url, '#FF6B2C')
           : emojiIcon('🍽️', '#FF6B2C')
         if (!mapRef.current) return
-        newMarkers.push(new maps.Marker({
+        const m = new maps.Marker({
           position: { lat: r.latitud, lng: r.longitud },
           map: mapRef.current, title: r.nombre,
           icon,
-        }))
+        })
+        // Click en el marker: toggle del circulo de radio
+        m.addListener('click', () => {
+          setSelectedRestId((prev) => (prev === r.id ? null : r.id))
+        })
+        m._restId = r.id
+        newMarkers.push(m)
       }
       markersRef.current.rests = newMarkers
     })()
   }, [restaurantes])
+
+  // Mostrar/ocultar circulo de radio cuando cambia selectedRestId
+  useEffect(() => {
+    if (!mapRef.current || !window.google?.maps) return
+    const maps = window.google.maps
+    // Limpiar circulo anterior siempre
+    if (radioCircleRef.current) {
+      radioCircleRef.current.setMap(null)
+      radioCircleRef.current = null
+    }
+    if (!selectedRestId) return
+    const rest = restaurantes.find((r) => r.id === selectedRestId)
+    if (!rest) return
+    const radioKm = Number(rest.radio_cobertura_km) || 3
+    radioCircleRef.current = new maps.Circle({
+      map: mapRef.current,
+      center: { lat: rest.latitud, lng: rest.longitud },
+      radius: radioKm * 1000, // Circle.radius en metros
+      strokeColor: '#FF6B2C',
+      strokeOpacity: 0.85,
+      strokeWeight: 2,
+      fillColor: '#FF6B2C',
+      fillOpacity: 0.15,
+      clickable: false,
+    })
+    // Encuadrar el circulo al elegir
+    try {
+      const bounds = radioCircleRef.current.getBounds()
+      if (bounds) mapRef.current.fitBounds(bounds, 80)
+    } catch (_) {}
+  }, [selectedRestId, restaurantes])
 
   // Marcar pedidos (casa cliente)
   useEffect(() => {
@@ -95,20 +137,34 @@ export default function RiderEsperando({ onGoPedidos }) {
       }))
   }, [asignaciones])
 
-  // Marcador propio (rider con emoji moto)
+  // Marcador propio del rider: logo del socio si existe, si no emoji moto
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps || !pos) return
     const maps = window.google.maps
     const p = { lat: pos.lat, lng: pos.lng }
-    if (!markersRef.current.rider) {
-      markersRef.current.rider = new maps.Marker({
-        position: p, map: mapRef.current, title: 'Tú',
-        icon: emojiIcon('🛵', '#16A34A'),
-        zIndex: 999,
-      })
-    } else {
-      markersRef.current.rider.setPosition(p)
-    }
+    let cancel = false
+    ;(async () => {
+      const icon = socio?.logo_url
+        ? await imageRoundIcon(socio.logo_url, '#16A34A')
+        : emojiIcon('🛵', '#16A34A')
+      if (cancel || !mapRef.current) return
+      if (!markersRef.current.rider) {
+        markersRef.current.rider = new maps.Marker({
+          position: p, map: mapRef.current, title: socio?.nombre || 'Tú',
+          icon, zIndex: 999,
+        })
+      } else {
+        markersRef.current.rider.setPosition(p)
+        markersRef.current.rider.setIcon(icon)
+      }
+    })()
+    return () => { cancel = true }
+  }, [pos?.lat, pos?.lng, socio?.logo_url, socio?.nombre])
+
+  // Auto-fit cuando cambia el conjunto de markers (sin pisar el fitBounds del circulo)
+  useEffect(() => {
+    if (!mapRef.current || !window.google?.maps || selectedRestId) return
+    const maps = window.google.maps
     try {
       const bounds = new maps.LatLngBounds()
       if (markersRef.current.rider) bounds.extend(markersRef.current.rider.getPosition())
@@ -116,10 +172,11 @@ export default function RiderEsperando({ onGoPedidos }) {
       markersRef.current.pedidos.forEach((m) => bounds.extend(m.getPosition()))
       if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 60)
     } catch (_) {}
-  }, [pos?.lat, pos?.lng, restaurantes.length, asignaciones.length])
+  }, [pos?.lat, pos?.lng, restaurantes.length, asignaciones.length, selectedRestId])
 
   const tienePedidos = asignaciones.length > 0
   const labelPedidos = asignaciones.length === 1 ? 'pedido en espera' : 'pedidos en espera'
+  const restSeleccionado = selectedRestId ? restaurantes.find((r) => r.id === selectedRestId) : null
 
   return (
     <div style={{
@@ -128,6 +185,49 @@ export default function RiderEsperando({ onGoPedidos }) {
       height: 'calc(100vh - 56px - env(safe-area-inset-top) - 70px - env(safe-area-inset-bottom))',
     }}>
       <div ref={mapDivRef} style={{ position: 'absolute', inset: 0, background: '#E8E6E0' }} />
+
+      {/* Banner superior: instruccion o info del restaurante seleccionado */}
+      <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 5 }}>
+        {restSeleccionado ? (
+          <div style={{
+            background: colors.surface, padding: '10px 14px',
+            borderRadius: 12, border: `1px solid ${colors.primaryBorder}`,
+            boxShadow: colors.shadowMd, display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: 4, background: colors.primary, flexShrink: 0,
+            }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {restSeleccionado.nombre}
+              </div>
+              <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 1 }}>
+                Radio de entrega: {Number(restSeleccionado.radio_cobertura_km) || 3} km
+              </div>
+            </div>
+            <button onClick={() => setSelectedRestId(null)} style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              padding: 4, color: colors.textMute, display: 'inline-flex',
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2.4" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        ) : (
+          <div style={{
+            background: 'rgba(255,255,255,0.95)', padding: '10px 14px',
+            borderRadius: 12, border: `1px solid ${colors.border}`,
+            boxShadow: colors.shadowMd, fontSize: type.xs,
+            color: colors.textMute, textAlign: 'center', fontWeight: 600,
+          }}>
+            Toca un restaurante para ver su radio de entrega
+          </div>
+        )}
+      </div>
 
       {!pos && (
         <div style={{
