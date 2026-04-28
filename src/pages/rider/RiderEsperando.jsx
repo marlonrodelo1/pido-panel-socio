@@ -26,27 +26,60 @@ export default function RiderEsperando({ onGoPedidos }) {
   const [localPos, setLocalPos] = useState(null)
   const pos = ridPos || localPos
 
-  // Cargar restaurantes vinculados al socio + tarifa pactada del par
+  // Cargar restaurantes vinculados al socio + tarifa pactada del par.
+  // En 2 pasos para evitar problemas con el inner join anidado de PostgREST
+  // que silenciaba resultados cuando una de las dos tablas falla.
   useEffect(() => {
     if (!socio?.id) return
     let cancel = false
     ;(async () => {
-      const { data: vinc } = await supabase
+      // Paso 1: vinculaciones activas (con tarifa)
+      const { data: vinc, error: errV } = await supabase
         .from('socio_establecimiento')
-        .select('establecimiento_id, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, establecimientos!inner(id, nombre, latitud, longitud, activo, estado, logo_url, radio_cobertura_km)')
+        .select('establecimiento_id, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima')
         .eq('socio_id', socio.id)
         .eq('estado', 'activa')
       if (cancel) return
-      const rests = (vinc || [])
-        .filter((v) => v.establecimientos && v.establecimientos.activo
-          && v.establecimientos.latitud && v.establecimientos.longitud)
-        .map((v) => ({
-          ...v.establecimientos,
-          tarifa_base: v.tarifa_base,
-          tarifa_radio_base_km: v.tarifa_radio_base_km,
-          tarifa_precio_km: v.tarifa_precio_km,
-          tarifa_maxima: v.tarifa_maxima,
-        }))
+      try {
+        await supabase.from('push_debug_logs').insert({
+          platform: 'rider-app', event: 'mapa:vinc_load',
+          details: JSON.stringify({ count: vinc?.length || 0, error: errV?.message || null }).slice(0, 1000),
+        })
+      } catch (_) {}
+      const ids = (vinc || []).map((v) => v.establecimiento_id).filter(Boolean)
+      if (ids.length === 0) { setRestaurantes([]); return }
+
+      // Paso 2: traer datos de los establecimientos
+      const { data: ests, error: errE } = await supabase
+        .from('establecimientos')
+        .select('id, nombre, latitud, longitud, activo, logo_url, radio_cobertura_km')
+        .in('id', ids)
+      if (cancel) return
+      try {
+        await supabase.from('push_debug_logs').insert({
+          platform: 'rider-app', event: 'mapa:rests_load',
+          details: JSON.stringify({
+            count: ests?.length || 0,
+            con_coords: (ests || []).filter((e) => e.latitud && e.longitud).length,
+            error: errE?.message || null,
+          }).slice(0, 1000),
+        })
+      } catch (_) {}
+
+      // Combinar tarifa de la vinculacion + datos del establecimiento
+      const tarifaPorId = new Map((vinc || []).map((v) => [v.establecimiento_id, v]))
+      const rests = (ests || [])
+        .filter((e) => e.activo && e.latitud != null && e.longitud != null)
+        .map((e) => {
+          const t = tarifaPorId.get(e.id) || {}
+          return {
+            ...e,
+            tarifa_base: t.tarifa_base,
+            tarifa_radio_base_km: t.tarifa_radio_base_km,
+            tarifa_precio_km: t.tarifa_precio_km,
+            tarifa_maxima: t.tarifa_maxima,
+          }
+        })
       setRestaurantes(rests)
     })()
     return () => { cancel = true }
