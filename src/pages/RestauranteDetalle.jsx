@@ -17,6 +17,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
   const [historicoFacturas, setHistoricoFacturas] = useState([])
   const [emitiendo, setEmitiendo] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [togglingDestacado, setTogglingDestacado] = useState(false)
 
   const fiscalCompletoSocio = !!(socio?.razon_social && socio?.nif && socio?.direccion_fiscal && socio?.codigo_postal && socio?.ciudad)
 
@@ -74,6 +75,31 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
 
   const fiscalRestauranteOk = !!(establecimiento?.razon_social && establecimiento?.nif)
   const puedeFacturar = fiscalCompletoSocio && fiscalRestauranteOk && pedidosPendientesFactura > 0
+
+  const toggleDestacado = async () => {
+    if (!vinculacion?.id || togglingDestacado) return
+    const nuevo = !vinculacion.destacado
+    setTogglingDestacado(true)
+    setMsg(null)
+    try {
+      const { error } = await supabase
+        .from('socio_establecimiento')
+        .update({ destacado: nuevo })
+        .eq('id', vinculacion.id)
+      if (error) throw error
+      setVinculacion(v => v ? ({ ...v, destacado: nuevo }) : v)
+      setMsg({
+        tipo: 'ok',
+        txt: nuevo
+          ? 'Restaurante marcado como destacado en tu marketplace.'
+          : 'Restaurante quitado de los destacados.',
+      })
+    } catch (e) {
+      setMsg({ tipo: 'error', txt: 'No se pudo actualizar: ' + e.message })
+    } finally {
+      setTogglingDestacado(false)
+    }
+  }
 
   const emitirFactura = async () => {
     setEmitiendo(true); setMsg(null)
@@ -170,6 +196,28 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
           </div>
         </div>
         {vinculacion && <div style={badge}>{badge._label}</div>}
+        {vinculacion?.estado === 'activa' && (
+          <button
+            onClick={toggleDestacado}
+            disabled={togglingDestacado}
+            title={vinculacion.destacado
+              ? 'Quitar de destacados en tu marketplace'
+              : 'Mostrar como destacado en tu marketplace'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '8px 14px', borderRadius: 999, cursor: 'pointer',
+              fontSize: type.xs, fontWeight: 700, fontFamily: 'inherit',
+              background: vinculacion.destacado ? colors.primary : colors.surface2,
+              color: vinculacion.destacado ? '#fff' : colors.textDim,
+              border: `1px solid ${vinculacion.destacado ? colors.primary : colors.border}`,
+              opacity: togglingDestacado ? 0.6 : 1,
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            <span style={{ fontSize: 13 }}>{vinculacion.destacado ? '★' : '☆'}</span>
+            {vinculacion.destacado ? 'Destacado' : 'Destacar'}
+          </button>
+        )}
       </div>
 
       {/* Stats */}

@@ -25,7 +25,12 @@ export async function loginGoogle() {
     const { data } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'com.pidoo.socios://login',
+        // Debe coincidir con CFBundleURLSchemes en Info.plist (iOS) y
+        // intent-filter en AndroidManifest.xml. El bundleId real es
+        // com.pido.socio (sin "s" final, sin "o" en "pidoo"). Si esto no
+        // coincide, Google OAuth no vuelve a la app pero NO causa pantalla
+        // blanca al boot.
+        redirectTo: 'com.pido.socio://login',
         skipBrowserRedirect: true,
       },
     })
