@@ -45,16 +45,43 @@ async function getBgGeo() {
 
 // --- permisos ---
 
+// Helper interno para loguear pasos del flujo de permisos a push_debug_logs.
+// Asi podemos diagnosticar en produccion por que no aparece el dialogo de
+// Android. No bloquea si la inserta falla.
+async function dbgLogPerm(event, details) {
+  try {
+    const { supabase } = await import('./supabase')
+    await supabase.from('push_debug_logs').insert({
+      platform: 'rider-app',
+      event: 'perm:' + event,
+      details: details ? JSON.stringify(details).slice(0, 1500) : null,
+    })
+  } catch (_) {}
+}
+
 // Pide permiso "while in use" minimo. Devuelve true/false.
+// En Capacitor 8 la API es requestPermissions({ permissions?: ['location' | 'coarseLocation'] }).
+// Sin opciones, pide todos. Con opciones, solo los indicados.
 export async function ensureLocationPermission() {
   const cap = await getCapPlugin()
-  if (!cap) return true
+  if (!cap) {
+    dbgLogPerm('skip_no_plugin', { platform: Capacitor.getPlatform() })
+    return true
+  }
   try {
     const perm = await cap.checkPermissions()
-    if (perm.location === 'granted' || perm.coarseLocation === 'granted') return true
-    const req = await cap.requestPermissions()
+    dbgLogPerm('check', perm)
+    if (perm.location === 'granted' || perm.coarseLocation === 'granted') {
+      return true
+    }
+    // Si el usuario los denego antes ('denied' o 'prompt-with-rationale'),
+    // intentar pedirlos igualmente. Android puede mostrar el dialogo o
+    // ignorarlo segun el estado. Logueamos el resultado para diagnosticar.
+    const req = await cap.requestPermissions({ permissions: ['location', 'coarseLocation'] })
+    dbgLogPerm('request_result', req)
     return req.location === 'granted' || req.coarseLocation === 'granted'
-  } catch (_) {
+  } catch (e) {
+    dbgLogPerm('error', { msg: e?.message, name: e?.name })
     return false
   }
 }
