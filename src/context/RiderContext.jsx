@@ -181,50 +181,33 @@ export function RiderProvider({ children }) {
   }, [])
 
   // Acciones del rider — UPDATE directo a socios via supabase-js client.
-  // Antes pasaba por la edge rider-online pero el JWT podia caducar y
-  // devolver 401. Con UPDATE directo, supabase-js refresca el token solo.
+  // ESTRATEGIA: hacer el UPDATE PRIMERO sin esperar a permisos ni GPS.
+  // Antes esperabamos a ensureBackgroundLocationPermission y getCurrentPosition
+  // ANTES del UPDATE, pero esas funciones podian colgarse indefinidamente
+  // (imports dinamicos del plugin Capacitor que nunca resuelven). El rider
+  // veia "ONLINE" en la UI pero en BD seguia offline -> pido-app cliente
+  // mostraba "solo recogida". Lo critico es marcar en_servicio=true cuanto
+  // antes para que clientes vean Delivery. Permisos y coords son secundarios.
   const goOnline = useCallback(() => {
     setOnline(true) // optimista
     dbg('goOnline:start', { socio_id: socio?.id })
     ;(async () => {
-      // Pedir permiso al sistema (no bloquea si falla)
-      try {
-        const perm = await ensureBackgroundLocationPermission()
-        if (!perm.foreground) {
-          setGpsToast({ type: 'error', message: 'Sin permiso de ubicacion no puedes recibir pedidos. Activalo en Ajustes.' })
-        } else if (!perm.background) {
-          setGpsToast({ type: 'warn', message: 'Para recibir pedidos con la pantalla bloqueada, cambia el permiso de ubicacion a "Permitir todo el tiempo" en Ajustes.' })
-        }
-      } catch (_) {}
-
-      // GPS one-shot con timeout 8s (opcional — si falla, igual marcamos online)
-      let lat, lng
-      try {
-        const p = await Promise.race([
-          getCurrentPosition(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('gps_timeout')), 8000)),
-        ])
-        lat = p.lat; lng = p.lng
-        setPos({ lat, lng })
-      } catch (_) {}
-
-      // UPDATE directo a socios. RLS socios_self_update permite al socio
-      // actualizar su propia fila. supabase-js maneja el refresh del JWT.
       if (!socio?.id) {
         await dbg('goOnline:no_socio')
         setOnline(false)
         return
       }
-      const update = {
-        en_servicio: true,
-        marketplace_activo: true,
-        last_location_at: new Date().toISOString(),
-      }
-      if (typeof lat === 'number' && typeof lng === 'number') {
-        update.latitud_actual = lat
-        update.longitud_actual = lng
-      }
-      const { error } = await supabase.from('socios').update(update).eq('id', socio.id)
+      // PASO 1 (CRITICO): UPDATE INMEDIATO de en_servicio + marketplace_activo.
+      // Sin coords iniciales — el tracker o el watcher del mapa las pondra
+      // cuando lleguen. Lo importante: que el cliente vea Delivery YA.
+      const { error } = await supabase
+        .from('socios')
+        .update({
+          en_servicio: true,
+          marketplace_activo: true,
+          last_location_at: new Date().toISOString(),
+        })
+        .eq('id', socio.id)
       if (error) {
         await dbg('goOnline:db_error', { msg: error.message, code: error.code })
         console.error('[Rider] online UPDATE failed', error)
@@ -232,8 +215,40 @@ export function RiderProvider({ children }) {
         setGpsToast({ type: 'error', message: 'No se pudo conectar. Reintenta en unos segundos.' })
         return
       }
-      await dbg('goOnline:ok', { has_coords: !!(lat && lng) })
+      await dbg('goOnline:ok')
       refreshSocio().catch(() => {})
+
+      // PASO 2 (NO BLOQUEANTE): pedir permisos sin esperar. Si la promesa
+      // se cuelga indefinidamente, no nos importa: ya estamos online en BD.
+      Promise.race([
+        ensureBackgroundLocationPermission().catch(() => null),
+        new Promise((r) => setTimeout(() => r(null), 5000)),
+      ]).then((perm) => {
+        if (!perm) return
+        if (perm.foreground === false) {
+          setGpsToast({ type: 'error', message: 'Sin permiso de ubicacion no recibiras pedidos. Activalo en Ajustes.' })
+        } else if (perm.background === false) {
+          setGpsToast({ type: 'warn', message: 'Cambia el permiso de ubicacion a "Permitir todo el tiempo" para recibir pedidos con la pantalla bloqueada.' })
+        }
+      })
+
+      // PASO 3 (NO BLOQUEANTE): GPS one-shot. Si llega coordenada, la
+      // empujamos a BD para que la primera asignacion sea precisa.
+      Promise.race([
+        getCurrentPosition().catch(() => null),
+        new Promise((r) => setTimeout(() => r(null), 12000)),
+      ]).then((p) => {
+        if (!p?.lat || !p?.lng) return
+        setPos({ lat: p.lat, lng: p.lng })
+        supabase.from('socios').update({
+          latitud_actual: p.lat,
+          longitud_actual: p.lng,
+          last_location_at: new Date().toISOString(),
+        }).eq('id', socio.id).then(({ error: e2 }) => {
+          if (e2) dbg('goOnline:coords_err', { msg: e2.message })
+          else dbg('goOnline:coords_ok', { lat: p.lat, lng: p.lng })
+        })
+      })
     })()
   }, [refreshSocio, socio?.id, dbg])
 
