@@ -52,17 +52,63 @@ export default function RiderEsperando({ onGoPedidos }) {
     return () => { cancel = true }
   }, [socio?.id])
 
-  // Pedir posicion al GPS al montar (one-shot) si no la tenemos via context.
+  // GPS resilient: arrancamos un watchPosition propio mientras el rider esta
+  // en este mapa, asi obtenemos la primera lectura cuando llegue (incluso si
+  // el GPS estaba frio) y vamos refrescando si se mueve. Se libera al salir.
+  // Si ya tenemos pos del context (rider online) NO arrancamos watcher
+  // duplicado: el context ya esta empujando posiciones.
+  const [gpsBuscando, setGpsBuscando] = useState(false)
   useEffect(() => {
-    if (ridPos) return
-    let cancel = false
+    if (ridPos) { setGpsBuscando(false); return }
+    if (typeof window === 'undefined') return
+    let cancelled = false
+    let watcherId = null
+    let capRef = null
+    setGpsBuscando(true)
     ;(async () => {
       try {
-        const p = await getCurrentPosition()
-        if (!cancel && p?.lat && p?.lng) setLocalPos({ lat: p.lat, lng: p.lng })
-      } catch (_) {}
+        // Cargar plugin Capacitor Geolocation
+        const { Capacitor } = await import('@capacitor/core')
+        if (Capacitor.getPlatform() === 'web') {
+          // En web usar navigator.geolocation directamente con watch
+          if (!('geolocation' in navigator)) return
+          watcherId = navigator.geolocation.watchPosition(
+            (p) => {
+              if (cancelled || !p?.coords) return
+              setLocalPos({ lat: p.coords.latitude, lng: p.coords.longitude })
+              setGpsBuscando(false)
+            },
+            () => {},
+            { enableHighAccuracy: true, timeout: 30000, maximumAge: 30000 },
+          )
+          return
+        }
+        const mod = await import('@capacitor/geolocation')
+        const Geo = mod.Geolocation
+        capRef = Geo
+        watcherId = await Geo.watchPosition(
+          { enableHighAccuracy: true, timeout: 30000 },
+          (position, err) => {
+            if (cancelled) return
+            if (err) return
+            if (!position?.coords) return
+            setLocalPos({ lat: position.coords.latitude, lng: position.coords.longitude })
+            setGpsBuscando(false)
+          },
+        )
+      } catch (_) {
+        if (!cancelled) setGpsBuscando(false)
+      }
     })()
-    return () => { cancel = true }
+    return () => {
+      cancelled = true
+      try {
+        if (watcherId != null) {
+          if (capRef) capRef.clearWatch({ id: watcherId })
+          else if (typeof navigator !== 'undefined') navigator.geolocation.clearWatch(watcherId)
+        }
+      } catch (_) {}
+    }
   }, [ridPos])
 
   // Inicializar mapa
@@ -273,9 +319,15 @@ export default function RiderEsperando({ onGoPedidos }) {
           position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
           background: 'rgba(255,255,255,0.95)', padding: '12px 18px', borderRadius: 12,
           fontSize: type.xs, color: colors.textMute, textAlign: 'center',
-          boxShadow: colors.shadowMd,
+          boxShadow: colors.shadowMd, display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          Activa la ubicación del teléfono…
+          <span style={{
+            width: 8, height: 8, borderRadius: 4,
+            background: gpsBuscando ? colors.primary : colors.danger,
+            animation: gpsBuscando ? 'pidoo-pulse 1.4s ease-in-out infinite' : 'none',
+          }} />
+          {gpsBuscando ? 'Buscando tu ubicación…' : 'Activa la ubicación del teléfono'}
+          <style>{`@keyframes pidoo-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }`}</style>
         </div>
       )}
 

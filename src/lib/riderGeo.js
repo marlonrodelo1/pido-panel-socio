@@ -116,21 +116,70 @@ export async function ensureBackgroundLocationPermission() {
 }
 
 // --- one-shot getCurrentPosition ---
+//
+// IMPORTANTE: cuando el GPS esta "frio" (acaba de encenderse o no hay cache)
+// el primer fix puede tardar 10-30s. Por eso usamos enableHighAccuracy=true
+// y un timeout amplio (20s). Si falla, intentamos un watchPosition durante
+// 25s adicionales para forzar al sistema a entregar una lectura. Asi evitamos
+// el escenario de "Activa la ubicacion del telefono" cuando en realidad el
+// GPS esta encendido pero todavia buscando satelites.
 
 export async function getCurrentPosition() {
   const cap = await getCapPlugin()
   if (cap) {
     const granted = await ensureLocationPermission()
     if (!granted) throw new Error('permission_denied')
-    const pos = await cap.getCurrentPosition({ enableHighAccuracy: false, timeout: 6000, maximumAge: 30000 })
-    return { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }
+    // Intento 1: getCurrentPosition con alta precision y timeout 20s.
+    try {
+      const pos = await cap.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 60000,
+      })
+      return { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }
+    } catch (e1) {
+      // Intento 2: watchPosition, capturamos la primera lectura valida.
+      // Esto fuerza al provider de Android a entregar coordenadas aunque
+      // el getCurrentPosition haya devuelto timeout.
+      return await new Promise((resolve, reject) => {
+        let watcherId = null
+        const stopAt = Date.now() + 25000
+        ;(async () => {
+          try {
+            watcherId = await cap.watchPosition(
+              { enableHighAccuracy: true, timeout: 25000 },
+              (position, err) => {
+                if (err) {
+                  if (Date.now() >= stopAt && watcherId) {
+                    try { cap.clearWatch({ id: watcherId }) } catch (_) {}
+                    reject(err)
+                  }
+                  return
+                }
+                if (!position?.coords) return
+                if (watcherId) try { cap.clearWatch({ id: watcherId }) } catch (_) {}
+                resolve({ lat: position.coords.latitude, lng: position.coords.longitude, acc: position.coords.accuracy })
+              },
+            )
+          } catch (e2) {
+            reject(e2)
+          }
+        })()
+        // Hard stop por si callback nunca se invoca.
+        setTimeout(() => {
+          if (watcherId) try { cap.clearWatch({ id: watcherId }) } catch (_) {}
+          reject(e1 || new Error('gps_timeout'))
+        }, 26000)
+      })
+    }
   }
+  // Web fallback
   return new Promise((resolve, reject) => {
     if (!('geolocation' in navigator)) return reject(new Error('no_geolocation'))
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }),
       (err) => reject(err),
-      { enableHighAccuracy: false, timeout: 6000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 },
     )
   })
 }
