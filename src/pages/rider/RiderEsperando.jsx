@@ -242,9 +242,19 @@ export default function RiderEsperando({ onGoPedidos }) {
       }))
   }, [asignaciones])
 
-  // Marcador propio del rider: logo del socio si existe, si no emoji moto
+  // Marcador propio del rider: SOLO si esta online. Si esta offline, lo
+  // ocultamos. La posicion (pos) se sigue trackeando para encuadrar el mapa
+  // y para tenerla lista en cuanto se conecte, pero no creamos el pin.
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps || !pos) return
+    if (!mapRef.current || !window.google?.maps) return
+    // Si esta offline o no hay posicion, ocultar el pin del rider
+    if (!online || !pos) {
+      if (markersRef.current.rider) {
+        try { markersRef.current.rider.setMap(null) } catch (_) {}
+        markersRef.current.rider = null
+      }
+      return
+    }
     const maps = window.google.maps
     const p = { lat: pos.lat, lng: pos.lng }
     let cancel = false
@@ -264,7 +274,7 @@ export default function RiderEsperando({ onGoPedidos }) {
       }
     })()
     return () => { cancel = true }
-  }, [pos?.lat, pos?.lng, socio?.logo_url, socio?.nombre])
+  }, [online, pos?.lat, pos?.lng, socio?.logo_url, socio?.nombre])
 
   // Auto-fit cuando cambia el conjunto de markers (sin pisar el fitBounds del circulo)
   useEffect(() => {

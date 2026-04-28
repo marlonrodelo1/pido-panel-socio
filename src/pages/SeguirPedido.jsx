@@ -1,13 +1,12 @@
 // Pagina publica /seguir/<codigo>?t=<token> con Google Maps + rider en tiempo real.
 //
-// SEGURIDAD: ahora consulta exclusivamente la edge function get-tracking-publico
+// SEGURIDAD: consulta exclusivamente la edge function get-tracking-publico
 // con un token UUID v4 que se pasa por query string. Sin token valido o con
-// codigo inexistente la edge devuelve 404 → mostramos "Enlace no valido".
+// codigo inexistente la edge devuelve 404 -> mostramos "Enlace no valido".
 //
-// Cambios vs version anterior (problema A.3 frontend security):
-// - Cero PII del cliente expuesta: NO se devuelve direccion/lat/lng del cliente.
-// - El mapa muestra solo el restaurante y el rider, no el destino.
-// - Polling cada 15s a la edge function; antes era cada 8s a Supabase directo.
+// Cliente ve en el mapa: restaurante (logo del establecimiento), rider (logo
+// del socio = la marca que reparte) y, si hay token valido y es delivery, el
+// punto de entrega. Marca y color del socio aparecen en header y card.
 
 import { useEffect, useRef, useState } from 'react'
 import { loadGoogleMaps } from '../lib/googleMaps'
@@ -31,6 +30,15 @@ function estadoToStep(estado) {
   return 0
 }
 
+function estadoTitulo(estado, modo) {
+  if (estado === 'entregado') return modo === 'recogida' ? 'Pedido recogido' : '¡Pedido entregado!'
+  if (estado === 'cancelado') return 'Pedido cancelado'
+  if (estado === 'recogido' || estado === 'en_camino') return 'Tu pedido va de camino'
+  if (estado === 'listo') return modo === 'recogida' ? 'Listo para recoger' : 'Listo, esperando rider'
+  if (estado === 'preparando') return 'Preparando tu pedido'
+  return 'Pedido recibido'
+}
+
 function getTrackingTokenFromUrl() {
   if (typeof window === 'undefined') return ''
   try {
@@ -47,12 +55,12 @@ export default function SeguirPedido({ codigo }) {
   const mapRef = useRef(null)
   const mapDivRef = useRef(null)
   const markersRef = useRef({})
+  const polylineRef = useRef(null)
+  const lastFitKeyRef = useRef('')
   const tokenRef = useRef(getTrackingTokenFromUrl())
 
   useEffect(() => {
     if (!codigo) return
-    // Sin token: la edge function devolvera datos minimos (sin items, total ni
-    // telefono cliente). Asi seguimos viendo estado + rider en URLs legacy.
     let cancel = false
 
     async function load() {
@@ -93,7 +101,7 @@ export default function SeguirPedido({ codigo }) {
     return () => { cancel = true; clearInterval(id) }
   }, [codigo])
 
-  // Init Google Maps con marker del restaurante
+  // Init Google Maps con marker del restaurante (y entrega si hay)
   useEffect(() => {
     const est = data?.establecimiento
     if (!est) return
@@ -122,33 +130,88 @@ export default function SeguirPedido({ codigo }) {
           position: { lat: restLat, lng: restLng },
           map, title: est.nombre || 'Restaurante',
           icon: restIcon,
+          zIndex: 100,
         })
       })()
     }).catch((e) => console.warn('[seguir] gmaps load fail', e?.message))
     return () => { cancel = true }
   }, [data?.establecimiento?.latitud, data?.establecimiento?.longitud])
 
-  // Update rider marker
+  // Marker entrega (cliente) - solo si edge devolvio coords (token valido + delivery)
+  useEffect(() => {
+    const entrega = data?.entrega
+    if (!mapRef.current || !entrega?.lat || !entrega?.lng || !window.google?.maps) return
+    const maps = window.google.maps
+    const pos = { lat: entrega.lat, lng: entrega.lng }
+    if (!markersRef.current.entrega) {
+      markersRef.current.entrega = new maps.Marker({
+        position: pos, map: mapRef.current, title: 'Entrega',
+        icon: emojiIcon('🏠', '#1F1F1E'),
+        zIndex: 90,
+      })
+    } else {
+      markersRef.current.entrega.setPosition(pos)
+    }
+  }, [data?.entrega?.lat, data?.entrega?.lng])
+
+  // Marker rider con logo del socio (foto redonda) o emoji moto.
   useEffect(() => {
     const rider = data?.rider
+    const socio = data?.socio
     if (!mapRef.current || !rider?.lat || !rider?.lng || !window.google?.maps) return
     const maps = window.google.maps
     const pos = { lat: rider.lat, lng: rider.lng }
-    if (!markersRef.current.rider) {
-      markersRef.current.rider = new maps.Marker({
-        position: pos, map: mapRef.current, title: rider.nombre,
-        icon: emojiIcon('🛵', '#16A34A'),
-        zIndex: 999,
-      })
-    } else {
-      markersRef.current.rider.setPosition(pos)
-    }
+    const color = socio?.color_primario || '#16A34A'
+    const logoUrl = socio?.logo_url || rider?.logo_url || null
+
+    let cancelled = false
+    ;(async () => {
+      const icon = logoUrl
+        ? await imageRoundIcon(logoUrl, color)
+        : emojiIcon('🛵', color)
+      if (cancelled) return
+      if (!markersRef.current.rider) {
+        markersRef.current.rider = new maps.Marker({
+          position: pos, map: mapRef.current, title: rider.nombre || 'Repartidor',
+          icon, zIndex: 999,
+        })
+      } else {
+        markersRef.current.rider.setPosition(pos)
+        // Solo recambiamos icono si no esta puesto aun el del logo (evitamos parpadeo).
+        if (logoUrl && !markersRef.current.riderIconLogoSet) {
+          markersRef.current.rider.setIcon(icon)
+          markersRef.current.riderIconLogoSet = true
+        }
+      }
+    })()
+
+    // FitBounds combinando markers presentes (rest + rider + entrega).
     try {
-      const bounds = new maps.LatLngBounds()
-      Object.values(markersRef.current).forEach((m) => bounds.extend(m.getPosition()))
-      mapRef.current.fitBounds(bounds, 70)
+      const m = markersRef.current
+      const points = [m.rest, m.rider, m.entrega].filter(Boolean).map((mk) => mk.getPosition()).filter(Boolean)
+      const fitKey = points.map((p) => `${p.lat().toFixed(5)},${p.lng().toFixed(5)}`).join('|')
+      if (points.length >= 2 && fitKey !== lastFitKeyRef.current) {
+        const bounds = new maps.LatLngBounds()
+        points.forEach((p) => bounds.extend(p))
+        mapRef.current.fitBounds(bounds, 80)
+        lastFitKeyRef.current = fitKey
+      }
+
+      // Polyline punteada uniendo restaurante -> rider -> entrega.
+      if (points.length >= 2) {
+        if (polylineRef.current) polylineRef.current.setMap(null)
+        polylineRef.current = new maps.Polyline({
+          path: points,
+          map: mapRef.current,
+          strokeOpacity: 0,
+          icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.6, scale: 3, strokeColor: color }, offset: '0', repeat: '12px' }],
+          zIndex: 50,
+        })
+      }
     } catch (_) {}
-  }, [data?.rider?.lat, data?.rider?.lng])
+
+    return () => { cancelled = true }
+  }, [data?.rider?.lat, data?.rider?.lng, data?.socio?.logo_url, data?.socio?.color_primario, data?.entrega?.lat, data?.entrega?.lng])
 
   if (loading) return <Layout><Centered>Cargando…</Centered></Layout>
   if (error) return <Layout><Centered>{error}</Centered></Layout>
@@ -157,17 +220,32 @@ export default function SeguirPedido({ codigo }) {
   const pedido = data.pedido
   const est = data.establecimiento
   const rider = data.rider
+  const socio = data.socio
   const items = data.items || []
 
   const step = estadoToStep(pedido.estado)
   const esTerminado = pedido.estado === 'entregado' || pedido.estado === 'cancelado'
+  const titulo = estadoTitulo(pedido.estado, pedido.modo_entrega)
+  const colorMarca = socio?.color_primario || '#FF6B2C'
 
   return (
     <Layout>
       <header style={S.header}>
-        <img src="/icon.png" alt="Pidoo go" style={{ width: 28, height: 28, borderRadius: 6 }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#1F1F1E' }}>Pidoo</div>
+        <img src="/icon.png" alt="Pidoo" style={{ width: 28, height: 28, borderRadius: 6 }} />
+        <div style={{ width: 1, height: 22, background: '#EEE' }} />
+        {socio?.logo_url ? (
+          <img src={socio.logo_url} alt={socio.nombre_comercial || 'Socio'}
+            style={{ width: 26, height: 26, borderRadius: 13, objectFit: 'cover', border: `2px solid ${colorMarca}` }}
+            onError={(e) => { e.currentTarget.style.display = 'none' }} />
+        ) : (
+          <div style={{ width: 26, height: 26, borderRadius: 13, background: colorMarca, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>
+            {(socio?.nombre_comercial || 'P').slice(0,1).toUpperCase()}
+          </div>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#1F1F1E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {socio?.nombre_comercial || 'Pidoo'}
+          </div>
           <div style={{ fontSize: 11, color: '#777' }}>Pedido #{pedido.codigo}</div>
         </div>
         <button onClick={() => window.location.reload()} title="Refrescar" style={S.iconBtn}>
@@ -175,15 +253,26 @@ export default function SeguirPedido({ codigo }) {
         </button>
       </header>
 
-      <div style={{ position: 'relative', height: 320, background: '#E8E6E0' }}>
+      <div style={{ position: 'relative', height: 340, background: '#E8E6E0' }}>
         <div ref={mapDivRef} style={{ position: 'absolute', inset: 0 }} />
+        <div style={S.mapLegend}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 5, background: '#FF6B2C' }} /> Restaurante
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 5, background: colorMarca }} /> Rider
+          </span>
+          {data?.entrega && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 5, background: '#1F1F1E' }} /> Entrega
+            </span>
+          )}
+        </div>
       </div>
 
       <div style={{ padding: '18px 20px 10px' }}>
-        <div style={{ fontSize: 22, fontWeight: 800, color: '#1F1F1E' }}>
-          {esTerminado ? '¡Pedido entregado!' : pedido.estado === 'recogido' || pedido.estado === 'en_camino' ? 'Tu pedido está en camino' : 'Repartidor asignado'}
-        </div>
-        {!esTerminado && pedido.minutos_preparacion && (pedido.estado === 'preparando' || pedido.estado === 'listo') && (
+        <div style={{ fontSize: 22, fontWeight: 800, color: '#1F1F1E' }}>{titulo}</div>
+        {!esTerminado && pedido.minutos_preparacion && (pedido.estado === 'preparando' || pedido.estado === 'listo' || pedido.estado === 'aceptado') && (
           <div style={{ fontSize: 13, color: '#777', marginTop: 4 }}>Llegada estimada en ~{pedido.minutos_preparacion} min</div>
         )}
       </div>
@@ -193,7 +282,7 @@ export default function SeguirPedido({ codigo }) {
           const active = i <= step
           return (
             <div key={s.id} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ height: 4, borderRadius: 2, background: active ? '#FF6B2C' : '#E8E6E0', marginBottom: 8 }} />
+              <div style={{ height: 4, borderRadius: 2, background: active ? colorMarca : '#E8E6E0', marginBottom: 8 }} />
               <div style={{ fontSize: 11, fontWeight: 700, color: active ? '#1F1F1E' : '#A8A6A0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s.label}</div>
             </div>
           )
@@ -203,10 +292,17 @@ export default function SeguirPedido({ codigo }) {
       {rider && (
         <div style={S.card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={S.avatar}>{(rider.nombre || '?').slice(0, 1).toUpperCase()}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Tu repartidor</div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: '#1F1F1E' }}>{rider.nombre}</div>
+            {socio?.logo_url ? (
+              <img src={socio.logo_url} alt={socio.nombre_comercial || rider.nombre}
+                style={{ width: 48, height: 48, borderRadius: 24, objectFit: 'cover', border: `2px solid ${colorMarca}` }} />
+            ) : (
+              <div style={{ ...S.avatar, background: `${colorMarca}26`, color: colorMarca }}>{(rider.nombre || '?').slice(0, 1).toUpperCase()}</div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>
+                {socio?.nombre_comercial ? `Reparte ${socio.nombre_comercial}` : 'Tu repartidor'}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#1F1F1E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rider.nombre}</div>
               {rider.rating > 0 && <div style={{ fontSize: 11, color: '#777' }}>⭐ {Number(rider.rating).toFixed(1)}</div>}
             </div>
             {rider.telefono && (
@@ -240,10 +336,17 @@ export default function SeguirPedido({ codigo }) {
 
       <div style={S.card}>
         <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700, marginBottom: 4 }}>Restaurante</div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: '#1F1F1E' }}>{est?.nombre}</div>
-        {est?.telefono && (
-          <a href={`tel:${est.telefono}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, fontWeight: 700, color: '#FF6B2C' }}>📞 {est.telefono}</a>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {est?.logo_url && (
+            <img src={est.logo_url} alt={est.nombre} style={{ width: 36, height: 36, borderRadius: 18, objectFit: 'cover', border: '2px solid #FF6B2C' }} />
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#1F1F1E' }}>{est?.nombre}</div>
+            {est?.telefono && (
+              <a href={`tel:${est.telefono}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12, fontWeight: 700, color: '#FF6B2C' }}>📞 {est.telefono}</a>
+            )}
+          </div>
+        </div>
       </div>
 
       <div style={{ textAlign: 'center', fontSize: 11, color: '#999', padding: 16 }}>
@@ -272,4 +375,5 @@ const S = {
   avatar: { width: 48, height: 48, borderRadius: 24, background: 'rgba(255,107,44,0.15)', color: '#FF6B2C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 18 },
   callBtn: { width: 44, height: 44, borderRadius: 22, background: '#16A34A', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', boxShadow: '0 2px 6px rgba(22,163,74,0.4)' },
   accordionHead: { width: '100%', padding: '14px 18px', background: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, color: '#1F1F1E', textAlign: 'left' },
+  mapLegend: { position: 'absolute', left: 10, bottom: 10, background: 'rgba(255,255,255,0.95)', borderRadius: 8, padding: '6px 10px', display: 'flex', gap: 12, fontSize: 11, fontWeight: 600, color: '#1F1F1E', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' },
 }
