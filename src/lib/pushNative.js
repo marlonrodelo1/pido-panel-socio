@@ -147,6 +147,23 @@ export async function registerSocioNativePush(userId, onNotification) {
 
     const perm = await PushNotifications.requestPermissions().catch(() => ({ receive: 'denied' }))
     await debugLog('permission', { receive: perm?.receive })
+
+    // Justo despues del permiso de notificaciones, pedir el de ubicacion.
+    // Asi al usuario le salen los dos dialogos seguidos al iniciar sesion.
+    // No bloqueamos el push si la ubicacion falla.
+    try {
+      const { Geolocation } = await import('@capacitor/geolocation')
+      const geoCheck = await Geolocation.checkPermissions().catch(() => null)
+      await debugLog('geo_check', geoCheck)
+      const yaConcedido = geoCheck && (geoCheck.location === 'granted' || geoCheck.coarseLocation === 'granted')
+      if (!yaConcedido) {
+        const geoReq = await Geolocation.requestPermissions({ permissions: ['location', 'coarseLocation'] }).catch((e) => ({ error: e?.message }))
+        await debugLog('geo_request', geoReq)
+      }
+    } catch (e) {
+      await debugLog('geo_plugin_error', { message: e?.message || String(e) })
+    }
+
     if (perm.receive !== 'granted') return null
 
     try {
