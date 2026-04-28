@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
+import { Share } from '@capacitor/share'
 import { SocioProvider, useSocio } from './context/SocioContext'
 import { RiderProvider, useRider } from './context/RiderContext'
 import Login from './pages/Login'
@@ -31,6 +32,13 @@ import { colors } from './lib/uiStyles'
 const URL_COMUNIDAD = 'https://www.skool.com/pidoo-comunity-5303/about'
 const URL_PANEL_ADMIN_WEB = 'https://socio.pidoo.es'
 const URL_SOPORTE_TELEGRAM = 'https://t.me/Royrogo_bot'
+const URL_MARKETPLACE_BASE = 'https://pidoo.es/s/'
+
+function marketplaceConfigCompleta(socio) {
+  if (!socio) return false
+  const need = [socio.slug, socio.nombre_comercial, socio.logo_url, socio.descripcion]
+  return need.every(v => typeof v === 'string' && v.trim().length > 0)
+}
 
 const RIDER_TITLES = {
   'rider-pedidos':     'Pedidos',
@@ -73,6 +81,7 @@ function ShellRider() {
   const [section, setSection] = useState('rider-pedidos')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [detalleId, setDetalleId] = useState(null)
+  const [marketplaceModal, setMarketplaceModal] = useState(null)
 
   const handleNavigate = async (id) => {
     if (id === 'comunidad') {
@@ -94,6 +103,29 @@ function ShellRider() {
       setDetalleId(null)
       setSection('rider-eliminar-cuenta')
       setDrawerOpen(false)
+      return
+    }
+    if (id === 'compartir-marketplace') {
+      setDrawerOpen(false)
+      if (!marketplaceConfigCompleta(socio)) {
+        setMarketplaceModal({ tipo: 'incompleto' })
+        return
+      }
+      const url = URL_MARKETPLACE_BASE + socio.slug
+      const nombre = socio.nombre_comercial || 'mi marketplace'
+      try {
+        const can = await Share.canShare()
+        if (can?.value) {
+          await Share.share({
+            title: nombre + ' · Pidoo',
+            text: 'Pide en ' + nombre + ' a través de Pidoo:',
+            url,
+            dialogTitle: 'Compartir mi marketplace',
+          })
+          return
+        }
+      } catch (_) {}
+      try { await Browser.open({ url }) } catch {}
       return
     }
     setDrawerOpen(false)
@@ -131,6 +163,58 @@ function ShellRider() {
       <main>{page}</main>
       <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
       <DrawerRider open={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleNavigate} />
+      {marketplaceModal?.tipo === 'incompleto' && (
+        <MarketplaceIncompletoModal
+          onAbrirConfig={async () => {
+            try { await Browser.open({ url: URL_PANEL_ADMIN_WEB }) } catch {}
+            setMarketplaceModal(null)
+          }}
+          onCerrar={() => setMarketplaceModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function MarketplaceIncompletoModal({ onAbrirConfig, onCerrar }) {
+  return (
+    <div onClick={onCerrar} style={{
+      position: 'fixed', inset: 0, background: 'rgba(15,15,15,0.55)', zIndex: 60,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: '#FFFFFF', borderRadius: 18, maxWidth: 380, width: '100%',
+        padding: 24, boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+      }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 28, background: colors.primarySoft,
+          color: colors.primary, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          marginBottom: 14,
+        }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: colors.text, marginBottom: 6 }}>
+          Termina de configurar tu marketplace
+        </div>
+        <div style={{ fontSize: 14, color: colors.textMute, lineHeight: 1.45, marginBottom: 18 }}>
+          Para compartir tu sitio antes tienes que completar el logo, banner, slug, nombre comercial y descripción.
+          Hazlo desde el panel admin en <strong>socio.pidoo.es</strong>. Una vez listo, podrás compartirlo desde aquí.
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCerrar} style={{
+            flex: 1, height: 46, background: '#F5F5F5', color: colors.text,
+            border: '1px solid ' + colors.border, borderRadius: 10, fontWeight: 700,
+            fontSize: 14, cursor: 'pointer',
+          }}>Cancelar</button>
+          <button onClick={onAbrirConfig} style={{
+            flex: 1, height: 46, background: colors.primary, color: '#fff',
+            border: 'none', borderRadius: 10, fontWeight: 800,
+            fontSize: 14, cursor: 'pointer',
+          }}>Abrir configuración</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -205,6 +289,8 @@ function Shell() {
     )
   }
   if (!session) {
+    // En APK/IPA siempre Login directo (Landing es solo para socio.pidoo.es web).
+    if (isNative) return <Login onBack={null} />
     if (vistaPublica === 'login') return <Login onBack={irALanding} />
     return <Landing onLogin={irALogin} />
   }

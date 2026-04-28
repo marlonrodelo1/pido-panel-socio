@@ -102,17 +102,15 @@ export default function Login({ onBack }) {
           <img
             src="/icon.png"
             alt="Pidoo go"
-            width={88}
-            height={88}
+            width={120}
+            height={120}
             style={{
               display: 'block',
-              margin: '0 auto 16px',
-              borderRadius: 22,
+              margin: '0 auto',
+              borderRadius: 28,
               boxShadow: '0 8px 24px rgba(255,107,44,0.30)',
             }}
           />
-          <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--c-text)', letterSpacing: '-0.02em' }}>PIDOO GO</div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--c-muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Panel Socios</div>
         </div>
 
         <div style={{ background: 'var(--c-surface)', borderRadius: 16, padding: '28px 24px', border: '1px solid var(--c-border)' }}>
