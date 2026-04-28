@@ -54,7 +54,11 @@ export function SocioProvider({ children }) {
       setSession(newSession)
       setUser(newSession?.user || null)
       if (newSession?.user) {
-        fetchSocio(newSession.user.id)
+        // En SIGNED_IN nuevo, mantenemos loading=true mientras buscamos
+        // el registro de socio en BD. Asi App.jsx no muestra <Onboarding/>
+        // momentaneamente entre que llega la session y carga el socio.
+        if (evt === 'SIGNED_IN') setLoading(true)
+        fetchSocio(newSession.user.id).finally(() => setLoading(false))
         if (evt === 'SIGNED_IN' || evt === 'INITIAL_SESSION' || evt === 'TOKEN_REFRESHED') {
           maybeRegisterPush(newSession.user.id)
         }

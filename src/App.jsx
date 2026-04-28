@@ -85,6 +85,24 @@ function ShellRider() {
   const [detalleId, setDetalleId] = useState(null)
   const [marketplaceModal, setMarketplaceModal] = useState(null)
 
+  // Al montar el shell rider en nativo, pedimos permiso de ubicacion una vez
+  // (foreground). Asi el dialogo del sistema sale al entrar al modo rider,
+  // sin esperar a que el usuario pulse "Conectarme". Para el background
+  // location seguimos esperando a goOnline.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!Capacitor.isNativePlatform?.()) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { ensureLocationPermission } = await import('./lib/riderGeo')
+        await ensureLocationPermission()
+      } catch (_) {}
+      if (cancelled) return
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   const handleNavigate = async (id) => {
     if (id === 'comunidad') {
       try { await Browser.open({ url: URL_COMUNIDAD }) } catch {}
