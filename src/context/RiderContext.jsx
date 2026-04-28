@@ -170,28 +170,34 @@ export function RiderProvider({ children }) {
     trackerRef.current?.setActive(hayActiva)
   }, [asignaciones])
 
-  // Acciones del rider — toggle instantaneo y optimista. La UI no espera al
-  // servidor: si falla, revertimos.
+  // Helper: log a push_debug_logs (no bloquea si falla)
+  const dbg = useCallback(async (event, details) => {
+    try {
+      await supabase.from('push_debug_logs').insert({
+        platform: 'rider-app', event,
+        details: details ? JSON.stringify(details).slice(0, 1000) : null,
+      })
+    } catch (_) {}
+  }, [])
+
+  // Acciones del rider — UPDATE directo a socios via supabase-js client.
+  // Antes pasaba por la edge rider-online pero el JWT podia caducar y
+  // devolver 401. Con UPDATE directo, supabase-js refresca el token solo.
   const goOnline = useCallback(() => {
     setOnline(true) // optimista
+    dbg('goOnline:start', { socio_id: socio?.id })
     ;(async () => {
-      // Pedir permiso "todo el tiempo" ANTES de arrancar el tracker. Si el
-      // usuario solo concede "while in use", seguimos pero avisamos: en
-      // background no llegaran ubicaciones y por tanto no recibira pedidos.
+      // Pedir permiso al sistema (no bloquea si falla)
       try {
         const perm = await ensureBackgroundLocationPermission()
         if (!perm.foreground) {
           setGpsToast({ type: 'error', message: 'Sin permiso de ubicacion no puedes recibir pedidos. Activalo en Ajustes.' })
-          // Igual seguimos: el rider puede usar la app aunque no reparta.
         } else if (!perm.background) {
           setGpsToast({ type: 'warn', message: 'Para recibir pedidos con la pantalla bloqueada, cambia el permiso de ubicacion a "Permitir todo el tiempo" en Ajustes.' })
         }
       } catch (_) {}
 
-      // Timeout de 8s para getCurrentPosition: si el GPS no responde en
-      // ese tiempo, llamamos rider-online sin coordenadas (la edge lo
-      // acepta — last_location_at queda viejo pero en_servicio=true).
-      // El tracker arrancara despues y enviara updates de ubicacion.
+      // GPS one-shot con timeout 8s (opcional — si falla, igual marcamos online)
       let lat, lng
       try {
         const p = await Promise.race([
@@ -200,34 +206,58 @@ export function RiderProvider({ children }) {
         ])
         lat = p.lat; lng = p.lng
         setPos({ lat, lng })
-      } catch (e) {
-        console.warn('[Rider] getCurrentPosition fallo o timeout, sigo sin coords', e?.message)
+      } catch (_) {}
+
+      // UPDATE directo a socios. RLS socios_self_update permite al socio
+      // actualizar su propia fila. supabase-js maneja el refresh del JWT.
+      if (!socio?.id) {
+        await dbg('goOnline:no_socio')
+        setOnline(false)
+        return
       }
-      try {
-        await riderApi.online({ lat, lng })
-        refreshSocio().catch(() => {})
-      } catch (e) {
-        console.error('[Rider] online failed', e)
+      const update = {
+        en_servicio: true,
+        marketplace_activo: true,
+        last_location_at: new Date().toISOString(),
+      }
+      if (typeof lat === 'number' && typeof lng === 'number') {
+        update.latitud_actual = lat
+        update.longitud_actual = lng
+      }
+      const { error } = await supabase.from('socios').update(update).eq('id', socio.id)
+      if (error) {
+        await dbg('goOnline:db_error', { msg: error.message, code: error.code })
+        console.error('[Rider] online UPDATE failed', error)
         setOnline(false)
         setGpsToast({ type: 'error', message: 'No se pudo conectar. Reintenta en unos segundos.' })
+        return
       }
+      await dbg('goOnline:ok', { has_coords: !!(lat && lng) })
+      refreshSocio().catch(() => {})
     })()
-  }, [refreshSocio])
+  }, [refreshSocio, socio?.id, dbg])
 
   const goOffline = useCallback(() => {
     setOnline(false) // optimista
     trackerRef.current?.stop()
     trackerRef.current = null
+    dbg('goOffline:start', { socio_id: socio?.id })
     ;(async () => {
-      try {
-        await riderApi.offline()
-        refreshSocio().catch(() => {})
-      } catch (e) {
-        console.error('[Rider] offline failed', e)
+      if (!socio?.id) return
+      const { error } = await supabase
+        .from('socios')
+        .update({ en_servicio: false, marketplace_activo: false })
+        .eq('id', socio.id)
+      if (error) {
+        await dbg('goOffline:db_error', { msg: error.message, code: error.code })
+        console.error('[Rider] offline UPDATE failed', error)
         setOnline(true)
+        return
       }
+      await dbg('goOffline:ok')
+      refreshSocio().catch(() => {})
     })()
-  }, [refreshSocio])
+  }, [refreshSocio, socio?.id, dbg])
 
   const accept = useCallback(async (asignacionId) => {
     await riderApi.accept(asignacionId)
