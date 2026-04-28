@@ -28,21 +28,6 @@ const config: CapacitorConfig = {
     Geolocation: {
       // Capacitor delega permisos a Info.plist (iOS) y AndroidManifest (Android)
     },
-    // @capacitor-community/background-geolocation
-    // Mantiene un foreground service en Android con notificacion persistente
-    // mientras el rider esta online. La notificacion aparece al llamar
-    // BackgroundGeolocation.addWatcher({ backgroundTitle, backgroundMessage })
-    // y desaparece al hacer removeWatcher.
-    BackgroundGeolocation: {
-      // El plugin lee estos textos por defecto si addWatcher no los pasa
-      // explicitamente. Los pasamos tambien en el call para mas control.
-      notificationTitle: 'Pidoo - Recibiendo pedidos',
-      notificationText: 'Tienes la ubicacion activada para recibir pedidos cerca.',
-      // Icono: usa el launcher de la app (mipmap/ic_launcher).
-      // En Android 13+ deberia ser un drawable monocromo, pero mientras tanto
-      // ic_launcher funciona y no rompe.
-      notificationIcon: 'ic_launcher',
-    },
   },
   server: {
     androidScheme: 'https',
