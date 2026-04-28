@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
+import { Browser } from '@capacitor/browser'
 import { SocioProvider, useSocio } from './context/SocioContext'
 import { RiderProvider, useRider } from './context/RiderContext'
 import Login from './pages/Login'
@@ -25,9 +26,11 @@ import RiderChat from './pages/rider/RiderChat'
 import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
 import RiderCompletadas from './pages/rider/RiderCompletadas'
 import SeguirPedido from './pages/SeguirPedido'
-import { colors, type } from './lib/uiStyles'
+import { colors } from './lib/uiStyles'
 
-const MODE_KEY = 'pidoo-socio-mode'
+const URL_COMUNIDAD = 'https://www.skool.com/pidoo-comunity-5303/about'
+const URL_PANEL_ADMIN_WEB = 'https://socio.pidoo.es'
+const URL_SOPORTE_TELEGRAM = 'https://t.me/Royrogo_bot'
 
 const RIDER_TITLES = {
   'rider-pedidos':     'Pedidos',
@@ -35,10 +38,10 @@ const RIDER_TITLES = {
   'rider-chat':        'Soporte',
   'rider-completadas': 'Órdenes completadas',
   'rider-detalle':     'Detalles de orden',
+  'rider-eliminar-cuenta': 'Eliminar cuenta',
 }
 
-function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante, switchToRider, riderAvailable }) {
-  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform?.()
+function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante }) {
   // Compat: 'facturas' redirige a 'restaurantes' (la pestaña fue eliminada)
   const effectiveSection = section === 'facturas' ? 'restaurantes' : section
   const page = {
@@ -57,19 +60,6 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
   return (
     <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 80 }}>
       <HeaderNav section={section} setSection={setSection} />
-      {riderAvailable && isNative && (
-        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 20px 0' }}>
-          <button onClick={switchToRider} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            background: colors.primary, color: '#fff', border: 'none',
-            padding: '8px 14px', borderRadius: 8, fontWeight: 700,
-            fontSize: type.xs, cursor: 'pointer',
-          }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-            Modo reparto
-          </button>
-        </div>
-      )}
       <main style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 20px 0' }}>
         {page}
       </main>
@@ -78,14 +68,35 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
   )
 }
 
-function ShellRider({ switchToAdmin }) {
+function ShellRider() {
+  const { socio } = useSocio()
   const [section, setSection] = useState('rider-pedidos')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [detalleId, setDetalleId] = useState(null)
 
-  const handleNavigate = (id) => {
+  const handleNavigate = async (id) => {
+    if (id === 'comunidad') {
+      try { await Browser.open({ url: URL_COMUNIDAD }) } catch {}
+      setDrawerOpen(false)
+      return
+    }
+    if (id === 'panel-admin-web') {
+      try { await Browser.open({ url: URL_PANEL_ADMIN_WEB }) } catch {}
+      setDrawerOpen(false)
+      return
+    }
+    if (id === 'soporte-telegram') {
+      try { await Browser.open({ url: URL_SOPORTE_TELEGRAM }) } catch {}
+      setDrawerOpen(false)
+      return
+    }
+    if (id === 'eliminar-cuenta') {
+      setDetalleId(null)
+      setSection('rider-eliminar-cuenta')
+      setDrawerOpen(false)
+      return
+    }
     setDrawerOpen(false)
-    if (id === 'admin') { switchToAdmin(); return }
     setDetalleId(null)
     setSection(id)
   }
@@ -109,13 +120,14 @@ function ShellRider({ switchToAdmin }) {
       case 'rider-esperando':   return <RiderEsperando onGoPedidos={() => setSection('rider-pedidos')} />
       case 'rider-chat':        return <RiderChat />
       case 'rider-completadas': return <RiderCompletadas onBack={() => setSection('rider-pedidos')} />
+      case 'rider-eliminar-cuenta': return <EliminarCuenta onBack={() => setSection('rider-pedidos')} />
       default:                  return <RiderPedidos onOpenDetalle={openDetalle} />
     }
   })()
 
   return (
     <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 70 }}>
-      <HeaderRider title={RIDER_TITLES[section] || ''} onMenu={() => setDrawerOpen(true)} onModeSwitch={switchToAdmin} />
+      <HeaderRider title={RIDER_TITLES[section] || ''} onMenu={() => setDrawerOpen(true)} />
       <main>{page}</main>
       <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
       <DrawerRider open={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleNavigate} />
@@ -125,7 +137,7 @@ function ShellRider({ switchToAdmin }) {
 
 function Shell() {
   const { session, socio, loading } = useSocio()
-  const { pendingNew, accept, reject, dismissPending, asignaciones } = useRider()
+  const { pendingNew, accept, reject, dismissPending } = useRider()
   const [adminSection, setAdminSection] = useState('dashboard')
   const [detalleEstId, setDetalleEstId] = useState(null)
 
@@ -161,20 +173,9 @@ function Shell() {
     isNative ? 'login'
       : (typeof window !== 'undefined' && window.location.pathname.startsWith('/login') ? 'login' : 'landing')
   )
-  const [mode, setMode] = useState(() => {
-    if (typeof window === 'undefined') return 'admin'
-    // En web (panel del socio) siempre admin: el reparto solo tiene sentido
-    // desde la APK del movil. En APK/IPA respetamos preferencia, default rider.
-    if (!Capacitor.isNativePlatform?.()) return 'admin'
-    const saved = localStorage.getItem(MODE_KEY)
-    return saved === 'admin' ? 'admin' : 'rider'
-  })
-  const [riderAvailable, setRiderAvailable] = useState(false)
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    localStorage.setItem(MODE_KEY, mode)
-  }, [mode])
+  // En APK/IPA siempre modo rider (sin acceso al admin desde la app).
+  // En web (socio.pidoo.es) siempre modo admin.
+  const mode = isNative ? 'rider' : 'admin'
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -182,24 +183,6 @@ function Shell() {
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
-
-  useEffect(() => {
-    let cancel = false
-    ;(async () => {
-      if (!socio?.id) { setRiderAvailable(false); return }
-      const { supabase } = await import('./lib/supabase')
-      const { data } = await supabase
-        .from('rider_accounts')
-        .select('id')
-        .eq('socio_id', socio.id)
-        .eq('estado', 'activa')
-        .eq('activa', true)
-        .limit(1)
-        .maybeSingle()
-      if (!cancel) setRiderAvailable(!!data)
-    })()
-    return () => { cancel = true }
-  }, [socio?.id])
 
   const irALogin = () => {
     setVistaPublica('login')
@@ -231,15 +214,15 @@ function Shell() {
   const modalEntrante = pendingNew ? (
     <ModalPedidoEntrante
       asignacion={pendingNew}
-      onAccept={async (id) => { await accept(id); setMode('rider') }}
+      onAccept={async (id) => { await accept(id) }}
       onReject={async (id, motivo) => { await reject(id, motivo) }}
       onClose={dismissPending}
     />
   ) : null
 
-  if (mode === 'rider' && riderAvailable && isNative) {
+  if (mode === 'rider') {
     return <>
-      <ShellRider switchToAdmin={() => setMode('admin')} />
+      <ShellRider />
       {modalEntrante}
     </>
   }
@@ -250,8 +233,6 @@ function Shell() {
       detalleEstId={detalleEstId}
       openRestaurante={openRestaurante}
       closeRestaurante={closeRestaurante}
-      switchToRider={() => setMode('rider')}
-      riderAvailable={riderAvailable}
     />
     {modalEntrante}
   </>

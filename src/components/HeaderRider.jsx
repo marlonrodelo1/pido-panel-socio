@@ -1,11 +1,11 @@
-// Header del modo reparto: hamburguesa + titulo central + toggle online + boton modo
+// Header del modo reparto: hamburguesa + titulo central + toggle online
 // Incluye banner rojo "GPS bloqueado" y toast informativo cuando el permiso
 // de background no esta concedido.
 
 import { colors, type } from '../lib/uiStyles'
 import { useRider } from '../context/RiderContext'
 
-export default function HeaderRider({ title, onMenu, onModeSwitch }) {
+export default function HeaderRider({ title, onMenu }) {
   const { online, goOnline, goOffline, gpsStatus, gpsToast, retryGps, dismissGpsToast } = useRider()
   const gpsBlocked = online && gpsStatus && gpsStatus.ok === false
 
@@ -43,13 +43,6 @@ export default function HeaderRider({ title, onMenu, onModeSwitch }) {
           }}>
           <span style={{ width: 8, height: 8, borderRadius: 4, background: online ? colors.stateOk : colors.textFaint }} />
           {online ? 'En línea' : 'Offline'}
-        </button>
-
-        <button onClick={onModeSwitch} title="Cambiar a modo admin" style={{
-          background: 'transparent', border: 'none', cursor: 'pointer',
-          padding: 6, color: colors.textMute, flexShrink: 0,
-        }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg>
         </button>
       </header>
 
