@@ -75,6 +75,19 @@ export async function registerSocioNativePush(userId, onNotification) {
     })
 
     PushNotifications.addListener('pushNotificationReceived', async (notification) => {
+      // Log para diagnostico: confirma que el plugin esta procesando el push.
+      // Si llega un push y NO aparece este log, significa que el push no cruza
+      // el plugin (probable: app cerrada/swipe-killed + FCM block notification
+      // entregado solo al system tray + Doze/battery optimization).
+      try {
+        await debugLog('notification_received', {
+          title: notification.title || null,
+          body: notification.body || null,
+          data_keys: notification.data ? Object.keys(notification.data) : [],
+          tipo: notification.data?.tipo || null,
+        })
+      } catch (_) {}
+
       // 1) Sonido inmediato via Web Audio API (no depende de canales Android)
       try {
         const Ctx = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext)
@@ -121,7 +134,13 @@ export async function registerSocioNativePush(userId, onNotification) {
       if (onNotification) onNotification(notification, false)
     })
 
-    PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+    PushNotifications.addListener('pushNotificationActionPerformed', async (action) => {
+      try {
+        await debugLog('notification_tapped', {
+          title: action.notification?.title || null,
+          tipo: action.notification?.data?.tipo || null,
+        })
+      } catch (_) {}
       try { window.dispatchEvent(new CustomEvent('pidoo-push-tapped', { detail: action.notification })) } catch (_) {}
       if (onNotification) onNotification(action.notification, true)
     })

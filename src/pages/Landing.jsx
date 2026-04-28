@@ -64,8 +64,8 @@ const pasos = [
 function Logo({ size = 34 }) {
   return (
     <img
-      src="/favicon.svg"
-      alt="Pidoo"
+      src="/icon.png"
+      alt="Pidoo go"
       width={size}
       height={size}
       style={{ display: 'block', borderRadius: size * 0.22 }}

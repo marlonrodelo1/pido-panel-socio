@@ -125,7 +125,7 @@ export function SocioProvider({ children }) {
             if ('Notification' in window && Notification.permission === 'granted') {
               const n = new Notification('Nuevo pedido #' + (p.codigo || ''), {
                 body: 'Total: ' + Number(p.total || 0).toFixed(2) + ' €',
-                icon: '/favicon.svg',
+                icon: '/icon.png',
                 tag: 'socio-nuevo-' + p.id,
               })
               n.onclick = () => { window.focus(); n.close() }

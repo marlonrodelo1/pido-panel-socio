@@ -1,17 +1,23 @@
 {
-  "name": "Pidoo Socios",
-  "short_name": "Socios",
-  "description": "Panel de socios Pidoo",
+  "name": "Pidoo go",
+  "short_name": "Pidoo go",
+  "description": "Pidoo go — app del rider/socio Pidoo",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FAFAF7",
-  "theme_color": "#FAFAF7",
+  "background_color": "#FF6B2C",
+  "theme_color": "#FF6B2C",
   "orientation": "portrait",
   "icons": [
     {
       "src": "/favicon.svg",
       "type": "image/svg+xml",
       "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "type": "image/png",
+      "sizes": "1024x1024",
       "purpose": "any maskable"
     }
   ]

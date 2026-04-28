@@ -165,7 +165,7 @@ export default function SeguirPedido({ codigo }) {
   return (
     <Layout>
       <header style={S.header}>
-        <img src="/favicon.svg" alt="Pidoo" style={{ width: 28, height: 28 }} />
+        <img src="/icon.png" alt="Pidoo go" style={{ width: 28, height: 28, borderRadius: 6 }} />
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: '#1F1F1E' }}>Pidoo</div>
           <div style={{ fontSize: 11, color: '#777' }}>Pedido #{pedido.codigo}</div>
