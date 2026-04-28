@@ -188,18 +188,28 @@ export function RiderProvider({ children }) {
         }
       } catch (_) {}
 
+      // Timeout de 8s para getCurrentPosition: si el GPS no responde en
+      // ese tiempo, llamamos rider-online sin coordenadas (la edge lo
+      // acepta — last_location_at queda viejo pero en_servicio=true).
+      // El tracker arrancara despues y enviara updates de ubicacion.
       let lat, lng
       try {
-        const p = await getCurrentPosition()
+        const p = await Promise.race([
+          getCurrentPosition(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('gps_timeout')), 8000)),
+        ])
         lat = p.lat; lng = p.lng
         setPos({ lat, lng })
-      } catch (_) {}
+      } catch (e) {
+        console.warn('[Rider] getCurrentPosition fallo o timeout, sigo sin coords', e?.message)
+      }
       try {
         await riderApi.online({ lat, lng })
         refreshSocio().catch(() => {})
       } catch (e) {
         console.error('[Rider] online failed', e)
         setOnline(false)
+        setGpsToast({ type: 'error', message: 'No se pudo conectar. Reintenta en unos segundos.' })
       }
     })()
   }, [refreshSocio])

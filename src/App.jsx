@@ -36,7 +36,9 @@ const URL_MARKETPLACE_BASE = 'https://pidoo.es/s/'
 
 function marketplaceConfigCompleta(socio) {
   if (!socio) return false
-  const need = [socio.slug, socio.nombre_comercial, socio.logo_url, socio.descripcion]
+  // Minimo para compartir: slug (URL) + nombre comercial + logo.
+  // La descripcion es opcional aunque recomendable.
+  const need = [socio.slug, socio.nombre_comercial, socio.logo_url]
   return need.every(v => typeof v === 'string' && v.trim().length > 0)
 }
 
