@@ -59,7 +59,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate, UNUser
     func applicationWillResignActive(_ application: UIApplication) {}
     func applicationDidEnterBackground(_ application: UIApplication) {}
     func applicationWillEnterForeground(_ application: UIApplication) {}
-    func applicationDidBecomeActive(_ application: UIApplication) {}
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        // Forzar fondo claro #FAFAF7 en window y root view para que la
+        // zona del status bar (overlaysWebView=false) NUNCA aparezca negra.
+        // Aqui es seguro: la window ya esta montada cuando se llama este metodo.
+        let lightBg = UIColor(red: 0xFA/255.0, green: 0xFA/255.0, blue: 0xF7/255.0, alpha: 1.0)
+        for scene in UIApplication.shared.connectedScenes {
+            if let ws = scene as? UIWindowScene {
+                for w in ws.windows {
+                    w.backgroundColor = lightBg
+                    w.rootViewController?.view.backgroundColor = lightBg
+                    if #available(iOS 13.0, *) {
+                        w.overrideUserInterfaceStyle = .light
+                    }
+                }
+            }
+        }
+    }
     func applicationWillTerminate(_ application: UIApplication) {}
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
