@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { loginEmail, registerEmail, resetPassword } from '../lib/auth'
 import GoogleButton from '../components/GoogleButton'
+import AppleButton from '../components/AppleButton'
 
 function ErrorBox({ msg }) {
   if (!msg) return null
@@ -194,6 +195,7 @@ export default function Login({ onBack }) {
               </div>
 
               <GoogleButton />
+              <AppleButton />
             </>
           )}
         </div>
