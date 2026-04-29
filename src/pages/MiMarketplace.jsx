@@ -20,6 +20,7 @@ export default function MiMarketplace() {
     instagram: socio?.redes?.instagram || '',
     tiktok: socio?.redes?.tiktok || '',
     web: socio?.redes?.web || '',
+    radio_marketplace_km: socio?.radio_marketplace_km ?? 15,
   })
   const [saving, setSaving] = useState(false)
   const [ok, setOk] = useState(false)
@@ -36,6 +37,7 @@ export default function MiMarketplace() {
       instagram: socio.redes?.instagram || '',
       tiktok: socio.redes?.tiktok || '',
       web: socio.redes?.web || '',
+      radio_marketplace_km: socio.radio_marketplace_km ?? 15,
     })
   }, [socio])
 
@@ -125,12 +127,17 @@ export default function MiMarketplace() {
   const save = async () => {
     setSaving(true); setErr(null); setOk(false)
     try {
+      const radioParsed = parseFloat(form.radio_marketplace_km)
+      const radioFinal = Number.isFinite(radioParsed) && radioParsed > 0
+        ? Math.min(Math.max(radioParsed, 1), 100)
+        : 15
       await updateSocio({
         nombre_comercial: form.nombre_comercial,
         descripcion: form.descripcion,
         logo_url: form.logo_url || null,
         banner_url: form.banner_url || null,
         color_primario: form.color_primario,
+        radio_marketplace_km: radioFinal,
         redes: {
           instagram: form.instagram || null,
           tiktok: form.tiktok || null,
@@ -180,6 +187,16 @@ export default function MiMarketplace() {
           <div>
             <label style={ds.label}>Nombre comercial</label>
             <input value={form.nombre_comercial} onChange={e => setForm({ ...form, nombre_comercial: e.target.value })} style={ds.input} />
+          </div>
+          <div>
+            <label style={ds.label}>Radio del marketplace (km)</label>
+            <input type="number" min={1} max={100} step={1}
+              value={form.radio_marketplace_km}
+              onChange={e => setForm({ ...form, radio_marketplace_km: e.target.value })}
+              style={ds.input} />
+            <div style={{ fontSize: 11, color: colors.textMute, marginTop: 4 }}>
+              Distancia maxima desde el cliente para mostrar tus restaurantes en {socio?.slug ? `pidoo.es/s/${socio.slug}` : 'tu marketplace'}.
+            </div>
           </div>
           <div>
             <label style={ds.label}>Color primario</label>
