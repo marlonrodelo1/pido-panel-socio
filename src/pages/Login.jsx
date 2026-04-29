@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { loginEmail, registerEmail, resetPassword } from '../lib/auth'
-import GoogleButton from '../components/GoogleButton'
-import AppleButton from '../components/AppleButton'
 
 function ErrorBox({ msg }) {
   if (!msg) return null
@@ -187,15 +185,6 @@ export default function Login({ onBack }) {
                   color: 'var(--c-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
                 }}>¿Olvidaste tu contraseña?</button>
               )}
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '16px 0' }}>
-                <div style={{ flex: 1, height: 1, background: 'var(--c-border)' }} />
-                <span style={{ fontSize: 11, color: 'var(--c-muted)', fontWeight: 600 }}>o</span>
-                <div style={{ flex: 1, height: 1, background: 'var(--c-border)' }} />
-              </div>
-
-              <GoogleButton />
-              <AppleButton />
             </>
           )}
         </div>
