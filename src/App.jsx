@@ -68,12 +68,18 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
   }[effectiveSection] || <Dashboard setSection={setSection} openRestaurante={openRestaurante} />
 
   return (
-    <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 80 }}>
-      <HeaderNav section={section} setSection={setSection} />
-      <main style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 20px 0' }}>
-        {page}
+    <div className="app-shell" style={{ background: colors.bg }}>
+      <div className="app-shell-header">
+        <HeaderNav section={section} setSection={setSection} />
+      </div>
+      <main className="app-shell-content">
+        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 20px 24px' }}>
+          {page}
+        </div>
       </main>
-      <BottomNav section={section} setSection={setSection} />
+      <div className="app-shell-bottom">
+        <BottomNav section={section} setSection={setSection} />
+      </div>
     </div>
   )
 }
@@ -161,10 +167,14 @@ function ShellRider() {
   })()
 
   return (
-    <div style={{ minHeight: '100vh', background: colors.bg, paddingBottom: 70 }}>
-      <HeaderRider title={RIDER_TITLES[section] || ''} onMenu={() => setDrawerOpen(true)} />
-      <main>{page}</main>
-      <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
+    <div className="app-shell" style={{ background: colors.bg }}>
+      <div className="app-shell-header">
+        <HeaderRider title={RIDER_TITLES[section] || ''} onMenu={() => setDrawerOpen(true)} />
+      </div>
+      <main className="app-shell-content">{page}</main>
+      <div className="app-shell-bottom">
+        <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
+      </div>
       <DrawerRider open={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleNavigate} />
       {marketplaceModal?.tipo === 'incompleto' && (
         <MarketplaceIncompletoModal

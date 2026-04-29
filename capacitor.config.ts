@@ -13,9 +13,12 @@ const config: CapacitorConfig = {
       splashImmersive: true,
     },
     StatusBar: {
-      style: 'LIGHT',
+      // Texto oscuro (iconos del sistema en negro) sobre fondo claro #FAFAF7.
+      // overlaysWebView=false: el WebView no se mete debajo del status bar,
+      // por lo que la barra del sistema NUNCA queda invisible al scrollear.
+      style: 'DARK',
       backgroundColor: '#FAFAF7',
-      overlaysWebView: true,
+      overlaysWebView: false,
     },
     PushNotifications: {
       presentationOptions: ['badge', 'sound', 'alert'],
@@ -33,7 +36,9 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
   },
   ios: {
-    contentInset: 'always',
+    // overlaysWebView=false ya evita que el WebView se meta bajo el status bar;
+    // 'never' evita un doble safe-area-inset al scrollear.
+    contentInset: 'never',
   },
 }
 

@@ -40,6 +40,10 @@ export function loadGoogleMaps() {
     s.onload = onReady
     s.onerror = () => reject(new Error('gmaps_load_fail'))
     document.head.appendChild(s)
+    // Timeout duro: si en 12s no llamó a onload, fallar para que la UI muestre fallback
+    setTimeout(() => {
+      if (!window.google?.maps?.Map) reject(new Error('gmaps_timeout'))
+    }, 12000)
   })
   // Si el promise rechaza, permitir reintento posterior
   loadingPromise.catch(() => { loadingPromise = null })

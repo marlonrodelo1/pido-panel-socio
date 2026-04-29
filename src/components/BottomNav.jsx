@@ -22,11 +22,11 @@ export default function BottomNav({ section, setSection }) {
   return (
     <>
       <nav className="socio-bottom-nav" style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 20,
+        // El padding-bottom con safe-area lo aplica .app-shell-bottom (App.jsx).
         background: colors.surface,
         borderTop: `1px solid ${colors.border}`,
         display: 'none',
-        padding: '6px 0 calc(6px + env(safe-area-inset-bottom))',
+        padding: '6px 0',
       }}>
         {ITEMS.map(it => {
           const active = activeId === it.id

@@ -34,11 +34,11 @@ export default function HeaderNav({ section, setSection }) {
 
   return (
     <header style={{
-      position: 'sticky', top: 0, zIndex: 20,
+      // El padding-top safe-area y la fijacion del header los aplica
+      // .app-shell-header en App.jsx (layout flex fijo).
       background: colors.surface,
       borderBottom: `1px solid ${colors.border}`,
       boxShadow: colors.shadow,
-      paddingTop: 'env(safe-area-inset-top)',
     }}>
       <div style={{
         maxWidth: 1280, margin: '0 auto',

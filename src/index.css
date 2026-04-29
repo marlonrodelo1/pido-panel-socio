@@ -45,13 +45,48 @@ html, body, #root {
   height: 100%;
 }
 
+html, body {
+  /* Sin scroll global del documento en iOS — solo se permite scroll
+     en .app-shell-content. Asi el header y la bottom nav quedan fijos
+     y el status bar del sistema mantiene su posicion. */
+  overscroll-behavior: none;
+}
+/* Cuando hay app-shell, congelar el scroll global del body (solo
+   scrollea .app-shell-content). Cuando no hay (Login, Onboarding,
+   SeguirPedido), permitir scroll normal. */
+body:has(.app-shell) {
+  overflow: hidden;
+}
+
 body {
   background: var(--c-bg);
   color: var(--c-text);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-text-size-adjust: 100%;
-  /* No padding-top aqui: cada header gestiona su propio safe-area-inset-top
-     porque tienen position:sticky y se posicionarian DEBAJO del padding. */
+}
+
+/* Layout app-shell: header arriba (con safe-area top), contenido central
+   scrolleable (flex:1), bottom nav abajo (con safe-area bottom). */
+.app-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app-shell-header {
+  flex-shrink: 0;
+  padding-top: env(safe-area-inset-top);
+  background: var(--c-surface);
+}
+.app-shell-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.app-shell-bottom {
+  flex-shrink: 0;
   padding-bottom: env(safe-area-inset-bottom);
 }
 

@@ -2,6 +2,24 @@
 
 Fecha: 29 abril 2026
 
+> **Update 29 abr (tarde) — Mapa gris en "Órdenes en espera"**
+>
+> Si la app abre OK pero el mapa sale en gris/blanco vacío, casi seguro
+> falta `VITE_GOOGLE_MAPS_API_KEY` en el `.env` de la Mac. Comando rápido:
+>
+> ```bash
+> cd ~/Desktop/pido-panel-socio
+> grep -q VITE_GOOGLE_MAPS_API_KEY .env || \
+>   echo 'VITE_GOOGLE_MAPS_API_KEY=AIzaSyBS19f7Y7iNSPYP3mdfdETEymVX2jCJkc0' >> .env
+> npm run build && npx cap sync ios
+> # Luego Xcode → Product → Archive → upload TestFlight
+> ```
+>
+> Tras este commit, si la key falta o el script Maps no carga en 12s, la app
+> muestra un overlay rojo con la lista textual de restaurantes (no más gris
+> silencioso).
+
+
 ## TL;DR — apuesta principal
 
 La app abre en **blanco** en TestFlight con altísima probabilidad porque al

@@ -21,6 +21,7 @@ export default function RiderEsperando({ onGoPedidos }) {
   const radioCircleRef = useRef(null)
   const [restaurantes, setRestaurantes] = useState([])
   const [selectedRestId, setSelectedRestId] = useState(null)
+  const [mapError, setMapError] = useState(null) // 'no_api_key' | 'gmaps_load_fail' | 'gmaps_timeout' | etc.
   // Posicion local: prefiere la del context (live), si no la pide al GPS al
   // montar para mostrar el marker incluso cuando el rider no esta "online".
   const [localPos, setLocalPos] = useState(null)
@@ -163,7 +164,10 @@ export default function RiderEsperando({ onGoPedidos }) {
       })
       // Tocar fuera de un marker -> cerrar circulo
       mapRef.current.addListener('click', () => setSelectedRestId(null))
-    }).catch((e) => console.warn('[esperando] gmaps load fail', e?.message))
+    }).catch((e) => {
+      console.warn('[esperando] gmaps load fail', e?.message)
+      if (!cancel) setMapError(e?.message || 'gmaps_load_fail')
+    })
     return () => { cancel = true }
   }, [])
 
@@ -300,6 +304,85 @@ export default function RiderEsperando({ onGoPedidos }) {
       height: 'calc(100vh - 56px - env(safe-area-inset-top) - 70px - env(safe-area-inset-bottom))',
     }}>
       <div ref={mapDivRef} style={{ position: 'absolute', inset: 0, background: '#E8E6E0' }} />
+
+      {/* Fallback cuando Google Maps no carga: lista textual de restaurantes */}
+      {mapError && (
+        <div style={{
+          position: 'absolute', inset: 0, overflowY: 'auto',
+          background: colors.bg, padding: '16px 12px 96px',
+          display: 'flex', flexDirection: 'column', gap: 12,
+        }}>
+          <div style={{
+            background: '#FEE2E2', border: '1px solid #FCA5A5',
+            borderRadius: 12, padding: '12px 14px', color: '#991B1B',
+            fontSize: type.xs, fontWeight: 600, lineHeight: 1.4,
+          }}>
+            ⚠️ Mapa no disponible ({mapError === 'no_api_key' ? 'falta API key' : 'error al cargar'}).
+            Mostrando restaurantes en lista. Avisa al soporte si esto persiste.
+          </div>
+          {restaurantes.length === 0 ? (
+            <div style={{
+              background: colors.surface, padding: 16, borderRadius: 12,
+              border: `1px solid ${colors.border}`, fontSize: type.sm,
+              color: colors.textMute, textAlign: 'center',
+            }}>
+              No tienes restaurantes vinculados activos.
+            </div>
+          ) : (
+            restaurantes.map((r) => {
+              let distKm = null
+              if (pos && r.latitud && r.longitud) {
+                const toRad = (d) => (d * Math.PI) / 180
+                const dLat = toRad(r.latitud - pos.lat)
+                const dLng = toRad(r.longitud - pos.lng)
+                const a = Math.sin(dLat / 2) ** 2 +
+                  Math.cos(toRad(pos.lat)) * Math.cos(toRad(r.latitud)) *
+                  Math.sin(dLng / 2) ** 2
+                distKm = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+              }
+              return (
+                <div key={r.id} style={{
+                  background: colors.surface, padding: '12px 14px',
+                  borderRadius: 12, border: `1px solid ${colors.border}`,
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  {r.logo_url ? (
+                    <img src={r.logo_url} alt="" style={{
+                      width: 44, height: 44, borderRadius: 22, objectFit: 'cover',
+                      border: `2px solid ${colors.primary}`, flexShrink: 0,
+                    }} />
+                  ) : (
+                    <div style={{
+                      width: 44, height: 44, borderRadius: 22, flexShrink: 0,
+                      background: colors.primary, color: '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 22,
+                    }}>🍽️</div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.nombre}
+                    </div>
+                    <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+                      Radio {Number(r.radio_cobertura_km) || 3} km
+                      {distKm != null && ` · ${distKm.toFixed(1)} km de ti`}
+                    </div>
+                    <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+                      {formatTarifa({
+                        tarifa_base: r.tarifa_base,
+                        tarifa_radio_base_km: r.tarifa_radio_base_km,
+                        tarifa_precio_km: r.tarifa_precio_km,
+                        tarifa_maxima: r.tarifa_maxima,
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
 
       {/* Banner superior: instruccion o info del restaurante seleccionado */}
       <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 5 }}>

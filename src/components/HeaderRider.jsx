@@ -12,12 +12,13 @@ export default function HeaderRider({ title, onMenu }) {
   return (
     <>
       <header style={{
-        position: 'sticky', top: 0, zIndex: 15,
+        // El padding-top con safe-area lo aplica .app-shell-header en App.jsx;
+        // aqui solo el padding interno normal.
         background: colors.surface,
         borderBottom: `1px solid ${colors.border}`,
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: 'calc(env(safe-area-inset-top) + 4px) 12px 4px',
-        minHeight: 'calc(56px + env(safe-area-inset-top))',
+        padding: '4px 12px',
+        minHeight: 56,
       }}>
         <button onClick={onMenu} style={{
           background: 'transparent', border: 'none', cursor: 'pointer',
