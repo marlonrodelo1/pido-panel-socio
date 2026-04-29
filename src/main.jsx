@@ -46,6 +46,15 @@ function getMissingEnvKeys() {
   return missing
 }
 
+// Oculta el fallback HTML estatico (definido en index.html) en cuanto React
+// monta. Si React no llega a montar, el fallback queda visible con el error.
+function hideBootFallback() {
+  try {
+    const el = document.getElementById('boot-fallback')
+    if (el) el.style.display = 'none'
+  } catch (_) {}
+}
+
 const rootEl = document.getElementById('root')
 const root = createRoot(rootEl)
 
@@ -55,6 +64,7 @@ if (!SUPABASE_CONFIG_OK || missingEnv.length > 0) {
   // No envolvemos en StrictMode/ErrorBoundary aqui — queremos que esta
   // pantalla salga si o si.
   root.render(<ConfigErrorScreen missing={missingEnv.length ? missingEnv : ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY']} />)
+  hideBootFallback()
 } else {
   root.render(
     <StrictMode>
@@ -63,4 +73,5 @@ if (!SUPABASE_CONFIG_OK || missingEnv.length > 0) {
       </ErrorBoundary>
     </StrictMode>,
   )
+  hideBootFallback()
 }
