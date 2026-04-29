@@ -20,18 +20,22 @@ if (typeof window !== 'undefined') {
   })
 }
 
-// StatusBar overlay TRUE: la WebView ocupa toda la pantalla y nosotros
-// reservamos espacio en CSS via env(safe-area-inset-top). Es mas predecible
-// que confiar en Android para "empujar" la WebView abajo.
-async function setupStatusBar() {
-  if (!Capacitor.isNativePlatform()) return
-  try {
-    const { StatusBar, Style } = await import('@capacitor/status-bar')
-    await StatusBar.setOverlaysWebView({ overlay: true })
-    await StatusBar.setStyle({ style: Style.Light }) // iconos oscuros sobre fondo claro
-  } catch (_) {}
+// StatusBar setup en background — diferido y con catch para no bloquear el
+// boot. Capacitor.config.ts ya define StatusBar (overlay=false, fondo claro);
+// este setup runtime es "cinturon y tirantes" y NO debe romper el render
+// si el plugin tarda en cargar.
+function setupStatusBar() {
+  if (typeof window === 'undefined') return
+  if (!Capacitor.isNativePlatform?.()) return
+  setTimeout(() => {
+    import('@capacitor/status-bar')
+      .then(({ StatusBar, Style }) => {
+        StatusBar.setStyle({ style: Style.Light }).catch(() => {})
+      })
+      .catch(() => {})
+  }, 0)
 }
-setupStatusBar()
+try { setupStatusBar() } catch (_) {}
 
 // Validacion al boot: si faltaron las VITE_* en el build, mostrar pantalla
 // legible en vez de pantalla blanca silenciosa (caso TestFlight tipico).
