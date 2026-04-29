@@ -54,6 +54,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
     }
 
     private func saveFcmTokenToSupabase(fcmToken: String) {
+        // Plain INSERT (sin on_conflict). Si ya existe la fila devuelve 409 (unique
+        // violation) — no es un error real, solo significa que el token ya esta
+        // guardado. Evitamos on_conflict porque requiere UPDATE policy.
+        // NOTA: la tabla push_subscriptions NO tiene columna 'plataforma'.
+        // Solo: id, user_id, user_type, establecimiento_id, endpoint, p256dh, auth, created_at, fcm_token.
         guard let url = URL(string: "https://rmrbxrabngdmpgpfmjbo.supabase.co/rest/v1/push_subscriptions") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -65,8 +70,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
             "p256dh": "",
             "auth": "",
             "fcm_token": fcmToken,
-            "user_type": "socio",
-            "plataforma": "ios_socio"
+            "user_type": "socio"
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req) { _, resp, err in
@@ -87,7 +91,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         req.addValue("application/json", forHTTPHeaderField: "Content-Type")
         req.addValue(anonKey, forHTTPHeaderField: "apikey")
         req.addValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
-        var body: [String: Any] = ["platform": "ios_socio", "event": event]
+        // Usamos platform="ios" + prefijo "socio:" en event (mismo patron que pushNative.js)
+        // para que claim_orphan_push_tokens y los filtros JS encuentren consistencia.
+        var body: [String: Any] = ["platform": "ios", "event": "socio:\(event)"]
         if let extra = extra { body["details"] = extra }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req).resume()
