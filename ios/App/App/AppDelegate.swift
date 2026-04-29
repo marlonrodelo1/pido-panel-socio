@@ -2,9 +2,10 @@ import UIKit
 import Capacitor
 import FirebaseCore
 import FirebaseMessaging
+import UserNotifications
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate, UNUserNotificationCenterDelegate {
 
     var window: UIWindow?
 
@@ -16,7 +17,42 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
 
         Messaging.messaging().delegate = self
 
+        // UNUserNotificationCenter delegate (CRITICO: necesario para foreground delivery
+        // y para que swizzling=NO funcione correctamente con FCM).
+        UNUserNotificationCenter.current().delegate = self
+
+        // Pedir permiso explicitamente y registrarse para APNs. No dependemos solo del
+        // plugin Capacitor PushNotifications — registramos directamente para asegurar
+        // que se dispare didRegisterForRemoteNotificationsWithDeviceToken aunque el
+        // plugin tarde en arrancar.
+        let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
+        UNUserNotificationCenter.current().requestAuthorization(options: authOptions) { [weak self] granted, error in
+            self?.sendDebugLog(event: "ios_auth_request", extra: "granted=\(granted) err=\(error?.localizedDescription ?? "nil")")
+            if granted {
+                DispatchQueue.main.async {
+                    application.registerForRemoteNotifications()
+                    self?.sendDebugLog(event: "ios_register_for_remote_called")
+                }
+            }
+        }
+
         return true
+    }
+
+    // Foreground delivery: muestra el banner aunque la app este abierta
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        sendDebugLog(event: "ios_notif_will_present", extra: notification.request.content.title)
+        completionHandler([.banner, .badge, .sound, .list])
+    }
+
+    // Tap en notificacion (background o cerrada)
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        sendDebugLog(event: "ios_notif_tapped", extra: response.notification.request.content.title)
+        completionHandler()
     }
 
     func applicationWillResignActive(_ application: UIApplication) {}
