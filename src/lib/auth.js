@@ -23,45 +23,29 @@ export async function registerEmail(email, password) {
 // Sign in with Apple — exigido por Apple guideline 4.8 cuando la app
 // ofrece login OAuth de terceros (Google).
 //
-// iOS nativo: usa @capacitor-community/apple-sign-in con SDK nativo Apple
-// (mejor UX, no abre browser). Genera nonce, lo hashea SHA-256, pasa el hash
-// como `nonce` al plugin, y devuelve identityToken que se manda a Supabase
-// con el nonce RAW (Supabase verifica el SHA-256 del nonce en el JWT Apple).
+// Implementacion via OAuth web flow (mismo patron que loginGoogle):
+// - iOS nativo: skipBrowserRedirect + Browser.open (Safari embebido).
+//   Apple acepta este flujo perfectamente para cumplir guideline 4.8.
+//   Se evita la incompatibilidad del plugin nativo
+//   @capacitor-community/apple-sign-in que requiere Capacitor 7.x mientras
+//   el proyecto usa Capacitor 8.x.
+// - Web/Android: signInWithOAuth con redirect al origen.
 //
-// Web / Android: signInWithOAuth provider='apple' con Services ID
-// `com.pido.socio.signin` (configurado en Supabase).
+// Supabase tiene configurado provider Apple con Services ID
+// `com.pido.socio.signin` y client_secret JWT generado con .p8/team
+// XR7JH7A8ZY/key S7745K9TUV (expira oct 2026, regenerar antes).
 export async function loginApple() {
-  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
-    const { SignInWithApple } = await import('@capacitor-community/apple-sign-in')
-    // Generar nonce raw aleatorio (32 bytes)
-    const rawNonce = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-      .map(b => b.toString(16).padStart(2, '0')).join('')
-    // SHA-256 del nonce → es lo que pasamos al plugin (Apple verifica que el
-    // sha256 del nonce raw enviado a Supabase coincida con el del JWT).
-    const enc = new TextEncoder().encode(rawNonce)
-    const hashBuf = await crypto.subtle.digest('SHA-256', enc)
-    const hashedNonce = Array.from(new Uint8Array(hashBuf))
-      .map(b => b.toString(16).padStart(2, '0')).join('')
-
-    const result = await SignInWithApple.authorize({
-      clientId: 'com.pido.socio',
-      redirectURI: 'https://rmrbxrabngdmpgpfmjbo.supabase.co/auth/v1/callback',
-      scopes: 'email name',
-      state: '12345',
-      nonce: hashedNonce,
-    })
-    const idToken = result?.response?.identityToken
-    if (!idToken) throw new Error('No se obtuvo el token de Apple.')
-    const { data, error } = await supabase.auth.signInWithIdToken({
+  if (Capacitor.isNativePlatform()) {
+    const { data } = await supabase.auth.signInWithOAuth({
       provider: 'apple',
-      token: idToken,
-      nonce: rawNonce,
+      options: {
+        redirectTo: 'com.pido.socio://login',
+        skipBrowserRedirect: true,
+      },
     })
-    if (error) throw error
-    return data
+    if (data?.url) await Browser.open({ url: data.url })
+    return
   }
-
-  // Web (y Android si llegase) → OAuth via browser
   return supabase.auth.signInWithOAuth({
     provider: 'apple',
     options: {
