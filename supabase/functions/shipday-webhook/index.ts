@@ -1,21 +1,15 @@
-// shipday-webhook — Reactivado.
+// shipday-webhook v3 —
 //
 // Recibe POST de Shipday con eventos del ciclo de vida de la orden.
 // Soporta el formato nuevo (snake_case anidado bajo `payload.order.*`) y el
-// viejo (camelCase top-level) para no romper si alguna cuenta Shipday legacy
-// sigue mandando el formato antiguo.
+// viejo (camelCase top-level).
+//
+// Cuando llega ORDER_ASSIGNED / ORDER_ACCEPTED_AND_STARTED y el pedido aun
+// no tiene shipday_tracking_url, hace GET a Shipday /orders/{orderNumber}
+// con la api_key del socio para obtener el `trackingLink` y guardarlo.
 //
 // Auth: header `token` debe coincidir con env `SHIPDAY_WEBHOOK_TOKEN`. Si no
-// está configurado el env, se acepta cualquier request (modo bootstrapping).
-//
-// Mapeo event -> shipday_status -> estado del pedido:
-//   ORDER_ASSIGNED, ORDER_ACCEPTED_AND_STARTED -> accepted -> preparando
-//   ORDER_PIKEDUP                              -> picked_up -> recogido
-//   ORDER_ONTHEWAY                             -> en_camino -> en_camino
-//   ORDER_COMPLETED                            -> delivered -> entregado
-//   ORDER_FAILED, ORDER_INCOMPLETE             -> failed   -> cancelado
-//   ORDER_UNASSIGNED, ORDER_PIKEDUP_REMOVED,
-//   ORDER_ONTHEWAY_REMOVED                     -> created  -> (no toca estado)
+// esta configurado, se acepta cualquier request (modo bootstrapping).
 
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -89,26 +83,40 @@ function extractOrderStatus(p: any): string | null {
   )
 }
 
+async function fetchTrackingLink(orderNumber: string, apiKey: string): Promise<string | null> {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 6000)
+    const res = await fetch(`https://api.shipday.com/orders/${encodeURIComponent(orderNumber)}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Basic ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+    })
+    clearTimeout(t)
+    if (!res.ok) return null
+    const data = await res.json().catch(() => null)
+    const arr = Array.isArray(data) ? data : (data ? [data] : [])
+    for (const o of arr) {
+      const link = o?.trackingLink || o?.tracking_link || o?.trackingUrl
+      if (link) return String(link)
+    }
+  } catch (_) {}
+  return null
+}
+
 serve(async (req) => {
   const pre = preflight(req)
   if (pre) return pre
   if (req.method !== 'POST') return jsonResponse({ error: 'method_not_allowed' }, 405)
 
-  // Auth por header `token`
   const expectedToken = Deno.env.get('SHIPDAY_WEBHOOK_TOKEN')
   if (expectedToken) {
     const got = req.headers.get('token') || ''
-    if (got !== expectedToken) {
-      return jsonResponse({ error: 'unauthorized' }, 401)
-    }
+    if (got !== expectedToken) return jsonResponse({ error: 'unauthorized' }, 401)
   }
 
   let payload: any = null
-  try {
-    payload = await req.json()
-  } catch (_) {
-    return jsonResponse({ error: 'invalid_json' }, 400)
-  }
+  try { payload = await req.json() } catch (_) { return jsonResponse({ error: 'invalid_json' }, 400) }
 
   const sb = adminClient()
 
@@ -117,49 +125,62 @@ serve(async (req) => {
   const event = extractEvent(payload)
   const orderStatus = extractOrderStatus(payload)
 
-  // Localiza pedido por codigo (= orderNumber)
+  // Localiza pedido por codigo + carga shipday_tracking_url y socio_id
   let pedidoId: string | null = null
+  let pedidoTrackingUrl: string | null = null
+  let pedidoSocioId: string | null = null
   if (orderNumber) {
     const { data: ped } = await sb
       .from('pedidos')
-      .select('id')
+      .select('id, shipday_tracking_url, socio_id')
       .eq('codigo', orderNumber)
       .maybeSingle()
-    pedidoId = ped?.id ?? null
+    if (ped) {
+      pedidoId = ped.id
+      pedidoTrackingUrl = ped.shipday_tracking_url
+      pedidoSocioId = ped.socio_id
+    }
   }
 
-  // Log (best-effort, no bloqueante)
+  // Log (best-effort)
   try {
     await sb.from('shipday_webhook_logs').insert({
-      payload,
-      pedido_id: pedidoId,
+      payload, pedido_id: pedidoId,
       extracted_order_number: orderNumber,
       extracted_order_id: orderId,
       extracted_status: orderStatus || event,
     })
   } catch (e) {
-    console.warn('[shipday-webhook] no se pudo loggear', (e as any)?.message)
+    console.warn('[shipday-webhook] log fail', (e as any)?.message)
   }
 
   if (!pedidoId) {
-    // 200 para que Shipday no reintente infinito
     return jsonResponse({ ok: true, warning: 'pedido_not_found', orderNumber })
   }
 
-  // Mapear evento -> estados
   const mapping = event ? EVENT_MAP[event] : null
   if (!mapping) {
     return jsonResponse({ ok: true, warning: 'event_not_mapped', event })
   }
 
-  const updates: Record<string, unknown> = {
-    shipday_status: mapping.shipday,
-  }
+  const updates: Record<string, unknown> = { shipday_status: mapping.shipday }
   if (mapping.estado) updates.estado = mapping.estado
-  // Timestamps utiles para el ciclo de vida del pedido
   if (mapping.estado === 'recogido') updates.recogido_at = new Date().toISOString()
   if (mapping.estado === 'entregado') updates.entregado_at = new Date().toISOString()
   if (mapping.estado === 'cancelado') updates.cancelado_at = new Date().toISOString()
+
+  // Si el pedido aun no tiene tracking url y el evento es de asignacion/aceptacion,
+  // pedimos a Shipday GET /orders/{orderNumber} para obtener trackingLink.
+  if (!pedidoTrackingUrl && pedidoSocioId && orderNumber &&
+      (event === 'ORDER_ASSIGNED' || event === 'ORDER_ACCEPTED_AND_STARTED')) {
+    const { data: socio } = await sb
+      .from('socios').select('shipday_api_key').eq('id', pedidoSocioId).maybeSingle()
+    const apiKey = (socio as any)?.shipday_api_key
+    if (apiKey) {
+      const link = await fetchTrackingLink(orderNumber, apiKey)
+      if (link) updates.shipday_tracking_url = link
+    }
+  }
 
   const { error: updErr } = await sb.from('pedidos').update(updates).eq('id', pedidoId)
   if (updErr) {
@@ -168,10 +189,8 @@ serve(async (req) => {
   }
 
   return jsonResponse({
-    ok: true,
-    pedido_id: pedidoId,
-    event,
-    shipday_status: mapping.shipday,
-    estado: mapping.estado || null,
+    ok: true, pedido_id: pedidoId, event,
+    shipday_status: mapping.shipday, estado: mapping.estado || null,
+    tracking_url_set: 'shipday_tracking_url' in updates,
   })
 })
