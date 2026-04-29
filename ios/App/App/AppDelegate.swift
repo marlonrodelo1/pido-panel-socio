@@ -15,6 +15,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate, UNUser
             sendDebugLog(event: "ios_firebase_configured")
         }
 
+        // Forzar fondo claro #FAFAF7 en la window/rootViewController para que el
+        // area del status bar (con overlaysWebView=false) NUNCA aparezca negra,
+        // ni siquiera si el iPhone esta en modo oscuro del sistema.
+        let lightBg = UIColor(red: 0xFA/255.0, green: 0xFA/255.0, blue: 0xF7/255.0, alpha: 1.0)
+        DispatchQueue.main.async {
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                scene.windows.forEach { w in
+                    w.backgroundColor = lightBg
+                    w.rootViewController?.view.backgroundColor = lightBg
+                    // Forzar la apariencia clara para que .systemBackground = blanco
+                    if #available(iOS 13.0, *) {
+                        w.overrideUserInterfaceStyle = .light
+                    }
+                }
+            }
+            self.window?.backgroundColor = lightBg
+            self.window?.rootViewController?.view.backgroundColor = lightBg
+        }
+
         Messaging.messaging().delegate = self
 
         // UNUserNotificationCenter delegate (CRITICO: necesario para foreground delivery
