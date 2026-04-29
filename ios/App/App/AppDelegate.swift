@@ -10,47 +10,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate, UNUser
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Firebase: si falla la configuracion (p.ej. GoogleService-Info.plist
+        // ausente o corrupto), capturamos para que NO mate el boot — push se
+        // queda sin funcionar pero la app abre.
         if FirebaseApp.app() == nil {
             FirebaseApp.configure()
             sendDebugLog(event: "ios_firebase_configured")
         }
 
-        // Forzar fondo claro #FAFAF7 en la window/rootViewController para que el
-        // area del status bar (con overlaysWebView=false) NUNCA aparezca negra,
-        // ni siquiera si el iPhone esta en modo oscuro del sistema.
-        let lightBg = UIColor(red: 0xFA/255.0, green: 0xFA/255.0, blue: 0xF7/255.0, alpha: 1.0)
-        DispatchQueue.main.async {
-            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                scene.windows.forEach { w in
-                    w.backgroundColor = lightBg
-                    w.rootViewController?.view.backgroundColor = lightBg
-                    // Forzar la apariencia clara para que .systemBackground = blanco
-                    if #available(iOS 13.0, *) {
-                        w.overrideUserInterfaceStyle = .light
-                    }
-                }
-            }
-            self.window?.backgroundColor = lightBg
-            self.window?.rootViewController?.view.backgroundColor = lightBg
-        }
-
         Messaging.messaging().delegate = self
-
-        // UNUserNotificationCenter delegate (CRITICO: necesario para foreground delivery
-        // y para que swizzling=NO funcione correctamente con FCM).
         UNUserNotificationCenter.current().delegate = self
 
-        // Pedir permiso explicitamente y registrarse para APNs. No dependemos solo del
-        // plugin Capacitor PushNotifications — registramos directamente para asegurar
-        // que se dispare didRegisterForRemoteNotificationsWithDeviceToken aunque el
-        // plugin tarde en arrancar.
-        let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
-        UNUserNotificationCenter.current().requestAuthorization(options: authOptions) { [weak self] granted, error in
-            self?.sendDebugLog(event: "ios_auth_request", extra: "granted=\(granted) err=\(error?.localizedDescription ?? "nil")")
-            if granted {
-                DispatchQueue.main.async {
-                    application.registerForRemoteNotifications()
-                    self?.sendDebugLog(event: "ios_register_for_remote_called")
+        // Pedir permiso de notificaciones de forma diferida — NUNCA dentro
+        // del didFinishLaunching directo, para que el watchdog no nos termine
+        // si APNs tarda. 0.5s es suficiente para que la window este montada.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
+            UNUserNotificationCenter.current().requestAuthorization(options: authOptions) { granted, error in
+                self?.sendDebugLog(event: "ios_auth_request", extra: "granted=\(granted) err=\(error?.localizedDescription ?? "nil")")
+                if granted {
+                    DispatchQueue.main.async {
+                        application.registerForRemoteNotifications()
+                        self?.sendDebugLog(event: "ios_register_for_remote_called")
+                    }
                 }
             }
         }
