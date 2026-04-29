@@ -5,12 +5,13 @@ Fecha: 29 abril 2026
 > **Update 29 abr (tarde) — Mapa gris en "Órdenes en espera"**
 >
 > Si la app abre OK pero el mapa sale en gris/blanco vacío, casi seguro
-> falta `VITE_GOOGLE_MAPS_API_KEY` en el `.env` de la Mac. Comando rápido:
+> falta `VITE_GOOGLE_MAPS_API_KEY` en el `.env` de la Mac. Verifica que el
+> `.env` contiene esa línea (la key correcta está más abajo en este mismo
+> doc, sección "Verificar `.env`") y rebuild:
 >
 > ```bash
 > cd ~/Desktop/pido-panel-socio
-> grep -q VITE_GOOGLE_MAPS_API_KEY .env || \
->   echo 'VITE_GOOGLE_MAPS_API_KEY=AIzaSyBS19f7Y7iNSPYP3mdfdETEymVX2jCJkc0' >> .env
+> grep VITE_GOOGLE_MAPS_API_KEY .env  # debe imprimir la línea con la key real
 > npm run build && npx cap sync ios
 > # Luego Xcode → Product → Archive → upload TestFlight
 > ```
