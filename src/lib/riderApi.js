@@ -14,13 +14,21 @@ async function dbgLog(event, details) {
   } catch (_) {}
 }
 
-async function call(fn, body) {
+// Timeout por defecto de 12s para acciones del rider. iOS con red lenta puede
+// dejar fetch colgado indefinidamente; con AbortController garantizamos
+// feedback al usuario en tiempo razonable.
+const DEFAULT_TIMEOUT_MS = 12000
+
+async function call(fn, body, opts = {}) {
   const { data: { session } } = await supabase.auth.getSession()
   const token = session?.access_token
   if (!token) {
     dbgLog(fn + ':no_token', { hasSession: !!session })
     throw new Error('no_session')
   }
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
+  const tid = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null
   try {
     const r = await fetch(`${FUNCTIONS_URL}/${fn}`, {
       method: 'POST',
@@ -30,6 +38,7 @@ async function call(fn, body) {
         apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
       },
       body: JSON.stringify(body || {}),
+      signal: ctrl?.signal,
     })
     let json = null
     try { json = await r.json() } catch (_) {}
@@ -43,8 +52,17 @@ async function call(fn, body) {
     dbgLog(fn + ':ok', { ...body })
     return json
   } catch (e) {
+    const aborted = e?.name === 'AbortError'
+    if (aborted) {
+      dbgLog(fn + ':timeout', { ms: timeoutMs })
+      const err = new Error('timeout')
+      err.code = 'timeout'
+      throw err
+    }
     if (!e?.status) dbgLog(fn + ':network_error', { msg: e?.message })
     throw e
+  } finally {
+    if (tid) clearTimeout(tid)
   }
 }
 

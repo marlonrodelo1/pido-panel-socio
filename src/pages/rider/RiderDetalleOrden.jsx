@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { colors, type, ds } from '../../lib/uiStyles'
 import { supabase } from '../../lib/supabase'
 import { useRider } from '../../context/RiderContext'
+import Spinner from '../../components/Spinner'
 
 function fmtFecha(iso) {
   if (!iso) return '—'
@@ -61,13 +62,25 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
     ? { label: 'Recolectado', bg: colors.statePrepSoft, color: colors.statePrep }
     : { label: 'Iniciada', bg: colors.statePrepSoft, color: colors.statePrep }
 
+  // Toast para feedback no bloqueante (errores red, timeouts, etc).
+  const [toast, setToast] = useState(null)
+  const showToast = (msg, kind = 'error') => {
+    setToast({ msg, kind })
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  const errMsg = (e) => {
+    if (e?.code === 'timeout') return 'Conexion lenta. Revisa tu internet y reintenta.'
+    return e?.message || 'No se pudo completar la accion.'
+  }
+
   const handlePickup = async () => {
     if (busy) return
     setBusy(true)
     try {
       await pickup(asig.id)
     } catch (e) {
-      alert('Error: ' + (e?.message || 'desconocido'))
+      showToast(errMsg(e))
     } finally {
       setBusy(false)
     }
@@ -80,7 +93,8 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
       await deliver(asig.id, null)
       onBack?.()
     } catch (e) {
-      alert('Error: ' + (e?.message || 'desconocido'))
+      showToast(errMsg(e))
+      // No volvemos atras: deja al rider reintentar desde la misma pantalla.
     } finally {
       setBusy(false)
     }
@@ -89,7 +103,7 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
   const handleFailConfirm = async () => {
     const motivo = failMotivo.trim()
     if (!motivo) {
-      alert('Indica un motivo para la entrega fallida.')
+      showToast('Indica un motivo para la entrega fallida.', 'warn')
       return
     }
     if (busy) return
@@ -100,7 +114,7 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
       setFailMotivo('')
       onBack?.()
     } catch (e) {
-      alert('Error: ' + (e?.message || 'desconocido'))
+      showToast(errMsg(e))
     } finally {
       setBusy(false)
     }
@@ -220,32 +234,81 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
       {/* CTA fijo abajo */}
       <div style={{ position: 'fixed', bottom: 'calc(70px + env(safe-area-inset-bottom))', left: 0, right: 0, padding: '0 14px', zIndex: 5 }}>
         {!recogido ? (
-          <button onClick={handlePickup} disabled={busy} style={{
-            ...ds.primaryBtn, width: '100%', height: 48, fontSize: type.base,
-            boxShadow: colors.shadowMd,
-          }}>
-            {busy ? 'Procesando…' : 'Marcar como recogido →'}
+          <button
+            type="button"
+            onClick={handlePickup}
+            onTouchEnd={(e) => { if (!busy) { e.preventDefault(); handlePickup() } }}
+            disabled={busy}
+            style={{
+              ...ds.primaryBtn, width: '100%', height: 56, fontSize: type.base, fontWeight: 700,
+              boxShadow: colors.shadowMd,
+              opacity: busy ? 0.9 : 1,
+              cursor: busy ? 'wait' : 'pointer',
+              touchAction: 'manipulation',
+              WebkitTapHighlightColor: 'transparent',
+              userSelect: 'none', WebkitUserSelect: 'none',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            }}
+          >
+            {busy ? <Spinner size={18} stroke={2.2} color="#fff" /> : null}
+            {busy ? 'Procesando...' : 'Marcar como recogido →'}
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={() => setShowFailModal(true)} disabled={busy} style={{
-              flex: 1, height: 48, fontSize: type.base, fontWeight: 700,
-              background: '#fff', color: colors.danger,
-              border: `1.5px solid ${colors.danger}`, borderRadius: 12,
-              cursor: 'pointer', boxShadow: colors.shadowMd,
-            }}>
+            <button
+              type="button"
+              onClick={() => !busy && setShowFailModal(true)}
+              onTouchEnd={(e) => { if (!busy) { e.preventDefault(); setShowFailModal(true) } }}
+              disabled={busy}
+              style={{
+                flex: 1, height: 56, fontSize: type.base, fontWeight: 700,
+                background: '#fff', color: colors.danger,
+                border: `1.5px solid ${colors.danger}`, borderRadius: 12,
+                cursor: busy ? 'not-allowed' : 'pointer', boxShadow: colors.shadowMd,
+                opacity: busy ? 0.6 : 1,
+                touchAction: 'manipulation',
+                WebkitTapHighlightColor: 'transparent',
+                userSelect: 'none', WebkitUserSelect: 'none',
+              }}
+            >
               Entrega fallida
             </button>
-            <button onClick={handleComplete} disabled={busy} style={{
-              flex: 1, height: 48, fontSize: type.base, fontWeight: 700,
-              background: colors.primary, color: '#fff', border: 'none',
-              borderRadius: 12, cursor: 'pointer', boxShadow: colors.shadowMd,
-            }}>
-              {busy ? 'Procesando…' : 'Entrega completada'}
+            <button
+              type="button"
+              onClick={handleComplete}
+              onTouchEnd={(e) => { if (!busy) { e.preventDefault(); handleComplete() } }}
+              disabled={busy}
+              style={{
+                flex: 1, height: 56, fontSize: type.base, fontWeight: 700,
+                background: colors.primary, color: '#fff', border: 'none',
+                borderRadius: 12, cursor: busy ? 'wait' : 'pointer', boxShadow: colors.shadowMd,
+                opacity: busy ? 0.9 : 1,
+                touchAction: 'manipulation',
+                WebkitTapHighlightColor: 'transparent',
+                userSelect: 'none', WebkitUserSelect: 'none',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              {busy ? <Spinner size={18} stroke={2.2} color="#fff" /> : null}
+              {busy ? 'Procesando...' : 'Entrega completada'}
             </button>
           </div>
         )}
       </div>
+
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 'calc(140px + env(safe-area-inset-bottom))',
+          left: 14, right: 14, zIndex: 60,
+          background: toast.kind === 'warn' ? colors.statePrep : colors.danger,
+          color: '#fff', padding: '12px 16px', borderRadius: 12,
+          fontSize: type.sm, fontWeight: 600, textAlign: 'center',
+          boxShadow: colors.shadowLg,
+        }}>
+          {toast.msg}
+        </div>
+      )}
 
       {showFailModal && (
         <div
@@ -303,16 +366,34 @@ export default function RiderDetalleOrden({ asignacionId, onBack }) {
             />
 
             <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowFailModal(false)} disabled={busy} style={{
-                ...ds.secondaryBtn, flex: 1, height: 44,
-              }}>Cancelar</button>
-              <button onClick={handleFailConfirm} disabled={busy || !failMotivo.trim()} style={{
-                flex: 1, height: 44, fontSize: type.sm, fontWeight: 700,
-                background: colors.danger, color: '#fff', border: 'none',
-                borderRadius: 10, cursor: busy || !failMotivo.trim() ? 'not-allowed' : 'pointer',
-                opacity: busy || !failMotivo.trim() ? 0.6 : 1,
-              }}>
-                {busy ? 'Enviando…' : 'Confirmar fallo'}
+              <button
+                type="button"
+                onClick={() => !busy && setShowFailModal(false)}
+                onTouchEnd={(e) => { if (!busy) { e.preventDefault(); setShowFailModal(false) } }}
+                disabled={busy}
+                style={{
+                  ...ds.secondaryBtn, flex: 1, height: 48,
+                  touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent',
+                }}
+              >Cancelar</button>
+              <button
+                type="button"
+                onClick={handleFailConfirm}
+                onTouchEnd={(e) => { if (!busy && failMotivo.trim()) { e.preventDefault(); handleFailConfirm() } }}
+                disabled={busy || !failMotivo.trim()}
+                style={{
+                  flex: 1, height: 48, fontSize: type.sm, fontWeight: 700,
+                  background: colors.danger, color: '#fff', border: 'none',
+                  borderRadius: 10, cursor: busy || !failMotivo.trim() ? 'not-allowed' : 'pointer',
+                  opacity: busy || !failMotivo.trim() ? 0.6 : 1,
+                  touchAction: 'manipulation',
+                  WebkitTapHighlightColor: 'transparent',
+                  userSelect: 'none', WebkitUserSelect: 'none',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}
+              >
+                {busy ? <Spinner size={16} stroke={2} color="#fff" /> : null}
+                {busy ? 'Enviando...' : 'Confirmar fallo'}
               </button>
             </div>
           </div>

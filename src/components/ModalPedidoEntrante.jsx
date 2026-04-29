@@ -4,12 +4,16 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { colors, type, ds } from '../lib/uiStyles'
+import Spinner from './Spinner'
 
 const COUNTDOWN_S = 180 // 3 minutos para aceptar
 
 export default function ModalPedidoEntrante({ asignacion, onAccept, onReject, onClose }) {
   const [secs, setSecs] = useState(COUNTDOWN_S)
-  const [busy, setBusy] = useState(false)
+  // 'idle' | 'accepting' | 'rejecting' — granular para distinguir cual
+  // boton mostrar el spinner. Antes era boolean busy.
+  const [busy, setBusy] = useState('idle')
+  const [errMsg, setErrMsg] = useState(null)
   const audioRef = useRef(null)
 
   useEffect(() => {
@@ -69,15 +73,38 @@ export default function ModalPedidoEntrante({ asignacion, onAccept, onReject, on
   const distKm = (asignacion.distancia_metros / 1000).toFixed(1)
 
   const handleAccept = async () => {
-    if (busy) return
-    setBusy(true)
-    try { await onAccept?.(asignacion.id) } finally { setBusy(false) }
+    if (busy !== 'idle') return
+    // Silenciar audio inmediatamente al pulsar para que no quede sonando
+    // mientras se procesa la red.
+    try { audioRef.current?.pause() } catch (_) {}
+    audioRef.current = null
+    setErrMsg(null)
+    setBusy('accepting')
+    try {
+      await onAccept?.(asignacion.id)
+      // No reseteamos busy en exito: el modal se desmontara desde el padre.
+    } catch (e) {
+      const msg = e?.code === 'timeout'
+        ? 'Conexion lenta. Toca de nuevo si no se acepta.'
+        : 'No se pudo aceptar. Reintenta.'
+      setErrMsg(msg)
+      setBusy('idle')
+    }
   }
 
   const handleReject = async () => {
-    if (busy) return
-    setBusy(true)
-    try { await onReject?.(asignacion.id, 'manual') } finally { setBusy(false) }
+    if (busy !== 'idle') return
+    try { audioRef.current?.pause() } catch (_) {}
+    audioRef.current = null
+    setErrMsg(null)
+    setBusy('rejecting')
+    try {
+      await onReject?.(asignacion.id, 'manual')
+    } catch (e) {
+      const msg = e?.code === 'timeout' ? 'Conexion lenta. Reintenta.' : 'No se pudo rechazar.'
+      setErrMsg(msg)
+      setBusy('idle')
+    }
   }
 
   return (
@@ -131,16 +158,65 @@ export default function ModalPedidoEntrante({ asignacion, onAccept, onReject, on
           </div>
         </div>
 
+        {errMsg && (
+          <div style={{
+            background: colors.dangerSoft, border: `1px solid ${colors.danger}`,
+            color: colors.danger, padding: '8px 12px', borderRadius: 10,
+            fontSize: type.xs, fontWeight: 600, marginBottom: 10, textAlign: 'center',
+          }}>
+            {errMsg}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={handleReject} disabled={busy} style={{
-            ...ds.dangerBtn, flex: 1, height: 48, fontSize: type.base,
-          }}>
-            Rechazar
+          <button
+            type="button"
+            onClick={handleReject}
+            onTouchEnd={(e) => {
+              // Garantiza respuesta inmediata en iOS WKWebView: el touchEnd
+              // dispara antes que el click. Prevenimos default para evitar
+              // doble disparo o tap delay.
+              if (busy !== 'idle') return
+              e.preventDefault()
+              handleReject()
+            }}
+            disabled={busy !== 'idle'}
+            style={{
+              ...ds.dangerBtn, flex: 1, height: 56, fontSize: type.base,
+              opacity: busy === 'rejecting' ? 0.85 : busy === 'accepting' ? 0.5 : 1,
+              cursor: busy !== 'idle' ? 'wait' : 'pointer',
+              touchAction: 'manipulation',
+              WebkitTapHighlightColor: 'transparent',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            {busy === 'rejecting' ? <Spinner size={16} stroke={2} /> : null}
+            {busy === 'rejecting' ? 'Rechazando...' : 'Rechazar'}
           </button>
-          <button onClick={handleAccept} disabled={busy} style={{
-            ...ds.primaryBtn, flex: 2, height: 48, fontSize: type.base,
-          }}>
-            Aceptar pedido
+          <button
+            type="button"
+            onClick={handleAccept}
+            onTouchEnd={(e) => {
+              if (busy !== 'idle') return
+              e.preventDefault()
+              handleAccept()
+            }}
+            disabled={busy !== 'idle'}
+            style={{
+              ...ds.primaryBtn, flex: 2, height: 56, fontSize: type.base, fontWeight: 700,
+              opacity: busy === 'accepting' ? 0.9 : busy === 'rejecting' ? 0.5 : 1,
+              cursor: busy !== 'idle' ? 'wait' : 'pointer',
+              touchAction: 'manipulation',
+              WebkitTapHighlightColor: 'transparent',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            }}
+          >
+            {busy === 'accepting' ? <Spinner size={18} stroke={2.2} color="#fff" /> : null}
+            {busy === 'accepting' ? 'Aceptando...' : 'Aceptar pedido'}
           </button>
         </div>
       </div>
