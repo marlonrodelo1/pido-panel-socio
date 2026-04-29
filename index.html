@@ -6,60 +6,15 @@
     <link rel="apple-touch-icon" href="/icon.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Pidoo go" />
     <meta name="theme-color" content="#FAFAF7" />
     <style>
       html, body { background-color: #FAFAF7 !important; margin: 0; padding: 0; font-family: -apple-system, system-ui, sans-serif; color: #111; }
-      #boot-fallback { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; gap: 12px; }
-      #boot-fallback .logo { width: 96px; height: 96px; border-radius: 22px; background: #FF6B2C; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 22px; box-shadow: 0 8px 24px rgba(255,107,44,0.30); }
-      #boot-fallback .msg { font-size: 14px; color: #555; max-width: 320px; }
-      #boot-fallback .err { font-size: 11px; color: #c00; max-width: 340px; word-break: break-word; white-space: pre-wrap; text-align: left; background: #fff3f3; border: 1px solid #fcc; border-radius: 8px; padding: 10px; max-height: 50vh; overflow: auto; }
-      #boot-fallback .ver { font-size: 10px; color: #999; }
     </style>
-    <meta name="description" content="Pidoo go — app del rider/socio Pidoo. Gestiona tu marketplace, tus restaurantes y tus ganancias." />
-    <title>Pidoo go</title>
+    <meta name="description" content="Pidoo Socio — gestiona tu marketplace, tus restaurantes y tus ganancias." />
+    <title>Pidoo Socio</title>
   </head>
   <body>
-    <div id="boot-fallback">
-      <div class="logo">P</div>
-      <div class="msg" id="boot-msg">Iniciando Pidoo go…</div>
-      <div class="err" id="boot-err" style="display:none"></div>
-      <div class="ver">build 2026-04-29</div>
-    </div>
     <div id="root"></div>
-    <script>
-      // Captura cualquier error sincronico antes/durante la carga del bundle
-      // y lo muestra en la pantalla en vez de quedarse en blanco.
-      (function () {
-        var errEl = document.getElementById('boot-err');
-        var msgEl = document.getElementById('boot-msg');
-        function show(label, detail) {
-          if (!errEl) return;
-          errEl.style.display = 'block';
-          errEl.textContent = label + ':\n' + (detail || '(sin detalle)');
-          if (msgEl) msgEl.textContent = 'Error al iniciar';
-        }
-        window.addEventListener('error', function (ev) {
-          var d = (ev && (ev.error && (ev.error.stack || ev.error.message))) || (ev && ev.message) || '';
-          var src = (ev && ev.filename) ? ('\n@ ' + ev.filename + ':' + (ev.lineno||'?')) : '';
-          show('window.error', d + src);
-        });
-        window.addEventListener('unhandledrejection', function (ev) {
-          var r = ev && ev.reason;
-          var d = (r && (r.stack || r.message)) || (typeof r === 'string' ? r : JSON.stringify(r));
-          show('unhandledrejection', d);
-        });
-        // Si tras 8s no se ha montado React, avisa
-        setTimeout(function () {
-          var root = document.getElementById('root');
-          if (root && !root.firstChild && msgEl) {
-            msgEl.textContent = 'La app no respondió en 8s. Revisa la conexión.';
-          }
-        }, 8000);
-      })();
-    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

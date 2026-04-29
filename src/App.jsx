@@ -1,9 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Capacitor } from '@capacitor/core'
-import { Browser } from '@capacitor/browser'
-import { Share } from '@capacitor/share'
 import { SocioProvider, useSocio } from './context/SocioContext'
-import { RiderProvider, useRider } from './context/RiderContext'
 import Login from './pages/Login'
 import Landing from './pages/Landing'
 import Onboarding from './pages/Onboarding'
@@ -17,39 +13,8 @@ import EliminarCuenta from './pages/EliminarCuenta'
 import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
 import BottomNav from './components/BottomNav'
-import HeaderRider from './components/HeaderRider'
-import BottomNavRider from './components/BottomNavRider'
-import DrawerRider from './components/DrawerRider'
-import ModalPedidoEntrante from './components/ModalPedidoEntrante'
-import RiderPedidos from './pages/rider/RiderPedidos'
-import RiderEsperando from './pages/rider/RiderEsperando'
-import RiderChat from './pages/rider/RiderChat'
-import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
-import RiderCompletadas from './pages/rider/RiderCompletadas'
 import SeguirPedido from './pages/SeguirPedido'
 import { colors } from './lib/uiStyles'
-
-const URL_COMUNIDAD = 'https://www.skool.com/pidoo-comunity-5303/about'
-const URL_PANEL_ADMIN_WEB = 'https://socio.pidoo.es'
-const URL_SOPORTE_TELEGRAM = 'https://t.me/Royrogo_bot'
-const URL_MARKETPLACE_BASE = 'https://pidoo.es/s/'
-
-function marketplaceConfigCompleta(socio) {
-  if (!socio) return false
-  // Minimo para compartir: slug (URL) + nombre comercial + logo.
-  // La descripcion es opcional aunque recomendable.
-  const need = [socio.slug, socio.nombre_comercial, socio.logo_url]
-  return need.every(v => typeof v === 'string' && v.trim().length > 0)
-}
-
-const RIDER_TITLES = {
-  'rider-pedidos':     'Pedidos',
-  'rider-esperando':   'Órdenes en espera',
-  'rider-chat':        'Soporte',
-  'rider-completadas': 'Órdenes completadas',
-  'rider-detalle':     'Detalles de orden',
-  'rider-eliminar-cuenta': 'Eliminar cuenta',
-}
 
 function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante }) {
   // Compat: 'facturas' redirige a 'restaurantes' (la pestaña fue eliminada)
@@ -84,157 +49,8 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
   )
 }
 
-function ShellRider() {
-  const { socio } = useSocio()
-  const [section, setSection] = useState('rider-pedidos')
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [detalleId, setDetalleId] = useState(null)
-  const [marketplaceModal, setMarketplaceModal] = useState(null)
-  // (El permiso de ubicacion lo pide SocioContext al iniciar sesion, no aqui.)
-
-  const handleNavigate = async (id) => {
-    if (id === 'comunidad') {
-      try { await Browser.open({ url: URL_COMUNIDAD }) } catch {}
-      setDrawerOpen(false)
-      return
-    }
-    if (id === 'panel-admin-web') {
-      try { await Browser.open({ url: URL_PANEL_ADMIN_WEB }) } catch {}
-      setDrawerOpen(false)
-      return
-    }
-    if (id === 'soporte-telegram') {
-      try { await Browser.open({ url: URL_SOPORTE_TELEGRAM }) } catch {}
-      setDrawerOpen(false)
-      return
-    }
-    if (id === 'eliminar-cuenta') {
-      setDetalleId(null)
-      setSection('rider-eliminar-cuenta')
-      setDrawerOpen(false)
-      return
-    }
-    if (id === 'compartir-marketplace') {
-      setDrawerOpen(false)
-      if (!marketplaceConfigCompleta(socio)) {
-        setMarketplaceModal({ tipo: 'incompleto' })
-        return
-      }
-      const url = URL_MARKETPLACE_BASE + socio.slug
-      const nombre = socio.nombre_comercial || 'mi marketplace'
-      try {
-        const can = await Share.canShare()
-        if (can?.value) {
-          await Share.share({
-            title: nombre + ' · Pidoo',
-            text: 'Pide en ' + nombre + ' a través de Pidoo:',
-            url,
-            dialogTitle: 'Compartir mi marketplace',
-          })
-          return
-        }
-      } catch (_) {}
-      try { await Browser.open({ url }) } catch {}
-      return
-    }
-    setDrawerOpen(false)
-    setDetalleId(null)
-    setSection(id)
-  }
-
-  const openDetalle = (asignacionId) => {
-    setDetalleId(asignacionId)
-    setSection('rider-detalle')
-  }
-
-  const closeDetalle = () => {
-    setDetalleId(null)
-    setSection('rider-pedidos')
-  }
-
-  const page = (() => {
-    if (section === 'rider-detalle' && detalleId) {
-      return <RiderDetalleOrden asignacionId={detalleId} onBack={closeDetalle} />
-    }
-    switch (section) {
-      case 'rider-pedidos':     return <RiderPedidos onOpenDetalle={openDetalle} />
-      case 'rider-esperando':   return <RiderEsperando onGoPedidos={() => setSection('rider-pedidos')} />
-      case 'rider-chat':        return <RiderChat />
-      case 'rider-completadas': return <RiderCompletadas onBack={() => setSection('rider-pedidos')} />
-      case 'rider-eliminar-cuenta': return <EliminarCuenta onBack={() => setSection('rider-pedidos')} />
-      default:                  return <RiderPedidos onOpenDetalle={openDetalle} />
-    }
-  })()
-
-  return (
-    <div className="app-shell" style={{ background: colors.bg }}>
-      <div className="app-shell-header">
-        <HeaderRider title={RIDER_TITLES[section] || ''} onMenu={() => setDrawerOpen(true)} />
-      </div>
-      <main className="app-shell-content">{page}</main>
-      <div className="app-shell-bottom">
-        <BottomNavRider section={section} setSection={(s) => { setDetalleId(null); setSection(s) }} />
-      </div>
-      <DrawerRider open={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleNavigate} />
-      {marketplaceModal?.tipo === 'incompleto' && (
-        <MarketplaceIncompletoModal
-          onAbrirConfig={async () => {
-            try { await Browser.open({ url: URL_PANEL_ADMIN_WEB }) } catch {}
-            setMarketplaceModal(null)
-          }}
-          onCerrar={() => setMarketplaceModal(null)}
-        />
-      )}
-    </div>
-  )
-}
-
-function MarketplaceIncompletoModal({ onAbrirConfig, onCerrar }) {
-  return (
-    <div onClick={onCerrar} style={{
-      position: 'fixed', inset: 0, background: 'rgba(15,15,15,0.55)', zIndex: 60,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-    }}>
-      <div onClick={(e) => e.stopPropagation()} style={{
-        background: '#FFFFFF', borderRadius: 18, maxWidth: 380, width: '100%',
-        padding: 24, boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
-      }}>
-        <div style={{
-          width: 56, height: 56, borderRadius: 28, background: colors.primarySoft,
-          color: colors.primary, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          marginBottom: 14,
-        }}>
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-        </div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: colors.text, marginBottom: 6 }}>
-          Termina de configurar tu marketplace
-        </div>
-        <div style={{ fontSize: 14, color: colors.textMute, lineHeight: 1.45, marginBottom: 18 }}>
-          Para compartir tu sitio antes tienes que completar el logo, banner, slug, nombre comercial y descripción.
-          Hazlo desde el panel admin en <strong>socio.pidoo.es</strong>. Una vez listo, podrás compartirlo desde aquí.
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onCerrar} style={{
-            flex: 1, height: 46, background: '#F5F5F5', color: colors.text,
-            border: '1px solid ' + colors.border, borderRadius: 10, fontWeight: 700,
-            fontSize: 14, cursor: 'pointer',
-          }}>Cancelar</button>
-          <button onClick={onAbrirConfig} style={{
-            flex: 1, height: 46, background: colors.primary, color: '#fff',
-            border: 'none', borderRadius: 10, fontWeight: 800,
-            fontSize: 14, cursor: 'pointer',
-          }}>Abrir configuración</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function Shell() {
   const { session, socio, loading } = useSocio()
-  const { pendingNew, accept, reject, dismissPending } = useRider()
   const [adminSection, setAdminSection] = useState('dashboard')
   const [detalleEstId, setDetalleEstId] = useState(null)
 
@@ -263,16 +79,10 @@ function Shell() {
     window.addEventListener('pidoo:goto', handler)
     return () => window.removeEventListener('pidoo:goto', handler)
   }, [])
-  // En APK/IPA nativa siempre arrancamos en Login (la landing es solo
-  // para la web socio.pidoo.es).
-  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform?.()
+
   const [vistaPublica, setVistaPublica] = useState(
-    isNative ? 'login'
-      : (typeof window !== 'undefined' && window.location.pathname.startsWith('/login') ? 'login' : 'landing')
+    typeof window !== 'undefined' && window.location.pathname.startsWith('/login') ? 'login' : 'landing'
   )
-  // En APK/IPA siempre modo rider (sin acceso al admin desde la app).
-  // En web (socio.pidoo.es) siempre modo admin.
-  const mode = isNative ? 'rider' : 'admin'
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -302,30 +112,12 @@ function Shell() {
     )
   }
   if (!session) {
-    // En APK/IPA siempre Login directo (Landing es solo para socio.pidoo.es web).
-    if (isNative) return <Login onBack={null} />
     if (vistaPublica === 'login') return <Login onBack={irALanding} />
     return <Landing onLogin={irALogin} />
   }
   if (!socio) return <Onboarding />
 
-  // Modal de pedido entrante a nivel global (visible en cualquier modo)
-  const modalEntrante = pendingNew ? (
-    <ModalPedidoEntrante
-      asignacion={pendingNew}
-      onAccept={async (id) => { await accept(id) }}
-      onReject={async (id, motivo) => { await reject(id, motivo) }}
-      onClose={dismissPending}
-    />
-  ) : null
-
-  if (mode === 'rider') {
-    return <>
-      <ShellRider />
-      {modalEntrante}
-    </>
-  }
-  return <>
+  return (
     <ShellAdmin
       section={adminSection}
       setSection={setAdminSection}
@@ -333,8 +125,7 @@ function Shell() {
       openRestaurante={openRestaurante}
       closeRestaurante={closeRestaurante}
     />
-    {modalEntrante}
-  </>
+  )
 }
 
 export default function App() {
@@ -347,9 +138,7 @@ export default function App() {
   }
   return (
     <SocioProvider>
-      <RiderProvider>
-        <Shell />
-      </RiderProvider>
+      <Shell />
     </SocioProvider>
   )
 }

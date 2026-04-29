@@ -1,8 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { registerSocioPush, unregisterSocioPush } from '../lib/webPush'
-import { registerSocioNativePush, unregisterSocioNativePush } from '../lib/pushNative'
-import { ensureLocationPermission } from '../lib/riderGeo'
 
 const SocioContext = createContext(null)
 
@@ -19,7 +17,6 @@ export function SocioProvider({ children }) {
 
   const realtimeChannelRef = useRef(null)
   const pushRegisteredRef = useRef(false)
-  const locPermRequestedRef = useRef(false)
 
   const fetchSocio = useCallback(async (uid) => {
     if (!uid) { setSocio(null); return }
@@ -73,7 +70,7 @@ export function SocioProvider({ children }) {
     }
   }, [fetchSocio])
 
-  // Registrar push una vez por sesión (web VAPID + nativo FCM/APNs)
+  // Registrar push una vez por sesión (web VAPID)
   async function maybeRegisterPush(uid) {
     if (pushRegisteredRef.current) return
     pushRegisteredRef.current = true
@@ -85,29 +82,11 @@ export function SocioProvider({ children }) {
         console.warn('[SocioContext] web push no registrado:', res.reason)
       }
     }
-    try { await registerSocioNativePush(uid) } catch (e) { console.warn('[SocioContext] native push fail', e?.message) }
   }
 
   // Registrar push al tener user+socio (evita doble SIGNED_IN races)
   useEffect(() => {
     if (user?.id) maybeRegisterPush(user.id)
-  }, [user?.id])
-
-  // Pedir permiso de localizacion al iniciar sesion (una vez por sesion).
-  // No bloquea: si rechaza, el rider recibira el toast de aviso al pulsar
-  // "En linea". Pedirlo aqui evita que el primer toggle online se quede
-  // congelado esperando el dialogo del sistema.
-  useEffect(() => {
-    if (!user?.id || locPermRequestedRef.current) return
-    locPermRequestedRef.current = true
-    ;(async () => {
-      try {
-        const granted = await ensureLocationPermission()
-        if (!granted) {
-          setPushToast({ type: 'info', message: 'Sin permiso de ubicacion no podras recibir pedidos cuando te conectes.' })
-        }
-      } catch (_) {}
-    })()
   }, [user?.id])
 
   // Realtime: nuevos pedidos del socio
@@ -168,7 +147,6 @@ export function SocioProvider({ children }) {
 
   const logout = async () => {
     try { if (user?.id) await unregisterSocioPush(user.id) } catch (_) {}
-    try { await unregisterSocioNativePush() } catch (_) {}
     pushRegisteredRef.current = false
     await supabase.auth.signOut()
     setSocio(null)

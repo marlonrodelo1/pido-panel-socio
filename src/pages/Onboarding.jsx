@@ -2,14 +2,14 @@ import { useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
 import { colors, ds, type } from '../lib/uiStyles'
-import { Capacitor } from '@capacitor/core'
-import { Browser } from '@capacitor/browser'
 
 export default function Onboarding() {
   const { user, refreshSocio } = useSocio()
 
   const [nombre, setNombre] = useState(user?.user_metadata?.full_name || '')
   const [telefono, setTelefono] = useState('')
+  const [shipdayKey, setShipdayKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
   const [acepta, setAcepta] = useState(false)
   const [estado, setEstado] = useState('idle') // idle | creando | creado
   const [error, setError] = useState(null)
@@ -29,6 +29,7 @@ export default function Onboarding() {
     if (!puedeEnviar) return
     setError(null); setEstado('creando')
     try {
+      const shipdayTrim = shipdayKey.trim()
       const { error: insertErr } = await supabase.from('socios').upsert({
         user_id: user.id,
         nombre: nombre.trim(),
@@ -36,6 +37,7 @@ export default function Onboarding() {
         email: user.email,
         activo: true,
         marketplace_activo: false,
+        ...(shipdayTrim ? { shipday_api_key: shipdayTrim } : {}),
       }, { onConflict: 'user_id' })
       if (insertErr) throw insertErr
 
@@ -56,20 +58,11 @@ export default function Onboarding() {
   }
 
   const irAMarketplace = () => {
-    if (Capacitor.isNativePlatform()) {
-      try { Browser.open({ url: 'https://socio.pidoo.es' }) } catch (_) {}
-    } else {
-      try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'marketplace' })) } catch (_) {}
-    }
-  }
-
-  const empezarRepartir = () => {
-    try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'rider' })) } catch (_) {}
+    try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'marketplace' })) } catch (_) {}
   }
 
   // Pantalla de éxito
   if (estado === 'creado') {
-    const native = Capacitor.isNativePlatform()
     return (
       <div style={pageStyle}>
         <div style={{ maxWidth: 480, margin: '0 auto' }}>
@@ -93,20 +86,9 @@ export default function Onboarding() {
               <strong>socio.pidoo.es</strong>: logo, banner, descripción y redes sociales.
             </p>
 
-            {native ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <button onClick={irAMarketplace} style={{ ...ds.secondaryBtn, height: 44 }}>
-                  Abrir configuración (web)
-                </button>
-                <button onClick={empezarRepartir} style={{ ...ds.primaryBtn, height: 44 }}>
-                  Empezar a repartir
-                </button>
-              </div>
-            ) : (
-              <button onClick={irAMarketplace} style={{ ...ds.primaryBtn, height: 44, width: '100%' }}>
-                Configurar mi marketplace
-              </button>
-            )}
+            <button onClick={irAMarketplace} style={{ ...ds.primaryBtn, height: 44, width: '100%' }}>
+              Configurar mi marketplace
+            </button>
           </div>
         </div>
       </div>
@@ -173,6 +155,52 @@ export default function Onboarding() {
               inputMode="tel"
               autoComplete="tel"
             />
+          </div>
+
+          {/* Paso opcional — Conecta tu cuenta Shipday */}
+          <div style={{
+            marginBottom: 16,
+            padding: 14,
+            borderRadius: 10,
+            border: `1px dashed ${colors.border}`,
+            background: colors.surface2,
+          }}>
+            <div style={{
+              fontSize: type.xs, fontWeight: 800, color: colors.text,
+              marginBottom: 4,
+            }}>
+              Conecta tu cuenta Shipday <span style={{ color: colors.textMute, fontWeight: 600 }}>(opcional)</span>
+            </div>
+            <p style={{ fontSize: type.xs, color: colors.textMute, lineHeight: 1.5, marginBottom: 10, marginTop: 4 }}>
+              Si ya tienes cuenta en Shipday, pega aquí tu API Key y empezarás a recibir pedidos
+              al instante. Si aún no tienes, puedes saltarte este paso y configurarlo después en
+              Configuración.
+            </p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={shipdayKey}
+                onChange={e => setShipdayKey(e.target.value)}
+                placeholder="API Key Shipday (opcional)"
+                style={{ ...ds.input, flex: 1 }}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(s => !s)}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${colors.border}`,
+                  color: colors.textMute,
+                  fontSize: type.xs, fontWeight: 600,
+                  padding: '0 12px', borderRadius: 8, cursor: 'pointer',
+                  fontFamily: 'inherit', whiteSpace: 'nowrap',
+                }}
+              >
+                {showKey ? '🙈' : '👁'}
+              </button>
+            </div>
           </div>
 
           <label style={{

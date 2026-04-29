@@ -164,6 +164,8 @@ export default function Configuracion() {
         </div>
       </div>
 
+      <ShipdayIntegrationCard socio={socio} updateSocio={updateSocio} />
+
       <FacturacionPidooCard socio={socio} />
 
       {err && <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: type.xs }}>{err}</div>}
@@ -201,6 +203,221 @@ export default function Configuracion() {
           Eliminar cuenta
         </button>
       </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Integración con Shipday
+// ──────────────────────────────────────────────────────────────────────────────
+const SHIPDAY_WEBHOOK_URL = 'https://rmrbxrabngdmpgpfmjbo.supabase.co/functions/v1/shipday-webhook'
+const SHIPDAY_WEBHOOK_TOKEN = 'pidoo-shipday-2026'
+
+function ShipdayIntegrationCard({ socio, updateSocio }) {
+  const initialKey = socio?.shipday_api_key || ''
+  const [apiKey, setApiKey] = useState(initialKey)
+  const [showKey, setShowKey] = useState(false)
+  const [validateState, setValidateState] = useState('idle') // idle | loading | ok | invalid | unreachable
+  const [validateMsg, setValidateMsg] = useState(null)
+  const [carriersCount, setCarriersCount] = useState(null)
+  const [copied, setCopied] = useState(null)
+
+  useEffect(() => {
+    setApiKey(socio?.shipday_api_key || '')
+  }, [socio?.shipday_api_key])
+
+  const tieneKeyGuardada = !!(socio?.shipday_api_key && socio.shipday_api_key.trim())
+
+  const validarYGuardar = async () => {
+    const trimmed = (apiKey || '').trim()
+    if (!trimmed) return
+    if (trimmed === (socio?.shipday_api_key || '').trim()) return // sin cambios
+
+    setValidateState('loading')
+    setValidateMsg(null)
+    setCarriersCount(null)
+
+    try {
+      const { data, error } = await supabase.functions.invoke('validar-shipday-key', {
+        body: { api_key: trimmed },
+      })
+      if (error) throw error
+
+      if (data?.ok === true) {
+        setCarriersCount(data.carriers_count ?? 0)
+        setValidateState('ok')
+        setValidateMsg(`✓ API válida — ${data.carriers_count ?? 0} riders detectados`)
+        try {
+          await updateSocio({ shipday_api_key: trimmed })
+        } catch (_) {
+          /* updateSocio ya muestra error en su flujo, no rompemos UI */
+        }
+      } else if (data?.reason === 'invalid_key') {
+        setValidateState('invalid')
+        setValidateMsg('✗ API Key incorrecta')
+      } else if (data?.reason === 'unreachable') {
+        setValidateState('unreachable')
+        setValidateMsg('⚠ No se pudo contactar Shipday, reintentar')
+      } else {
+        setValidateState('unreachable')
+        setValidateMsg('⚠ Respuesta desconocida de Shipday, reintentar')
+      }
+    } catch (e) {
+      setValidateState('unreachable')
+      setValidateMsg('⚠ No se pudo contactar Shipday, reintentar')
+    }
+  }
+
+  const copiar = async (texto, key) => {
+    try {
+      await navigator.clipboard.writeText(texto)
+      setCopied(key)
+      setTimeout(() => setCopied(null), 1800)
+    } catch (_) {}
+  }
+
+  const colorMsg =
+    validateState === 'ok' ? colors.stateOk
+    : validateState === 'invalid' ? colors.danger
+    : validateState === 'unreachable' ? '#ea580c'
+    : colors.textDim
+
+  return (
+    <div style={{ ...ds.card, marginBottom: 16 }}>
+      <h2 style={ds.h2}>Integración con Shipday</h2>
+      <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5, marginBottom: 14 }}>
+        Para que Pidoo asigne tus pedidos delivery a tu cuenta Shipday, necesitamos tu API Key.
+        Encuéntrala en Shipday → Settings → Account → API Key.
+      </p>
+
+      {/* Banner estado */}
+      {!tieneKeyGuardada ? (
+        <div style={{
+          background: colors.dangerSoft,
+          color: colors.danger,
+          border: `1px solid ${colors.danger}`,
+          borderRadius: 8,
+          padding: '10px 12px',
+          fontSize: type.xs,
+          marginBottom: 14,
+          fontWeight: 600,
+        }}>
+          ⚠️ No recibirás pedidos hasta configurar tu integración con Shipday.
+        </div>
+      ) : (
+        <div style={{
+          background: colors.stateOkSoft,
+          color: colors.stateOk,
+          border: `1px solid ${colors.stateOk}`,
+          borderRadius: 8,
+          padding: '10px 12px',
+          fontSize: type.xs,
+          marginBottom: 14,
+          fontWeight: 600,
+        }}>
+          ✓ Listo para recibir pedidos.
+        </div>
+      )}
+
+      {/* Input API Key */}
+      <div style={{ marginBottom: 14 }}>
+        <label style={ds.label}>API Key Shipday</label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+          <input
+            type={showKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            onBlur={validarYGuardar}
+            placeholder="pega aquí tu API Key"
+            style={{ ...ds.input, flex: 1 }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button
+            type="button"
+            onClick={() => setShowKey(s => !s)}
+            style={{
+              ...ds.secondaryBtn,
+              padding: '0 14px',
+              fontSize: type.xs,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {showKey ? '🙈 Ocultar' : '👁 Mostrar'}
+          </button>
+        </div>
+
+        {/* Estado validación */}
+        {validateState === 'loading' && (
+          <div style={{ fontSize: type.xs, color: colors.textDim, marginTop: 8 }}>
+            Validando…
+          </div>
+        )}
+        {validateState !== 'idle' && validateState !== 'loading' && validateMsg && (
+          <div style={{
+            fontSize: type.xs,
+            color: colorMsg,
+            marginTop: 8,
+            fontWeight: 600,
+          }}>
+            {validateMsg}
+          </div>
+        )}
+      </div>
+
+      {/* Bloque Webhook (solo si key guardada) */}
+      {tieneKeyGuardada && (
+        <div style={{
+          marginTop: 18,
+          padding: 14,
+          borderRadius: 10,
+          border: `1px solid ${colors.border}`,
+          background: colors.surface2 || colors.bg,
+        }}>
+          <div style={{
+            fontSize: type.xxs,
+            fontWeight: 800,
+            color: colors.text,
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+            marginBottom: 10,
+          }}>
+            Webhook
+          </div>
+
+          <label style={ds.label}>URL del webhook</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', marginBottom: 10 }}>
+            <input
+              readOnly
+              value={SHIPDAY_WEBHOOK_URL}
+              style={{ ...ds.input, flex: 1, fontFamily: 'monospace', fontSize: type.xs }}
+              onFocus={e => e.target.select()}
+            />
+            <button
+              type="button"
+              onClick={() => copiar(SHIPDAY_WEBHOOK_URL, 'url')}
+              style={{ ...ds.secondaryBtn, padding: '0 14px', fontSize: type.xs, whiteSpace: 'nowrap' }}
+            >
+              {copied === 'url' ? '✓ Copiado' : 'Copiar'}
+            </button>
+          </div>
+
+          <p style={{ fontSize: type.xs, color: colors.textMute, lineHeight: 1.5, marginBottom: 10 }}>
+            Pega esta URL en Shipday → Settings → Integrations → Webhooks. Token de validación
+            (también opcional): <code style={{
+              background: colors.bg, padding: '1px 6px', borderRadius: 4, fontSize: type.xxs,
+            }}>{SHIPDAY_WEBHOOK_TOKEN}</code>.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => copiar(SHIPDAY_WEBHOOK_TOKEN, 'token')}
+            style={{ ...ds.secondaryBtn, fontSize: type.xs }}
+          >
+            {copied === 'token' ? '✓ Token copiado' : 'Copiar token'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
