@@ -63,153 +63,192 @@ export default function Configuracion() {
   }
 
   return (
-    <div>
+    <div style={{ maxWidth: 800 }}>
       <h1 style={ds.h1}>Configuración</h1>
-      <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4, marginBottom: 18 }}>
-        Datos de cuenta y opciones del marketplace.
+      <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4, marginBottom: 22 }}>
+        Datos personales, fiscales e integración Shipday.
       </p>
 
-      <div style={{ ...ds.card, marginBottom: 16 }}>
-        <h2 style={ds.h2}>Identidad de tienda</h2>
-        <div style={{ fontSize: type.sm, color: colors.textDim, marginBottom: 10 }}>
-          Slug: <strong style={{ color: colors.text }}>{socio?.slug}</strong> (no se puede cambiar desde aquí).
-        </div>
-        <div style={{ fontSize: type.sm, color: colors.textDim }}>
-          Límite de restaurantes: <strong style={{ color: colors.text }}>{socio?.limite_restaurantes ?? 5}</strong> (solo editable por administración).
-        </div>
-      </div>
-
-      <div style={{ ...ds.card, marginBottom: 16 }}>
-        <h2 style={ds.h2}>Datos personales</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 14 }}>
-          <div>
-            <label style={ds.label}>Nombre</label>
-            <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} style={ds.input} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Datos personales */}
+        <Card>
+          <h2 style={{ ...ds.h2, marginBottom: 14 }}>Datos personales</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+            <Field label="Nombre completo">
+              <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} style={ds.input} />
+            </Field>
+            <Field label="Teléfono">
+              <input value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })}
+                placeholder="+34 600 000 000" style={ds.input} />
+            </Field>
           </div>
-          <div>
-            <label style={ds.label}>Teléfono</label>
-            <input value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })}
-              placeholder="+34 600 000 000" style={ds.input} />
-          </div>
-        </div>
-      </div>
+        </Card>
 
-      <div style={{ ...ds.card, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
-          <h2 style={{ ...ds.h2, margin: 0 }}>Datos fiscales</h2>
-          <span style={{
-            fontSize: type.xxs, fontWeight: 700, padding: '4px 10px', borderRadius: 999,
-            background: fiscalCompleto ? colors.stateOkSoft : colors.dangerSoft,
-            color: fiscalCompleto ? colors.stateOk : colors.danger,
-            letterSpacing: '0.04em', textTransform: 'uppercase',
+        {/* Datos fiscales */}
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+            <h2 style={{ ...ds.h2, margin: 0 }}>Datos fiscales</h2>
+            <ChipDot tone={fiscalCompleto ? 'sage' : 'danger'}>
+              {fiscalCompleto ? 'Completos' : 'Incompletos'}
+            </ChipDot>
+          </div>
+          <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 14, lineHeight: 1.5 }}>
+            Estos datos aparecerán en las facturas que emitas a los restaurantes.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+            <Field label="Razón social / nombre fiscal">
+              <input value={form.razon_social} onChange={e => setForm({ ...form, razon_social: e.target.value })}
+                placeholder="Ej. Juan Pérez García" style={ds.input} />
+            </Field>
+            <Field label="NIF / DNI">
+              <input value={form.nif} onChange={e => setForm({ ...form, nif: e.target.value })}
+                placeholder="12345678Z" style={ds.input} />
+            </Field>
+            <Field label="Dirección fiscal" full>
+              <input value={form.direccion_fiscal} onChange={e => setForm({ ...form, direccion_fiscal: e.target.value })}
+                placeholder="Calle, número, piso" style={ds.input} />
+            </Field>
+            <Field label="Código postal">
+              <input value={form.codigo_postal} onChange={e => setForm({ ...form, codigo_postal: e.target.value })}
+                placeholder="38001" style={ds.input} />
+            </Field>
+            <Field label="Ciudad">
+              <input value={form.ciudad} onChange={e => setForm({ ...form, ciudad: e.target.value })}
+                placeholder="Santa Cruz de Tenerife" style={ds.input} />
+            </Field>
+            <Field label="Provincia">
+              <input value={form.provincia} onChange={e => setForm({ ...form, provincia: e.target.value })}
+                placeholder="Santa Cruz de Tenerife" style={ds.input} />
+            </Field>
+            <Field label="País">
+              <input value={form.pais} onChange={e => setForm({ ...form, pais: e.target.value })} style={ds.input} />
+            </Field>
+            <Field label="IBAN" full>
+              <input value={form.iban} onChange={e => setForm({ ...form, iban: e.target.value })}
+                placeholder="ES00 0000 0000 0000 0000 0000"
+                style={{ ...ds.input, fontFamily: type.mono }} />
+            </Field>
+            <Field label="IVA aplicable (%)">
+              <input type="number" min="0" max="21" step="0.01"
+                value={form.iva_pct}
+                onChange={e => setForm({ ...form, iva_pct: e.target.value })}
+                style={ds.input} />
+            </Field>
+          </div>
+          <div style={{
+            marginTop: 12, padding: '10px 12px',
+            background: colors.surface2, borderRadius: 10,
+            fontSize: type.xs, color: colors.textMute,
+            display: 'flex', alignItems: 'center', gap: 8,
           }}>
-            {fiscalCompleto ? 'Completos' : 'Incompletos'}
-          </span>
-        </div>
-        <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 14 }}>
-          Estos datos aparecerán en las facturas que emitas a los restaurantes.
-          Sin ellos no podrás generar facturas legales.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 14 }}>
-          <div>
-            <label style={ds.label}>Razón social / nombre fiscal</label>
-            <input value={form.razon_social} onChange={e => setForm({ ...form, razon_social: e.target.value })}
-              placeholder="Ej. Juan Pérez García" style={ds.input} />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            Canarias 0% · Península 21% · Ceuta y Melilla IPSI.
           </div>
-          <div>
-            <label style={ds.label}>NIF / DNI</label>
-            <input value={form.nif} onChange={e => setForm({ ...form, nif: e.target.value })}
-              placeholder="12345678Z" style={ds.input} />
-          </div>
-          <div style={{ gridColumn: '1/-1' }}>
-            <label style={ds.label}>Dirección fiscal</label>
-            <input value={form.direccion_fiscal} onChange={e => setForm({ ...form, direccion_fiscal: e.target.value })}
-              placeholder="Calle, número, piso" style={ds.input} />
-          </div>
-          <div>
-            <label style={ds.label}>Código postal</label>
-            <input value={form.codigo_postal} onChange={e => setForm({ ...form, codigo_postal: e.target.value })}
-              placeholder="38001" style={ds.input} />
-          </div>
-          <div>
-            <label style={ds.label}>Ciudad</label>
-            <input value={form.ciudad} onChange={e => setForm({ ...form, ciudad: e.target.value })}
-              placeholder="Santa Cruz de Tenerife" style={ds.input} />
-          </div>
-          <div>
-            <label style={ds.label}>Provincia</label>
-            <input value={form.provincia} onChange={e => setForm({ ...form, provincia: e.target.value })}
-              placeholder="Santa Cruz de Tenerife" style={ds.input} />
-          </div>
-          <div>
-            <label style={ds.label}>País</label>
-            <input value={form.pais} onChange={e => setForm({ ...form, pais: e.target.value })}
-              placeholder="España" style={ds.input} />
-          </div>
-          <div style={{ gridColumn: '1/-1' }}>
-            <label style={ds.label}>IBAN</label>
-            <input value={form.iban} onChange={e => setForm({ ...form, iban: e.target.value })}
-              placeholder="ES00 0000 0000 0000 0000 0000" style={ds.input} />
-          </div>
-          <div>
-            <label style={ds.label}>IVA aplicable (%)</label>
-            <input type="number" min="0" max="21" step="0.01"
-              value={form.iva_pct}
-              onChange={e => setForm({ ...form, iva_pct: e.target.value })}
-              style={ds.input} />
-            <p style={{ fontSize: type.xxs, color: colors.textMute, marginTop: 4 }}>
-              Canarias: 0% (exento). Península: 21% (general). Consulta con tu gestor.
-            </p>
-          </div>
-        </div>
-      </div>
+        </Card>
 
-      <ShipdayIntegrationCard socio={socio} updateSocio={updateSocio} />
+        {/* Integración Shipday */}
+        <ShipdayIntegrationCard socio={socio} updateSocio={updateSocio} />
 
-      <FacturacionPidooCard socio={socio} />
+        {/* Facturación Pidoo */}
+        <FacturacionPidooCard socio={socio} />
 
-      {err && <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: type.xs }}>{err}</div>}
-      {ok && <div style={{ background: colors.stateOkSoft, color: colors.stateOk, padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: type.xs }}>Cambios guardados.</div>}
+        {err && (
+          <div style={{
+            background: colors.dangerSoft, color: colors.danger,
+            padding: '10px 14px', borderRadius: 10,
+            fontSize: type.xs, fontWeight: 600,
+          }}>{err}</div>
+        )}
+        {ok && (
+          <div style={{
+            background: colors.sageSoft, color: colors.sage2,
+            padding: '10px 14px', borderRadius: 10,
+            fontSize: type.xs, fontWeight: 600,
+          }}>Cambios guardados.</div>
+        )}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button onClick={save} disabled={saving} style={{ ...ds.primaryBtn, opacity: saving ? 0.6 : 1 }}>
-          {saving ? 'Guardando…' : 'Guardar cambios'}
-        </button>
-        <button onClick={logout} style={ds.dangerBtn}>Cerrar sesión</button>
-      </div>
-
-      {/* Zona peligrosa */}
-      <div style={{
-        marginTop: 28, padding: 16,
-        border: `1px solid rgba(220,38,38,0.25)`,
-        borderRadius: 12, background: colors.dangerSoft,
-      }}>
-        <div style={{
-          fontSize: type.xxs, fontWeight: 800, color: colors.danger,
-          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6,
-        }}>
-          Zona peligrosa
-        </div>
-        <p style={{ fontSize: type.xs, color: colors.textDim, lineHeight: 1.5, marginBottom: 12 }}>
-          Borra tu cuenta y todos los datos personales asociados. Esta acción es irreversible.
-        </p>
-        <button
-          onClick={() => { try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'eliminar-cuenta' })) } catch (_) {} }}
-          style={{
+        {/* Acciones */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button onClick={logout} style={{
             ...ds.dangerBtn,
-            background: 'transparent',
-          }}
-        >
-          Eliminar cuenta
-        </button>
+            background: colors.dangerSoft, border: `1px solid ${colors.dangerSoft}`,
+            color: colors.danger,
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Cerrar sesión
+          </button>
+          <div style={{ flex: 1 }}/>
+          <button onClick={save} disabled={saving} style={{ ...ds.glossyBtn, opacity: saving ? 0.6 : 1 }}>
+            {saving ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+        </div>
+
+        {/* Zona peligrosa */}
+        <div style={{
+          marginTop: 8, padding: 18,
+          borderRadius: 14, background: colors.dangerSoft,
+        }}>
+          <div style={{
+            fontSize: 11, fontWeight: 800, color: colors.danger,
+            textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8,
+          }}>Zona peligrosa</div>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            gap: 12, flexWrap: 'wrap',
+          }}>
+            <div style={{ fontSize: type.sm, color: colors.danger }}>
+              Esto borrará tu cuenta y todos los datos asociados.
+            </div>
+            <button
+              onClick={() => { try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'eliminar-cuenta' })) } catch (_) {} }}
+              style={{ ...ds.dangerBtn, background: 'transparent' }}
+            >
+              Eliminar cuenta
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Integración con Shipday
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────── Sub-components ───────────────────────
+
+function Card({ children, style }) {
+  return <div style={{ ...ds.card, padding: 20, ...style }}>{children}</div>
+}
+
+function Field({ label, children, full }) {
+  return (
+    <div style={full ? { gridColumn: '1 / -1' } : undefined}>
+      <label style={ds.label}>{label}</label>
+      {children}
+    </div>
+  )
+}
+
+function ChipDot({ tone, children }) {
+  const m = {
+    sage:    { bg: colors.sageSoft,    color: colors.sage2,    dot: colors.sage2 },
+    danger:  { bg: colors.dangerSoft,  color: colors.danger,   dot: colors.danger },
+    warning: { bg: colors.warningSoft, color: colors.warning,  dot: colors.warning },
+  }[tone] || { bg: colors.surface2, color: colors.textDim, dot: colors.textMute }
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      fontSize: 11, fontWeight: 700,
+      padding: '4px 10px', borderRadius: 999,
+      background: m.bg, color: m.color,
+      letterSpacing: '0.02em',
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: m.dot }}/>
+      {children}
+    </span>
+  )
+}
+
+// ─────────────── Shipday ───────────────
 const SHIPDAY_WEBHOOK_URL = 'https://rmrbxrabngdmpgpfmjbo.supabase.co/functions/v1/shipday-webhook'
 const SHIPDAY_WEBHOOK_TOKEN = 'pidoo-shipday-2026'
 
@@ -217,9 +256,8 @@ function ShipdayIntegrationCard({ socio, updateSocio }) {
   const initialKey = socio?.shipday_api_key || ''
   const [apiKey, setApiKey] = useState(initialKey)
   const [showKey, setShowKey] = useState(false)
-  const [validateState, setValidateState] = useState('idle') // idle | loading | ok | invalid | unreachable
+  const [validateState, setValidateState] = useState('idle')
   const [validateMsg, setValidateMsg] = useState(null)
-  const [carriersCount, setCarriersCount] = useState(null)
   const [copied, setCopied] = useState(null)
 
   useEffect(() => {
@@ -231,11 +269,10 @@ function ShipdayIntegrationCard({ socio, updateSocio }) {
   const validarYGuardar = async () => {
     const trimmed = (apiKey || '').trim()
     if (!trimmed) return
-    if (trimmed === (socio?.shipday_api_key || '').trim()) return // sin cambios
+    if (trimmed === (socio?.shipday_api_key || '').trim()) return
 
     setValidateState('loading')
     setValidateMsg(null)
-    setCarriersCount(null)
 
     try {
       const { data, error } = await supabase.functions.invoke('validar-shipday-key', {
@@ -244,187 +281,130 @@ function ShipdayIntegrationCard({ socio, updateSocio }) {
       if (error) throw error
 
       if (data?.ok === true) {
-        setCarriersCount(data.carriers_count ?? 0)
         setValidateState('ok')
-        setValidateMsg(`✓ API válida — ${data.carriers_count ?? 0} riders detectados`)
-        try {
-          await updateSocio({ shipday_api_key: trimmed })
-        } catch (_) {
-          /* updateSocio ya muestra error en su flujo, no rompemos UI */
-        }
+        setValidateMsg(`API válida — ${data.carriers_count ?? 0} riders detectados`)
+        try { await updateSocio({ shipday_api_key: trimmed }) } catch (_) {}
       } else if (data?.reason === 'invalid_key') {
-        setValidateState('invalid')
-        setValidateMsg('✗ API Key incorrecta')
-      } else if (data?.reason === 'unreachable') {
-        setValidateState('unreachable')
-        setValidateMsg('⚠ No se pudo contactar Shipday, reintentar')
+        setValidateState('invalid'); setValidateMsg('API Key incorrecta')
       } else {
-        setValidateState('unreachable')
-        setValidateMsg('⚠ Respuesta desconocida de Shipday, reintentar')
+        setValidateState('unreachable'); setValidateMsg('No se pudo contactar Shipday')
       }
     } catch (e) {
-      setValidateState('unreachable')
-      setValidateMsg('⚠ No se pudo contactar Shipday, reintentar')
+      setValidateState('unreachable'); setValidateMsg('No se pudo contactar Shipday')
     }
   }
 
   const copiar = async (texto, key) => {
     try {
       await navigator.clipboard.writeText(texto)
-      setCopied(key)
-      setTimeout(() => setCopied(null), 1800)
+      setCopied(key); setTimeout(() => setCopied(null), 1800)
     } catch (_) {}
   }
 
-  const colorMsg =
-    validateState === 'ok' ? colors.stateOk
-    : validateState === 'invalid' ? colors.danger
-    : validateState === 'unreachable' ? '#ea580c'
-    : colors.textDim
-
   return (
-    <div style={{ ...ds.card, marginBottom: 16 }}>
-      <h2 style={ds.h2}>Integración con Shipday</h2>
-      <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5, marginBottom: 14 }}>
-        Para que Pidoo asigne tus pedidos delivery a tu cuenta Shipday, necesitamos tu API Key.
-        Encuéntrala en Shipday → Settings → Account → API Key.
-      </p>
-
-      {/* Banner estado */}
-      {!tieneKeyGuardada ? (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
         <div style={{
-          background: colors.dangerSoft,
-          color: colors.danger,
-          border: `1px solid ${colors.danger}`,
-          borderRadius: 8,
-          padding: '10px 12px',
-          fontSize: type.xs,
-          marginBottom: 14,
-          fontWeight: 600,
+          width: 44, height: 44, borderRadius: 11,
+          background: tieneKeyGuardada ? colors.sageSoft : colors.dangerSoft,
+          color: tieneKeyGuardada ? colors.sage2 : colors.danger,
+          display: 'grid', placeItems: 'center', flexShrink: 0,
         }}>
-          ⚠️ No recibirás pedidos hasta configurar tu integración con Shipday.
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6h2l3 6"/><path d="M3 12h12"/><path d="M11 6L6 12"/></svg>
         </div>
-      ) : (
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...ds.h2, margin: 0 }}>Integración Shipday</div>
+          <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+            Conecta para recibir pedidos en tiempo real.
+          </div>
+        </div>
+        <ChipDot tone={tieneKeyGuardada ? 'sage' : 'danger'}>
+          {tieneKeyGuardada ? 'Conectado' : 'Sin conectar'}
+        </ChipDot>
+      </div>
+
+      {/* Banner */}
+      <div style={{
+        background: tieneKeyGuardada ? colors.sageSoft : colors.dangerSoft,
+        color: tieneKeyGuardada ? colors.sage2 : colors.danger,
+        borderRadius: 10, padding: '10px 14px',
+        fontSize: type.xs, fontWeight: 600, marginBottom: 14,
+      }}>
+        {tieneKeyGuardada
+          ? 'Listo para recibir pedidos.'
+          : 'No recibirás pedidos hasta configurar tu integración con Shipday.'}
+      </div>
+
+      {/* API key */}
+      <label style={ds.label}>API Key Shipday</label>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <input
+          type={showKey ? 'text' : 'password'}
+          value={apiKey}
+          onChange={e => setApiKey(e.target.value)}
+          onBlur={validarYGuardar}
+          placeholder="pega aquí tu API Key"
+          style={{ ...ds.input, flex: 1, fontFamily: type.mono }}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          onClick={() => setShowKey(s => !s)}
+          style={{
+            ...ds.secondaryBtn, padding: '0 14px', fontSize: type.xs, whiteSpace: 'nowrap',
+          }}
+        >
+          {showKey ? 'Ocultar' : 'Mostrar'}
+        </button>
+      </div>
+
+      {validateState === 'loading' && (
+        <div style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 12 }}>Validando…</div>
+      )}
+      {validateMsg && validateState !== 'loading' && (
         <div style={{
-          background: colors.stateOkSoft,
-          color: colors.stateOk,
-          border: `1px solid ${colors.stateOk}`,
-          borderRadius: 8,
-          padding: '10px 12px',
-          fontSize: type.xs,
-          marginBottom: 14,
-          fontWeight: 600,
+          fontSize: type.xs, fontWeight: 600, marginBottom: 12,
+          color: validateState === 'ok' ? colors.sage2 : validateState === 'invalid' ? colors.danger : colors.warning,
         }}>
-          ✓ Listo para recibir pedidos.
+          {validateState === 'ok' ? '✓ ' : validateState === 'invalid' ? '✗ ' : '⚠ '}{validateMsg}
         </div>
       )}
 
-      {/* Input API Key */}
-      <div style={{ marginBottom: 14 }}>
-        <label style={ds.label}>API Key Shipday</label>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            onBlur={validarYGuardar}
-            placeholder="pega aquí tu API Key"
-            style={{ ...ds.input, flex: 1 }}
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <button
-            type="button"
-            onClick={() => setShowKey(s => !s)}
-            style={{
-              ...ds.secondaryBtn,
-              padding: '0 14px',
-              fontSize: type.xs,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {showKey ? '🙈 Ocultar' : '👁 Mostrar'}
-          </button>
-        </div>
-
-        {/* Estado validación */}
-        {validateState === 'loading' && (
-          <div style={{ fontSize: type.xs, color: colors.textDim, marginTop: 8 }}>
-            Validando…
-          </div>
-        )}
-        {validateState !== 'idle' && validateState !== 'loading' && validateMsg && (
-          <div style={{
-            fontSize: type.xs,
-            color: colorMsg,
-            marginTop: 8,
-            fontWeight: 600,
-          }}>
-            {validateMsg}
-          </div>
-        )}
-      </div>
-
-      {/* Bloque Webhook (solo si key guardada) */}
+      {/* Webhook URL */}
       {tieneKeyGuardada && (
-        <div style={{
-          marginTop: 18,
-          padding: 14,
-          borderRadius: 10,
-          border: `1px solid ${colors.border}`,
-          background: colors.surface2 || colors.bg,
-        }}>
+        <div style={{ marginTop: 4 }}>
+          <label style={ds.label}>Webhook URL</label>
           <div style={{
-            fontSize: type.xxs,
-            fontWeight: 800,
-            color: colors.text,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            marginBottom: 10,
+            background: colors.surface2, borderRadius: 10,
+            padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8,
           }}>
-            Webhook
-          </div>
-
-          <label style={ds.label}>URL del webhook</label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', marginBottom: 10 }}>
-            <input
-              readOnly
-              value={SHIPDAY_WEBHOOK_URL}
-              style={{ ...ds.input, flex: 1, fontFamily: 'monospace', fontSize: type.xs }}
-              onFocus={e => e.target.select()}
-            />
+            <span style={{
+              fontFamily: type.mono, fontSize: 12, color: colors.text,
+              fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>{SHIPDAY_WEBHOOK_URL}</span>
             <button
               type="button"
               onClick={() => copiar(SHIPDAY_WEBHOOK_URL, 'url')}
-              style={{ ...ds.secondaryBtn, padding: '0 14px', fontSize: type.xs, whiteSpace: 'nowrap' }}
-            >
-              {copied === 'url' ? '✓ Copiado' : 'Copiar'}
-            </button>
+              style={{
+                padding: '4px 10px', borderRadius: 6,
+                background: colors.paper, border: `1px solid ${colors.border}`,
+                fontSize: 11, fontWeight: 700, color: colors.textDim, cursor: 'pointer',
+                fontFamily: type.family,
+              }}
+            >{copied === 'url' ? '✓' : 'Copiar'}</button>
           </div>
-
-          <p style={{ fontSize: type.xs, color: colors.textMute, lineHeight: 1.5, marginBottom: 10 }}>
-            Pega esta URL en Shipday → Settings → Integrations → Webhooks. Token de validación
-            (también opcional): <code style={{
-              background: colors.bg, padding: '1px 6px', borderRadius: 4, fontSize: type.xxs,
-            }}>{SHIPDAY_WEBHOOK_TOKEN}</code>.
-          </p>
-
-          <button
-            type="button"
-            onClick={() => copiar(SHIPDAY_WEBHOOK_TOKEN, 'token')}
-            style={{ ...ds.secondaryBtn, fontSize: type.xs }}
-          >
-            {copied === 'token' ? '✓ Token copiado' : 'Copiar token'}
-          </button>
+          <div style={{ fontSize: 11, color: colors.textMute, marginTop: 6, lineHeight: 1.5 }}>
+            Pega esta URL en Shipday → Settings → Integrations → Webhooks. Token (opcional):
+            {' '}<code style={{ background: colors.surface2, padding: '1px 6px', borderRadius: 4 }}>{SHIPDAY_WEBHOOK_TOKEN}</code>
+          </div>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Mi facturación Pidoo — plan multi-rider 39€/mes
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────── Facturación Pidoo ───────────────
 function FacturacionPidooCard({ socio }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -445,7 +425,6 @@ function FacturacionPidooCard({ socio }) {
   const pagarAhora = async () => {
     setBusy(true); setMsg(null)
     try {
-      // Reusa la función gestionar — devolverá client_secret para confirmar
       const { data: { session } } = await supabase.auth.getSession()
       const r = await fetch(`${FUNCTIONS_URL}/gestionar-facturacion-socio-multirider`, {
         method: 'POST',
@@ -458,11 +437,9 @@ function FacturacionPidooCard({ socio }) {
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || 'Error')
-      if (j.client_secret) {
-        setMsg('Para regularizar el pago, contacta a soporte (próximamente: Stripe Checkout integrado).')
-      } else {
-        setMsg('Suscripción reactivada.')
-      }
+      setMsg(j.client_secret
+        ? 'Para regularizar el pago, contacta a soporte (próximamente: Stripe Checkout integrado).'
+        : 'Suscripción reactivada.')
     } catch (e) {
       setMsg(e.message || 'Error')
     } finally {
@@ -470,95 +447,130 @@ function FacturacionPidooCard({ socio }) {
     }
   }
 
-  // Estado: impago — banner rojo
+  // ─── Impago ───
   if (activa && estado === 'impago') {
     return (
-      <div style={{
-        ...ds.card,
-        marginBottom: 16,
-        background: colors.dangerSoft || 'rgba(220,38,38,0.08)',
-        borderColor: colors.danger || '#dc2626',
-        borderWidth: 2,
-        borderStyle: 'solid',
-      }}>
-        <h2 style={{ ...ds.h2, color: colors.danger || '#dc2626' }}>
-          ⚠️ Suscripción multi-rider impagada
-        </h2>
+      <Card style={{ background: colors.dangerSoft, borderColor: colors.danger }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 11,
+            background: colors.danger, color: '#fff',
+            display: 'grid', placeItems: 'center',
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ ...ds.h2, margin: 0, color: colors.danger }}>Suscripción multi-rider impagada</div>
+            <div style={{ fontSize: type.xs, color: colors.danger, marginTop: 2 }}>
+              Tienes {n} rider{n === 1 ? '' : 's'} activo{n === 1 ? '' : 's'}.
+            </div>
+          </div>
+        </div>
         <p style={{ fontSize: type.sm, color: colors.text, lineHeight: 1.5, marginBottom: 12 }}>
-          No hemos podido cobrar tu plan multi-rider de <strong>39 €/mes</strong>.
-          Tu marketplace público está <strong>desactivado</strong> y no recibirás pedidos hasta que regularices el pago.
+          No hemos podido cobrar tu plan multi-rider de <strong>39 €/mes</strong>. Tu marketplace está
+          desactivado y no recibirás pedidos hasta que regularices el pago.
         </p>
-        <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 12 }}>
-          Tienes {n} rider{n === 1 ? '' : 's'} activo{n === 1 ? '' : 's'} en tu cuenta.
-        </p>
-        <button
-          onClick={pagarAhora}
-          disabled={busy}
-          style={{
-            ...ds.primaryBtn,
-            background: colors.danger || '#dc2626',
-            borderColor: colors.danger || '#dc2626',
-            opacity: busy ? 0.6 : 1,
-          }}
-        >
+        <button onClick={pagarAhora} disabled={busy} style={{
+          ...ds.glossyBtn,
+          background: colors.danger, borderColor: colors.danger,
+          opacity: busy ? 0.6 : 1,
+        }}>
           {busy ? 'Procesando…' : 'Pagar ahora'}
         </button>
         {msg && <div style={{ fontSize: type.xs, color: colors.textDim, marginTop: 10 }}>{msg}</div>}
-      </div>
+      </Card>
     )
   }
 
-  // Estado: 1 rider — informativo
+  // ─── 1 rider, sin plan ───
   if (n <= 1 && !activa) {
     return (
-      <div style={{ ...ds.card, marginBottom: 16 }}>
-        <h2 style={ds.h2}>Mi facturación Pidoo</h2>
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 11,
+            background: colors.terracottaSoft, color: colors.terracotta,
+            display: 'grid', placeItems: 'center',
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ ...ds.h2, margin: 0 }}>Mi facturación Pidoo</div>
+            <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>Plan multi-rider · primer rider gratis</div>
+          </div>
+          <ChipDot tone="sage">Sin coste</ChipDot>
+        </div>
         <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5 }}>
-          Ahora tienes <strong style={{ color: colors.text }}>1 rider</strong> en tu cuenta → no pagas plan multi-rider a Pidoo.
+          Ahora tienes <strong style={{ color: colors.text }}>1 rider</strong> en tu cuenta → no pagas plan multi-rider.
         </p>
-        <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 8 }}>
+        <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 6 }}>
           Si añades 2 o más riders, se aplicará automáticamente el plan multi-rider de <strong>39 €/mes</strong>.
         </p>
-      </div>
+      </Card>
     )
   }
 
-  // Estado: 2+ riders, al día
+  // ─── Activa al día ───
   if (activa && (estado === 'al_dia' || estado === 'reintento1' || estado === 'reintento2')) {
     return (
-      <div style={{ ...ds.card, marginBottom: 16 }}>
-        <h2 style={ds.h2}>Mi facturación Pidoo</h2>
-        <p style={{ fontSize: type.sm, color: colors.text, lineHeight: 1.5 }}>
-          Estás pagando <strong>39 €/mes</strong> por el plan multi-rider ({n} rider{n === 1 ? '' : 's'} en tu cuenta).
-        </p>
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 11,
+            background: colors.terracottaSoft, color: colors.terracotta,
+            display: 'grid', placeItems: 'center',
+          }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ ...ds.h2, margin: 0 }}>Mi facturación Pidoo</div>
+            <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+              Plan multi-rider · {n} rider{n === 1 ? '' : 's'}
+            </div>
+          </div>
+          <ChipDot tone="sage">Activa</ChipDot>
+        </div>
         <div style={{
-          marginTop: 10, padding: '10px 12px',
-          background: colors.elev2 || colors.surfaceHover || 'rgba(0,0,0,0.04)',
-          borderRadius: 8, fontSize: type.xs, color: colors.textDim,
+          background: colors.surface2, borderRadius: 10, padding: 14,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
         }}>
-          Próximo cargo: <strong style={{ color: colors.text }}>{fmtFecha(proximoPago)}</strong>
+          <div>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: colors.textMute,
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+            }}>Próximo cargo</div>
+            <div style={{
+              fontSize: 22, fontWeight: 800, color: colors.text, marginTop: 2,
+              letterSpacing: '-0.4px',
+            }}>39,00 €</div>
+            <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+              {fmtFecha(proximoPago)}
+            </div>
+          </div>
         </div>
         {(estado === 'reintento1' || estado === 'reintento2') && (
-          <p style={{ fontSize: type.xs, color: '#ea580c', marginTop: 8 }}>
-            ⚠️ Stripe está reintentando el cobro (intento {estado === 'reintento2' ? '2' : '1'} de 3). Verifica tu método de pago.
-          </p>
+          <div style={{
+            fontSize: type.xs, color: colors.warning, marginTop: 10,
+            padding: '8px 10px', background: colors.warningSoft, borderRadius: 8, fontWeight: 600,
+          }}>
+            Stripe está reintentando el cobro (intento {estado === 'reintento2' ? '2' : '1'} de 3). Verifica tu método de pago.
+          </div>
         )}
-      </div>
+      </Card>
     )
   }
 
-  // Estado: 2+ riders pero aún no activa (debería sincronizarse pronto)
+  // ─── 2+ riders pero aún no activa ───
   if (n >= 2 && !activa) {
     return (
-      <div style={{ ...ds.card, marginBottom: 16 }}>
+      <Card>
         <h2 style={ds.h2}>Mi facturación Pidoo</h2>
         <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5 }}>
-          Tienes <strong style={{ color: colors.text }}>{n} riders</strong> en tu cuenta. El plan multi-rider de <strong>39 €/mes</strong> se activará en las próximas horas tras la sincronización automática.
+          Tienes <strong style={{ color: colors.text }}>{n} riders</strong>. El plan multi-rider de <strong>39 €/mes</strong> se activará en las próximas horas tras la sincronización.
         </p>
-      </div>
+      </Card>
     )
   }
 
   return null
 }
-

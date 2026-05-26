@@ -24,27 +24,27 @@ export default function ConfigErrorScreen({ missing }) {
 }
 
 const wrap = {
-  position: 'fixed', inset: 0, background: '#FAFAF7', color: '#1F1F1E',
+  position: 'fixed', inset: 0, background: '#F7F3EC', color: '#1A1815',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   padding: 'max(env(safe-area-inset-top), 24px) 20px max(env(safe-area-inset-bottom), 24px)',
   fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
 }
 const card = {
-  background: '#FFFFFF', border: '1px solid #E8E6E0', borderRadius: 16,
+  background: '#FFFFFF', border: '1px solid #E8E1D3', borderRadius: 16,
   maxWidth: 460, width: '100%', padding: 24, boxShadow: '0 12px 40px rgba(0,0,0,0.08)',
 }
 const iconBox = {
   width: 48, height: 48, borderRadius: 24, background: 'rgba(217,119,6,0.12)',
-  color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center',
+  color: '#C99551', display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontWeight: 800, fontSize: 24, marginBottom: 12,
 }
 const title = { fontSize: 18, fontWeight: 800, marginBottom: 6 }
-const subtitle = { fontSize: 14, color: '#6B6B68', lineHeight: 1.45, marginBottom: 14 }
+const subtitle = { fontSize: 14, color: '#6B6356', lineHeight: 1.45, marginBottom: 14 }
 const sub2 = { fontSize: 13, fontWeight: 700, marginBottom: 6 }
 const list = { margin: 0, padding: '0 0 0 18px' }
 const li = { fontSize: 13, marginBottom: 4 }
 const code = {
-  background: '#F4F2EC', border: '1px solid #E8E6E0', borderRadius: 6,
+  background: '#EFE9DD', border: '1px solid #E8E1D3', borderRadius: 6,
   padding: '2px 6px', fontSize: 12, fontFamily: 'monospace',
 }
-const hint = { marginTop: 14, fontSize: 12, color: '#6B6B68' }
+const hint = { marginTop: 14, fontSize: 12, color: '#6B6356' }

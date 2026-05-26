@@ -2,7 +2,7 @@
 // - Emoji dentro de circulo coloreado.
 // - Imagen redonda (logo de restaurante) con borde.
 
-function emojiToDataUrl(emoji, bg = '#FF6B2C', size = 56) {
+function emojiToDataUrl(emoji, bg = '#C5562C', size = 56) {
   const canvas = document.createElement('canvas')
   canvas.width = size; canvas.height = size
   const ctx = canvas.getContext('2d')
@@ -28,7 +28,7 @@ function emojiToDataUrl(emoji, bg = '#FF6B2C', size = 56) {
   return canvas.toDataURL('image/png')
 }
 
-export function emojiIcon(emoji, bg = '#FF6B2C') {
+export function emojiIcon(emoji, bg = '#C5562C') {
   if (typeof window === 'undefined' || !window.google?.maps) return undefined
   const url = emojiToDataUrl(emoji, bg, 64)
   return {
@@ -40,7 +40,7 @@ export function emojiIcon(emoji, bg = '#FF6B2C') {
 
 // Icono de imagen redonda (logo restaurante) con borde naranja.
 // Carga la imagen, la dibuja en canvas circular y devuelve dataURL.
-export async function imageRoundIcon(imageUrl, borderColor = '#FF6B2C', size = 64) {
+export async function imageRoundIcon(imageUrl, borderColor = '#C5562C', size = 64) {
   if (typeof window === 'undefined' || !window.google?.maps) return undefined
   return new Promise((resolve) => {
     const img = new Image()

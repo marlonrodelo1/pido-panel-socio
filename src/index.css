@@ -1,37 +1,57 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
 
 :root {
-  --c-bg: #FAFAF7;
-  --c-surface: #FFFFFF;
-  --c-surface2: #F4F2EC;
-  --c-surface3: #EDEAE2;
-  --c-elev: #FFFFFF;
-  --c-elev2: #F8F6F1;
-  --c-border: #E8E6E0;
-  --c-border-strong: #D4D2CC;
+  /* === Bases (cream world) === */
+  --c-bg: #F7F3EC;
+  --c-surface: #FBF8F2;
+  --c-surface2: #EFE9DD;
+  --c-surface3: #E8E1D3;
+  --c-elev: #FBF8F2;
+  --c-elev2: #EFE9DD;
+  --c-border: #E8E1D3;
+  --c-border-strong: #D8CDB8;
 
-  --c-text: #1F1F1E;
-  --c-text-soft: #3D3D3B;
-  --c-muted: #6B6B68;
-  --c-text-faint: #A8A6A0;
+  /* === Tinta + stone === */
+  --c-text: #1A1815;
+  --c-text-soft: #2B2823;
+  --c-muted: #6B6356;
+  --c-text-faint: #8A8174;
 
-  --c-primary: #FF6B2C;
-  --c-primary-dark: #E85A1F;
-  --c-primary-light: rgba(255,107,44,0.10);
-  --c-primary-soft: rgba(255,107,44,0.16);
+  /* === Primario (terracotta) === */
+  --c-primary: #C5562C;
+  --c-primary-dark: #A8451F;
+  --c-primary-light: rgba(197,86,44,0.10);
+  --c-primary-soft: rgba(197,86,44,0.16);
 
-  --c-success: #16A34A;
-  --c-success-soft: rgba(22,163,74,0.10);
-  --c-danger: #DC2626;
-  --c-danger-soft: rgba(220,38,38,0.10);
-  --c-warning: #D97706;
-  --c-warning-soft: rgba(217,119,6,0.12);
-  --c-info: #2563EB;
-  --c-info-soft: rgba(37,99,235,0.10);
+  /* === Estados funcionales === */
+  --c-success: #8B9D7A;
+  --c-success-soft: rgba(139,157,122,0.18);
+  --c-danger: #B5564A;
+  --c-danger-soft: rgba(181,86,74,0.12);
+  --c-warning: #C99551;
+  --c-warning-soft: rgba(201,149,81,0.15);
+  --c-info: #7B8FA8;
+  --c-info-soft: rgba(123,143,168,0.15);
 
-  --c-shadow: 0 1px 2px rgba(15,15,15,0.04), 0 1px 3px rgba(15,15,15,0.06);
-  --c-shadow-md: 0 4px 12px rgba(15,15,15,0.08);
-  --c-shadow-lg: 0 12px 30px rgba(15,15,15,0.12);
+  /* === Sombras === */
+  --c-shadow: 0 1px 3px rgba(26,24,21,0.05), 0 1px 1px rgba(26,24,21,0.03);
+  --c-shadow-md: 0 4px 12px rgba(26,24,21,0.06), 0 1px 3px rgba(26,24,21,0.04);
+  --c-shadow-lg: 0 14px 40px rgba(26,24,21,0.10), 0 4px 12px rgba(26,24,21,0.06);
+
+  /* === Tokens directos del cream world === */
+  --c-cream: #F7F3EC;
+  --c-cream-2: #EFE9DD;
+  --c-paper: #FBF8F2;
+  --c-ink: #1A1815;
+  --c-ink-2: #2B2823;
+  --c-stone: #6B6356;
+  --c-stone-2: #8A8174;
+  --c-terracotta: #C5562C;
+  --c-terracotta-2: #A8451F;
+  --c-terracotta-soft: #F1D9CC;
+  --c-sage: #8B9D7A;
+  --c-sage-2: #6F8460;
+  --c-sage-soft: #DDE3D3;
 }
 
 * {
@@ -41,58 +61,41 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-html, body, #root {
-  height: 100%;
-}
-
-html, body {
-  /* Sin scroll global del documento en iOS — solo se permite scroll
-     en .app-shell-content. Asi el header y la bottom nav quedan fijos
-     y el status bar del sistema mantiene su posicion. */
-  overscroll-behavior: none;
-}
-/* Cuando hay app-shell, congelar el scroll global del body (solo
-   scrollea .app-shell-content). Cuando no hay (Login, Onboarding,
-   SeguirPedido), permitir scroll normal. */
-body:has(.app-shell) {
-  overflow: hidden;
+html {
+  touch-action: manipulation;
 }
 
 body {
   background: var(--c-bg);
   color: var(--c-text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  margin: 0;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   -webkit-text-size-adjust: 100%;
 }
 
-/* Layout app-shell: header arriba (con safe-area top), contenido central
-   scrolleable (flex:1), bottom nav abajo (con safe-area bottom). */
-.app-shell {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+#root {
+  min-height: 100%;
+  min-height: 100dvh;
 }
-.app-shell-header {
-  flex-shrink: 0;
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+input, select, textarea, button {
+  font-size: 16px !important;
+}
+
+body {
   padding-top: env(safe-area-inset-top);
-  background: var(--c-surface);
-}
-.app-shell-content {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
-.app-shell-bottom {
-  flex-shrink: 0;
   padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
-a { color: inherit; text-decoration: none; }
-button { font-family: inherit; }
-
-input, select, textarea {
-  font-family: inherit;
+#root {
+  width: 100%;
+  max-width: 100%;
 }

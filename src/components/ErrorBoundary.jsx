@@ -46,38 +46,38 @@ export default class ErrorBoundary extends Component {
 }
 
 const wrap = {
-  position: 'fixed', inset: 0, background: '#FAFAF7', color: '#1F1F1E',
+  position: 'fixed', inset: 0, background: '#F7F3EC', color: '#1A1815',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   padding: 'max(env(safe-area-inset-top), 24px) 20px max(env(safe-area-inset-bottom), 24px)',
   fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
   zIndex: 999999,
 }
 const card = {
-  background: '#FFFFFF', border: '1px solid #E8E6E0', borderRadius: 16,
+  background: '#FFFFFF', border: '1px solid #E8E1D3', borderRadius: 16,
   maxWidth: 460, width: '100%', padding: 24, boxShadow: '0 12px 40px rgba(0,0,0,0.08)',
 }
 const iconBox = {
   width: 48, height: 48, borderRadius: 24, background: 'rgba(220,38,38,0.10)',
-  color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center',
+  color: '#B5564A', display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontWeight: 800, fontSize: 24, marginBottom: 12,
 }
 const title = { fontSize: 18, fontWeight: 800, marginBottom: 6 }
-const subtitle = { fontSize: 14, color: '#6B6B68', lineHeight: 1.45, marginBottom: 14 }
+const subtitle = { fontSize: 14, color: '#6B6356', lineHeight: 1.45, marginBottom: 14 }
 const pre = {
-  background: '#F4F2EC', border: '1px solid #E8E6E0', borderRadius: 8,
-  padding: 10, fontSize: 12, lineHeight: 1.4, color: '#1F1F1E',
+  background: '#EFE9DD', border: '1px solid #E8E1D3', borderRadius: 8,
+  padding: 10, fontSize: 12, lineHeight: 1.4, color: '#1A1815',
   whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflow: 'auto',
 }
 const details = { marginTop: 10 }
-const summary = { fontSize: 12, color: '#6B6B68', cursor: 'pointer' }
+const summary = { fontSize: 12, color: '#6B6356', cursor: 'pointer' }
 const preSmall = { ...pre, fontSize: 11, maxHeight: 200 }
 const btn = {
   marginTop: 14, width: '100%', height: 46, border: 'none',
-  background: '#FF6B2C', color: '#fff', borderRadius: 10,
+  background: '#C5562C', color: '#fff', borderRadius: 10,
   fontWeight: 800, fontSize: 14, cursor: 'pointer',
 }
 const btnGhost = {
-  marginTop: 8, width: '100%', height: 42, background: '#F4F2EC',
-  color: '#1F1F1E', border: '1px solid #E8E6E0', borderRadius: 10,
+  marginTop: 8, width: '100%', height: 42, background: '#EFE9DD',
+  color: '#1A1815', border: '1px solid #E8E1D3', borderRadius: 10,
   fontWeight: 700, fontSize: 13, cursor: 'pointer',
 }

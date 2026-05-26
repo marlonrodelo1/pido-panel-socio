@@ -4,7 +4,6 @@ import Login from './pages/Login'
 import Landing from './pages/Landing'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
-import MiMarketplace from './pages/MiMarketplace'
 import Restaurantes from './pages/Restaurantes'
 import RestauranteDetalle from './pages/RestauranteDetalle'
 import Pedidos from './pages/Pedidos'
@@ -17,11 +16,10 @@ import SeguirPedido from './pages/SeguirPedido'
 import { colors } from './lib/uiStyles'
 
 function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante }) {
-  // Compat: 'facturas' redirige a 'restaurantes' (la pestaña fue eliminada)
-  const effectiveSection = section === 'facturas' ? 'restaurantes' : section
+  // Compat: 'facturas' y 'marketplace' redirigen a 'restaurantes' (pestanas eliminadas)
+  const effectiveSection = (section === 'facturas' || section === 'marketplace') ? 'restaurantes' : section
   const page = {
     dashboard:            <Dashboard setSection={setSection} openRestaurante={openRestaurante} />,
-    marketplace:          <MiMarketplace />,
     restaurantes:         <Restaurantes onOpenRestaurante={openRestaurante} />,
     'restaurante-detalle': detalleEstId
       ? <RestauranteDetalle establecimiento_id={detalleEstId} onBack={closeRestaurante} />
@@ -33,18 +31,89 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
   }[effectiveSection] || <Dashboard setSection={setSection} openRestaurante={openRestaurante} />
 
   return (
-    <div className="app-shell" style={{ background: colors.bg }}>
-      <div className="app-shell-header">
-        <HeaderNav section={section} setSection={setSection} />
+    <div className="socio-shell" style={{ background: colors.bg, minHeight: '100vh' }}>
+      {/* Sidebar fija desktop */}
+      <aside className="socio-sidebar">
+        <HeaderNav section={section} setSection={setSection} variant="sidebar" />
+      </aside>
+
+      {/* Mobile topbar — logo + campana */}
+      <div className="socio-topbar">
+        <HeaderNav section={section} setSection={setSection} variant="mobile" />
       </div>
-      <main className="app-shell-content">
-        <div style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 20px 24px' }}>
+
+      <main className="socio-main">
+        <div className="socio-content">
           {page}
         </div>
       </main>
-      <div className="app-shell-bottom">
+
+      <div className="socio-bottom">
         <BottomNav section={section} setSection={setSection} />
       </div>
+
+      <style>{`
+        .socio-shell {
+          display: flex;
+          flex-direction: column;
+          min-height: 100vh;
+        }
+        .socio-sidebar {
+          display: none;
+        }
+        .socio-topbar {
+          display: block;
+          position: sticky;
+          top: 0;
+          z-index: 30;
+        }
+        .socio-main {
+          flex: 1;
+          min-width: 0;
+        }
+        .socio-content {
+          max-width: 1280px;
+          margin: 0 auto;
+          padding: 22px 24px calc(env(safe-area-inset-bottom) + 96px);
+        }
+        .socio-bottom {
+          position: sticky;
+          bottom: 0;
+          z-index: 30;
+        }
+
+        @media (min-width: 900px) {
+          .socio-shell {
+            flex-direction: row;
+          }
+          .socio-sidebar {
+            display: flex;
+            flex-direction: column;
+            width: 240px;
+            min-width: 240px;
+            height: 100vh;
+            position: sticky;
+            top: 0;
+            background: ${colors.paper};
+            border-right: 1px solid ${colors.border};
+            overflow-y: auto;
+          }
+          .socio-topbar {
+            display: none;
+          }
+          .socio-main {
+            flex: 1;
+            min-width: 0;
+            min-height: 100vh;
+          }
+          .socio-content {
+            padding: 28px 32px 40px;
+          }
+          .socio-bottom {
+            display: none;
+          }
+        }
+      `}</style>
     </div>
   )
 }
@@ -65,13 +134,11 @@ function Shell() {
   }
 
   // Listener global para navegacion entre secciones via window event.
-  // Permite a cualquier componente cambiar de pestana sin pasar setSection por props.
   useEffect(() => {
     const handler = (e) => {
       const target = e?.detail
       if (typeof target === 'string') {
-        // Compat: 'facturas' redirige a 'restaurantes'
-        setAdminSection(target === 'facturas' ? 'restaurantes' : target)
+        setAdminSection((target === 'facturas' || target === 'marketplace') ? 'restaurantes' : target)
       } else if (target && typeof target === 'object' && target.section === 'restaurante-detalle' && target.id) {
         openRestaurante(target.id)
       }

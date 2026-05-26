@@ -81,27 +81,22 @@ export default function Dashboard({ setSection, openRestaurante }) {
     })()
   }, [socio])
 
-  const marketplaceUrl = `https://pidoo.es/s/${socio?.slug}`
-
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22, flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h1 style={ds.h1}>Resumen</h1>
-          <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4 }}>
-            {socio?.marketplace_activo
-              ? 'Tu marketplace está activo.'
-              : 'Tu marketplace está desactivado. Actívalo cuando quieras recibir tráfico.'}
-          </p>
-        </div>
-        <a href={marketplaceUrl} target="_blank" rel="noreferrer"
-          style={{ ...ds.secondaryBtn, textDecoration: 'none' }}>
-          Abrir mi marketplace ↗
-        </a>
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={ds.h1}>Resumen</h1>
+        <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4 }}>
+          Tu actividad como socio repartidor.
+        </p>
       </div>
 
       {!fiscalCompleto && (
-        <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '12px 14px', borderRadius: 10, marginBottom: 14, fontSize: type.sm, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{
+          background: colors.dangerSoft, color: colors.danger,
+          padding: '12px 14px', borderRadius: 10, marginBottom: 18,
+          fontSize: type.sm, display: 'flex', alignItems: 'center',
+          gap: 10, flexWrap: 'wrap',
+        }}>
           <span>⚠️ Completa tus datos fiscales para poder emitir facturas a los restaurantes.</span>
           <button onClick={() => {
             if (setSection) setSection('configuracion')
@@ -113,80 +108,143 @@ export default function Dashboard({ setSection, openRestaurante }) {
         </div>
       )}
 
-      <h2 style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Ingresos</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 14, marginBottom: 20 }}>
+      {/* Stat cards principales */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, marginBottom: 18 }}>
         <StatCard label="Hoy" value={loading ? '…' : euro(stats.ingresosHoy)} sub={`${stats.pedidosHoy} pedido${stats.pedidosHoy !== 1 ? 's' : ''}`} />
-        <StatCard label="Esta semana" value={loading ? '…' : euro(stats.ingresosSemana)} sub={`${stats.pedidosSemana} pedido${stats.pedidosSemana !== 1 ? 's' : ''}`} />
+        <StatCard label="Esta semana" value={loading ? '…' : euro(stats.ingresosSemana)} sub={`${stats.pedidosSemana} pedido${stats.pedidosSemana !== 1 ? 's' : ''}`} tone="sage" />
         <StatCard label="Este mes" value={loading ? '…' : euro(stats.ingresosMes)} sub={`${stats.pedidosMes} pedido${stats.pedidosMes !== 1 ? 's' : ''}`} />
-        <StatCard label="Por cobrar" value={loading ? '…' : euro(stats.porCobrar)} sub={`${stats.pedidosPorCobrar} sin facturar`} />
+        <StatCard label="Por cobrar" value={loading ? '…' : euro(stats.porCobrar)} sub={`${stats.pedidosPorCobrar} sin facturar`} tone="terracotta" />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 14, marginBottom: 20 }}>
-        <div style={ds.card}>
-          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Tu tienda</div>
-          <div style={{ fontSize: type.sm, color: colors.textDim, marginBottom: 10, wordBreak: 'break-all' }}>{marketplaceUrl}</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => { navigator.clipboard?.writeText(marketplaceUrl) }} style={ds.secondaryBtn}>Copiar URL</button>
-            <button onClick={() => setSection?.('marketplace')} style={ds.primaryBtn}>Gestionar</button>
-          </div>
-        </div>
-
-        <div style={ds.card}>
-          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Restaurantes activos</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: colors.text, marginBottom: 6 }}>
-            {loading ? '…' : stats.restaurantesActivos}
-            <span style={{ fontSize: type.sm, fontWeight: 500, color: colors.textMute, marginLeft: 6 }}>
-              / {socio?.limite_restaurantes ?? 5}
-            </span>
-          </div>
-          <button onClick={() => setSection?.('restaurantes')} style={ds.secondaryBtn}>Ver restaurantes</button>
-        </div>
-
-        <div style={ds.card}>
-          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Facturación</div>
-          <div style={{ fontSize: type.sm, color: colors.textDim, marginBottom: 10 }}>
-            Emite facturas semanales por los pedidos que has repartido a cada restaurante.
-          </div>
-          <button onClick={() => setSection?.('restaurantes')} style={ds.primaryBtn}>Ir a restaurantes</button>
-        </div>
-      </div>
-
-      {topRestaurantes.length > 0 && (
-        <div style={{ ...ds.card }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Top restaurantes por cobrar</div>
-            <button onClick={() => setSection?.('restaurantes')} style={{ ...ds.secondaryBtn, height: 28, fontSize: type.xxs }}>Ver todo</button>
-          </div>
-          {topRestaurantes.map(r => (
-            <div
-              key={r.establecimiento_id}
-              onClick={() => openRestaurante?.(r.establecimiento_id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
-                borderTop: `1px solid ${colors.border}`,
-                cursor: openRestaurante ? 'pointer' : 'default',
-              }}
-            >
+      {/* Dos cards: restaurantes + próxima factura */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 14, marginBottom: 22 }}>
+        <div style={{ ...ds.card, padding: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
               <div style={{
-                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-                background: r.establecimiento_logo ? `url(${r.establecimiento_logo}) center/cover` : colors.surface2,
-                border: `1px solid ${colors.border}`,
-              }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: type.sm, color: colors.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.establecimiento_nombre}
-                </div>
-                <div style={{ fontSize: type.xxs, color: colors.textMute }}>
-                  {r.pedidos_count} pedido{r.pedidos_count !== 1 ? 's' : ''}
-                </div>
+                fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>Restaurantes vinculados</div>
+              <div style={{
+                fontSize: 32, fontWeight: 800, color: colors.text, marginTop: 6,
+                letterSpacing: '-0.6px', lineHeight: 1.1,
+              }}>
+                {loading ? '…' : stats.restaurantesActivos}
+                <span style={{ fontSize: 16, fontWeight: 700, color: colors.textFaint, marginLeft: 6 }}>
+                  / {socio?.limite_restaurantes ?? 5}
+                </span>
               </div>
-              <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text }}>
-                {euro(r.total_neto)}
-              </div>
-              {openRestaurante && <span style={{ color: colors.textMute, fontSize: type.lg, marginLeft: 4 }}>›</span>}
             </div>
-          ))}
+            <div style={{
+              width: 38, height: 38, borderRadius: 10,
+              background: colors.terracottaSoft,
+              display: 'grid', placeItems: 'center',
+              color: colors.terracotta,
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 2v7a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V2"/><path d="M5 12v10"/><path d="M19 2v20"/><path d="M19 12h-5a3 3 0 0 1 3-3V2"/></svg>
+            </div>
+          </div>
+          <button onClick={() => setSection?.('restaurantes')} style={{ ...ds.secondaryBtn, marginTop: 14, height: 34 }}>
+            Ver restaurantes
+          </button>
         </div>
+
+        <div style={{ ...ds.card, padding: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{
+                fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>Próxima factura</div>
+              <div style={{
+                fontSize: 26, fontWeight: 800, color: colors.text, marginTop: 6,
+                letterSpacing: '-0.5px',
+              }}>
+                {socio?.facturacion_multirider_activa ? '39,00 €' : '—'}
+              </div>
+              <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 4 }}>
+                {socio?.facturacion_multirider_activa
+                  ? `Plan multi-rider · ${socio?.n_riders_actual ?? 1} riders`
+                  : `Sin plan activo (${socio?.n_riders_actual ?? 1} rider)`}
+              </div>
+            </div>
+            <div style={{
+              width: 38, height: 38, borderRadius: 10,
+              background: colors.sageSoft,
+              display: 'grid', placeItems: 'center',
+              color: colors.sage2,
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            </div>
+          </div>
+          <button onClick={() => setSection?.('configuracion')} style={{ ...ds.secondaryBtn, marginTop: 14, height: 34 }}>
+            Ver facturación
+          </button>
+        </div>
+      </div>
+
+      {/* Top restaurantes por cobrar */}
+      {topRestaurantes.length > 0 && (
+        <>
+          <div style={{
+            fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+            marginBottom: 10,
+          }}>Top restaurantes por cobrar</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {topRestaurantes.map(r => {
+              const ini = (r.establecimiento_nombre || '?').split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
+              return (
+                <div
+                  key={r.establecimiento_id}
+                  onClick={() => openRestaurante?.(r.establecimiento_id)}
+                  style={{
+                    ...ds.card, padding: 14,
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    cursor: openRestaurante ? 'pointer' : 'default',
+                  }}
+                >
+                  {r.establecimiento_logo ? (
+                    <div style={{
+                      width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+                      background: `url(${r.establecimiento_logo}) center/cover`,
+                      border: `1px solid ${colors.border}`,
+                    }} />
+                  ) : (
+                    <div style={{
+                      width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+                      background: colors.terracotta, color: '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontWeight: 800, fontSize: 13, letterSpacing: '-0.5px',
+                    }}>{ini}</div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: type.sm, color: colors.text, fontWeight: 700,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {r.establecimiento_nombre}
+                    </div>
+                    <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+                      {r.pedidos_count} pedido{r.pedidos_count !== 1 ? 's' : ''} pendientes
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 17, fontWeight: 800, color: colors.terracotta,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {euro(r.total_neto)}
+                  </div>
+                  {openRestaurante && (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={colors.textFaint} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
       )}
     </div>
   )

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { loginEmail, registerEmail, resetPassword } from '../lib/auth'
+import { colors, ds, type } from '../lib/uiStyles'
 
 function ErrorBox({ msg }) {
   if (!msg) return null
   return (
     <div style={{
-      color: 'var(--c-primary)', fontSize: 12, marginBottom: 12, textAlign: 'center',
-      background: 'var(--c-primary-light)', padding: '10px 14px', borderRadius: 8,
-      border: '1px solid var(--c-primary-soft)',
+      color: colors.danger, fontSize: type.xs, marginBottom: 12,
+      background: colors.dangerSoft, padding: '10px 14px', borderRadius: 10,
+      fontWeight: 600, textAlign: 'center',
     }}>{msg}</div>
   )
 }
@@ -16,18 +17,12 @@ function ErrorBox({ msg }) {
 function Field({ label, ...props }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      {label && (
-        <label style={{
-          fontSize: 11, fontWeight: 700, color: 'var(--c-muted)',
-          textTransform: 'uppercase', letterSpacing: '0.05em',
-          marginBottom: 6, display: 'block',
-        }}>{label}</label>
-      )}
+      {label && <label style={ds.label}>{label}</label>}
       <input {...props} style={{
-        width: '100%', padding: '13px 14px', borderRadius: 8,
-        border: '1px solid var(--c-border)',
-        fontSize: 14, fontFamily: 'inherit',
-        background: 'var(--c-surface)', color: 'var(--c-text)', outline: 'none',
+        width: '100%', padding: '13px 14px', borderRadius: 10,
+        border: `1px solid ${colors.border}`,
+        fontSize: 14, fontFamily: type.family,
+        background: colors.paper, color: colors.text, outline: 'none',
         boxSizing: 'border-box',
       }} />
     </div>
@@ -43,7 +38,6 @@ export default function Login({ onBack }) {
   const [password, setPassword] = useState('')
   const [resetSent, setResetSent] = useState(false)
 
-  // Si venimos de eliminar cuenta, mostramos mensaje informativo
   useEffect(() => {
     try {
       if (localStorage.getItem('pidoo_cuenta_eliminada') === '1') {
@@ -81,9 +75,8 @@ export default function Login({ onBack }) {
 
   return (
     <div style={{
-      minHeight: '100vh', background: 'var(--c-bg)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center',
+      minHeight: '100vh', background: colors.cream, fontFamily: type.family,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: 'calc(env(safe-area-inset-top) + 32px) 20px 32px',
       position: 'relative',
     }}>
@@ -91,79 +84,86 @@ export default function Login({ onBack }) {
         <button onClick={onBack} style={{
           position: 'absolute', top: 'calc(env(safe-area-inset-top) + 18px)', left: 18,
           background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--c-muted)', fontSize: 13, fontWeight: 600,
-          padding: '8px 12px', borderRadius: 8, fontFamily: 'inherit',
+          color: colors.textMute, fontSize: 13, fontWeight: 600,
+          padding: '8px 12px', borderRadius: 8, fontFamily: type.family,
           display: 'inline-flex', alignItems: 'center', gap: 6,
         }}>← Volver</button>
       )}
+
       <div style={{ width: '100%', maxWidth: 380 }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <img
-            src="/icon.png"
-            alt="Pidoo go"
-            width={120}
-            height={120}
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <img src="/icon.png" alt="Pidoo Socios" width={108} height={108}
             style={{
-              display: 'block',
-              margin: '0 auto',
-              borderRadius: 28,
-              boxShadow: '0 8px 24px rgba(255,107,44,0.30)',
-            }}
-          />
+              display: 'block', margin: '0 auto', borderRadius: 26,
+              boxShadow: '0 12px 28px rgba(197,86,44,0.22)',
+            }} />
         </div>
 
-        <div style={{ background: 'var(--c-surface)', borderRadius: 16, padding: '28px 24px', border: '1px solid var(--c-border)' }}>
+        <div style={{
+          background: colors.paper, borderRadius: 16, padding: '28px 24px',
+          border: `1px solid ${colors.border}`,
+          boxShadow: colors.shadowMd,
+        }}>
           {modo === 'reset' ? (
             resetSent ? (
               <>
-                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Email enviado</h2>
-                <p style={{ fontSize: 13, color: 'var(--c-muted)', marginBottom: 16 }}>
+                <h2 style={{ ...ds.h2, marginBottom: 8 }}>Email enviado</h2>
+                <p style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 18 }}>
                   Revisa tu bandeja y sigue el enlace para restablecer la contraseña.
                 </p>
-                <button onClick={() => { setModo('login'); setResetSent(false) }} style={{
-                  width: '100%', padding: '13px 0', borderRadius: 8, border: 'none',
-                  background: 'linear-gradient(135deg,#FF6B2C,#E85A1F)',
-                  color: '#fff', fontWeight: 700, cursor: 'pointer',
-                }}>Volver al login</button>
+                <button onClick={() => { setModo('login'); setResetSent(false) }}
+                  style={{ ...ds.glossyBtn, width: '100%', height: 44 }}>
+                  Volver al login
+                </button>
               </>
             ) : (
               <>
-                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Recuperar acceso</h2>
-                <p style={{ fontSize: 12, color: 'var(--c-muted)', marginBottom: 16 }}>
+                <h2 style={{ ...ds.h2, marginBottom: 4 }}>Recuperar acceso</h2>
+                <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 18 }}>
                   Te enviaremos un enlace a tu email.
                 </p>
                 <Field type="email" placeholder="Tu email" value={email} onChange={e => setEmail(e.target.value)} />
                 <ErrorBox msg={error} />
-                <button onClick={handle} disabled={loading} style={{
-                  width: '100%', padding: '13px 0', borderRadius: 8, border: 'none',
-                  background: 'linear-gradient(135deg,#FF6B2C,#E85A1F)',
-                  color: '#fff', fontWeight: 700, cursor: 'pointer',
-                  opacity: loading ? 0.6 : 1, marginBottom: 8,
-                }}>{loading ? 'Enviando...' : 'Enviar enlace'}</button>
+                <button onClick={handle} disabled={loading}
+                  style={{ ...ds.glossyBtn, width: '100%', height: 44, opacity: loading ? 0.6 : 1, marginBottom: 8 }}>
+                  {loading ? 'Enviando…' : 'Enviar enlace'}
+                </button>
                 <button onClick={() => setModo('login')} style={{
                   width: '100%', padding: '10px 0', background: 'none', border: 'none',
-                  color: 'var(--c-muted)', fontSize: 12, cursor: 'pointer',
+                  color: colors.textMute, fontSize: 12, cursor: 'pointer', fontFamily: type.family,
                 }}>← Volver</button>
               </>
             )
           ) : (
             <>
-              <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
+              <h2 style={{ ...ds.h2, marginBottom: 4 }}>
                 {modo === 'login' ? 'Bienvenido de nuevo' : 'Crea tu cuenta de socio'}
               </h2>
-              <p style={{ fontSize: 13, color: 'var(--c-muted)', marginBottom: 20 }}>
-                {modo === 'login' ? 'Accede a tu panel de socio Pidoo.' : 'Empieza a construir tu mini-marketplace.'}
+              <p style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 20 }}>
+                {modo === 'login' ? 'Accede a tu panel de socio Pidoo.' : 'Empieza a recibir pedidos hoy.'}
               </p>
 
-              <div style={{ display: 'flex', background: 'var(--c-surface2)', borderRadius: 8, padding: 3, marginBottom: 20, gap: 3 }}>
-                {['login', 'registro'].map(m => (
-                  <button key={m} onClick={() => { setModo(m); setError(null) }} style={{
-                    flex: 1, padding: '9px 0', borderRadius: 6, border: 'none',
-                    background: modo === m ? 'linear-gradient(135deg,#FF6B2C,#E85A1F)' : 'transparent',
-                    color: modo === m ? '#fff' : 'var(--c-muted)',
-                    fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                  }}>{m === 'login' ? 'Iniciar sesión' : 'Registrarse'}</button>
-                ))}
+              {/* Segmented tabs */}
+              <div style={{
+                display: 'flex', background: colors.surface2,
+                borderRadius: 999, padding: 3, marginBottom: 20, gap: 3,
+              }}>
+                {[
+                  { id: 'login', l: 'Iniciar sesión' },
+                  { id: 'registro', l: 'Registrarse' },
+                ].map(m => {
+                  const active = modo === m.id
+                  return (
+                    <button key={m.id} onClick={() => { setModo(m.id); setError(null) }} style={{
+                      flex: 1, padding: '10px 0', borderRadius: 999, border: 'none',
+                      background: active ? `linear-gradient(180deg, ${colors.ink2} 0%, ${colors.ink} 100%)` : 'transparent',
+                      color: active ? colors.cream : colors.textMute,
+                      fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                      fontFamily: type.family,
+                      boxShadow: active ? colors.shadowGlossy : 'none',
+                    }}>{m.l}</button>
+                  )
+                })}
               </div>
 
               <Field type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
@@ -172,17 +172,17 @@ export default function Login({ onBack }) {
 
               <ErrorBox msg={error} />
 
-              <button onClick={handle} disabled={loading} style={{
-                width: '100%', padding: '13px 0', borderRadius: 8, border: 'none',
-                background: 'linear-gradient(135deg,#FF6B2C,#E85A1F)',
-                color: '#fff', fontWeight: 700, cursor: 'pointer',
-                opacity: loading ? 0.6 : 1, marginBottom: 10,
-              }}>{loading ? 'Procesando...' : (modo === 'login' ? 'Iniciar sesión →' : 'Crear cuenta →')}</button>
+              <button onClick={handle} disabled={loading}
+                style={{ ...ds.glossyBtn, width: '100%', height: 46, opacity: loading ? 0.6 : 1, marginBottom: 10 }}>
+                {loading ? 'Procesando…' : (modo === 'login' ? 'Iniciar sesión' : 'Crear cuenta')}
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </button>
 
               {modo === 'login' && (
                 <button onClick={() => { setModo('reset'); setError(null) }} style={{
                   width: '100%', padding: '6px 0', background: 'none', border: 'none',
-                  color: 'var(--c-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  color: colors.textMute, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  fontFamily: type.family,
                 }}>¿Olvidaste tu contraseña?</button>
               )}
             </>
