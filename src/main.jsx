@@ -5,6 +5,12 @@ import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ConfigErrorScreen from './components/ConfigErrorScreen.jsx'
 import { SUPABASE_CONFIG_OK } from './lib/supabase'
+import { setupStatusBar, hideSplash } from './lib/capacitor'
+
+// Setup StatusBar nativo (no-op en web). overlay=true para safe-area.
+setupStatusBar().catch(() => {})
+// Tras 1.5s ocultar splash (configurado en capacitor.config.ts)
+setTimeout(() => { hideSplash().catch(() => {}) }, 1500)
 
 // Captura ultima de errores no manejados — log a consola.
 if (typeof window !== 'undefined') {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { SocioProvider, useSocio } from './context/SocioContext'
+import { RiderProvider, useRider } from './context/RiderContext'
 import Login from './pages/Login'
 import Landing from './pages/Landing'
 import Onboarding from './pages/Onboarding'
@@ -13,7 +14,24 @@ import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
 import BottomNav from './components/BottomNav'
 import SeguirPedido from './pages/SeguirPedido'
+import HeaderRider from './components/HeaderRider'
+import BottomNavRider from './components/BottomNavRider'
+import DrawerRider from './components/DrawerRider'
+import ModalPedidoEntrante from './components/ModalPedidoEntrante'
+import RiderEsperando from './pages/rider/RiderEsperando'
+import RiderPedidos from './pages/rider/RiderPedidos'
+import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
+import RiderChat from './pages/rider/RiderChat'
+import RiderCompletadas from './pages/rider/RiderCompletadas'
 import { colors } from './lib/uiStyles'
+
+// Detección síncrona: Capacitor expone window.Capacitor en runtime nativo.
+// En web (Vite dev o nginx) no existe → false sin flash.
+function isNativeRuntime() {
+  if (typeof window === 'undefined') return false
+  const C = window.Capacitor
+  return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform())
+}
 
 function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante }) {
   // Compat: 'facturas' y 'marketplace' redirigen a 'restaurantes' (pestanas eliminadas)
@@ -32,12 +50,10 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
 
   return (
     <div className="socio-shell" style={{ background: colors.bg, minHeight: '100vh' }}>
-      {/* Sidebar fija desktop */}
       <aside className="socio-sidebar">
         <HeaderNav section={section} setSection={setSection} variant="sidebar" />
       </aside>
 
-      {/* Mobile topbar — logo + campana */}
       <div className="socio-topbar">
         <HeaderNav section={section} setSection={setSection} variant="mobile" />
       </div>
@@ -53,67 +69,74 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
       </div>
 
       <style>{`
-        .socio-shell {
-          display: flex;
-          flex-direction: column;
-          min-height: 100vh;
-        }
-        .socio-sidebar {
-          display: none;
-        }
-        .socio-topbar {
-          display: block;
-          position: sticky;
-          top: 0;
-          z-index: 30;
-        }
-        .socio-main {
-          flex: 1;
-          min-width: 0;
-        }
-        .socio-content {
-          max-width: 1280px;
-          margin: 0 auto;
-          padding: 22px 24px calc(env(safe-area-inset-bottom) + 96px);
-        }
-        .socio-bottom {
-          position: sticky;
-          bottom: 0;
-          z-index: 30;
-        }
+        .socio-shell { display: flex; flex-direction: column; min-height: 100vh; }
+        .socio-sidebar { display: none; }
+        .socio-topbar { display: block; position: sticky; top: 0; z-index: 30; }
+        .socio-main { flex: 1; min-width: 0; }
+        .socio-content { max-width: 1280px; margin: 0 auto; padding: 22px 24px calc(env(safe-area-inset-bottom) + 96px); }
+        .socio-bottom { position: sticky; bottom: 0; z-index: 30; }
 
         @media (min-width: 900px) {
-          .socio-shell {
-            flex-direction: row;
-          }
+          .socio-shell { flex-direction: row; }
           .socio-sidebar {
-            display: flex;
-            flex-direction: column;
-            width: 240px;
-            min-width: 240px;
-            height: 100vh;
-            position: sticky;
-            top: 0;
+            display: flex; flex-direction: column;
+            width: 240px; min-width: 240px;
+            height: 100vh; position: sticky; top: 0;
             background: ${colors.paper};
             border-right: 1px solid ${colors.border};
             overflow-y: auto;
           }
-          .socio-topbar {
-            display: none;
-          }
-          .socio-main {
-            flex: 1;
-            min-width: 0;
-            min-height: 100vh;
-          }
-          .socio-content {
-            padding: 28px 32px 40px;
-          }
-          .socio-bottom {
-            display: none;
-          }
+          .socio-topbar { display: none; }
+          .socio-main { flex: 1; min-width: 0; min-height: 100vh; }
+          .socio-content { padding: 28px 32px 40px; }
+          .socio-bottom { display: none; }
         }
       `}</style>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// ShellRider — la app rider nativa (Capacitor Android)
+// ─────────────────────────────────────────────────────────────
+function ShellRider() {
+  const [tab, setTab] = useState('esperando') // esperando|pedidos|chat|completadas
+  const [openDetail, setOpenDetail] = useState(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const { asignacionesActivas } = useRider() || {}
+
+  // Si hay detalle abierto, ocupa toda la pantalla (sin bottom nav)
+  if (openDetail) {
+    return (
+      <div style={{ background: colors.cream, minHeight: '100vh' }}>
+        <RiderDetalleOrden pedido={openDetail} onBack={() => setOpenDetail(null)} />
+        <ModalPedidoEntrante />
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ background: colors.cream, minHeight: '100vh', paddingBottom: 70 }}>
+      <HeaderRider onOpenDrawer={() => setDrawerOpen(true)} />
+
+      {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} />}
+      {tab === 'pedidos'     && <RiderPedidos onOpenPedido={setOpenDetail} />}
+      {tab === 'chat'        && <RiderChat />}
+      {tab === 'completadas' && <RiderCompletadas />}
+
+      <BottomNavRider
+        active={tab}
+        onChange={(t) => { setTab(t); setOpenDetail(null) }}
+        asignacionesActivasCount={asignacionesActivas?.length || 0}
+      />
+
+      <DrawerRider
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onChange={(t) => setTab(t)}
+      />
+
+      <ModalPedidoEntrante />
     </div>
   )
 }
@@ -122,6 +145,7 @@ function Shell() {
   const { session, socio, loading } = useSocio()
   const [adminSection, setAdminSection] = useState('dashboard')
   const [detalleEstId, setDetalleEstId] = useState(null)
+  const isNative = isNativeRuntime()
 
   const openRestaurante = (id) => {
     if (!id) return
@@ -133,7 +157,6 @@ function Shell() {
     setAdminSection('restaurantes')
   }
 
-  // Listener global para navegacion entre secciones via window event.
   useEffect(() => {
     const handler = (e) => {
       const target = e?.detail
@@ -179,11 +202,23 @@ function Shell() {
     )
   }
   if (!session) {
+    // En APK nativa, ir directo a Login (sin landing comercial)
+    if (isNative) return <Login onBack={null} />
     if (vistaPublica === 'login') return <Login onBack={irALanding} />
     return <Landing onLogin={irALogin} />
   }
   if (!socio) return <Onboarding />
 
+  // ─── App nativa: shell de rider ───
+  if (isNative) {
+    return (
+      <RiderProvider>
+        <ShellRider />
+      </RiderProvider>
+    )
+  }
+
+  // ─── Web: panel admin ───
   return (
     <ShellAdmin
       section={adminSection}

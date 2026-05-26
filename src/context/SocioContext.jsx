@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { registerSocioPush, unregisterSocioPush } from '../lib/webPush'
+import { isNativePlatform } from '../lib/capacitor'
+import { registerSocioPushNative, unregisterSocioPushNative } from '../lib/pushNative'
 
 const SocioContext = createContext(null)
 
@@ -70,10 +72,18 @@ export function SocioProvider({ children }) {
     }
   }, [fetchSocio])
 
-  // Registrar push una vez por sesión (web VAPID)
+  // Registrar push una vez por sesión. En nativo usa FCM, en web usa VAPID.
   async function maybeRegisterPush(uid) {
     if (pushRegisteredRef.current) return
     pushRegisteredRef.current = true
+    const native = await isNativePlatform()
+    if (native) {
+      const res = await registerSocioPushNative(uid)
+      if (!res.ok && res.reason !== 'denied') {
+        console.warn('[SocioContext] FCM nativo no registrado:', res.reason)
+      }
+      return
+    }
     const res = await registerSocioPush(uid)
     if (!res.ok) {
       if (res.reason === 'no-vapid') {
@@ -146,7 +156,13 @@ export function SocioProvider({ children }) {
   }
 
   const logout = async () => {
-    try { if (user?.id) await unregisterSocioPush(user.id) } catch (_) {}
+    try {
+      if (user?.id) {
+        const native = await isNativePlatform()
+        if (native) await unregisterSocioPushNative(user.id)
+        else await unregisterSocioPush(user.id)
+      }
+    } catch (_) {}
     pushRegisteredRef.current = false
     await supabase.auth.signOut()
     setSocio(null)

@@ -1,0 +1,179 @@
+// RiderContext — Estado central de la app rider.
+//
+// Responsabilidades:
+//   - Cargar el socio del usuario logueado (`socios.user_id = user.id`).
+//   - Tracking online/offline optimista con llamadas a rider-online/offline.
+//   - GPS loop integrado con riderGeo cuando está online.
+//   - Realtime: detectar nuevas filas en `pedido_asignaciones` con `socio_id` y
+//     `estado='esperando_aceptacion'` → dispara modal pedido entrante.
+//   - Listener push nativo para fallback cuando realtime no llega (app cerrada).
+//   - Listado de asignaciones activas (aceptado, recogido, en_camino) para
+//     RiderPedidos.jsx.
+//
+// API expuesta:
+//   { socio, isOnline, asignacionPendiente, asignacionesActivas,
+//     setOnline(boolean), dismissPendiente(), refreshAsignaciones() }
+
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import { useSocio } from './SocioContext'
+import { riderOnline, riderOffline } from '../lib/riderApi'
+import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission } from '../lib/riderGeo'
+import { onPushReceived, onPushTapped } from '../lib/pushNative'
+
+const RiderCtx = createContext(null)
+export const useRider = () => useContext(RiderCtx)
+
+const ESTADOS_PEDIDO_ACTIVO_RIDER = ['recogido', 'en_camino']
+
+export function RiderProvider({ children }) {
+  const { socio, user, refreshSocio } = useSocio() || {}
+  const [isOnline, setIsOnline] = useState(false)
+  const [asignacionPendiente, setAsignacionPendiente] = useState(null) // { id, pedido_id, codigo, ... }
+  const [asignacionesActivas, setAsignacionesActivas] = useState([]) // pedidos en curso del rider
+  const channelRef = useRef(null)
+  const lastFetchRef = useRef(0)
+
+  // Hidratar isOnline desde socio.en_servicio cuando cargue
+  useEffect(() => {
+    if (socio) setIsOnline(!!socio.en_servicio)
+  }, [socio?.en_servicio])
+
+  // ─── Acción: cambiar online/offline ────────────────────────
+  const setOnline = async (next) => {
+    // Optimistic update
+    setIsOnline(next)
+    if (next) {
+      const granted = await requestLocationPermission()
+      if (!granted) {
+        console.warn('[RiderContext] permiso GPS denegado, abortando online')
+        setIsOnline(false)
+        return { ok: false, reason: 'gps_denied' }
+      }
+      const pos = await getCurrentPosition()
+      const res = await riderOnline({
+        latitud: pos?.latitud,
+        longitud: pos?.longitud,
+        accuracy: pos?.accuracy,
+      })
+      if (!res.ok) {
+        setIsOnline(false)
+        return res
+      }
+      startTracking({
+        onUpdate: () => {
+          // No hace falta hacer nada extra, riderApi.riderUpdateLocation ya
+          // persiste. Solo loggear.
+        },
+      })
+      refreshSocio?.()
+      return res
+    } else {
+      stopTracking()
+      const res = await riderOffline()
+      refreshSocio?.()
+      return res
+    }
+  }
+
+  // ─── Cargar asignaciones activas del rider ─────────────────
+  const refreshAsignaciones = async () => {
+    if (!socio?.id) return
+    lastFetchRef.current = Date.now()
+    // Pedidos en curso (aceptados, recogidos, en camino)
+    const { data: activos } = await supabase
+      .from('pedidos')
+      .select('id, codigo, estado, shipday_status, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at')
+      .eq('socio_id', socio.id)
+      .in('estado', ESTADOS_PEDIDO_ACTIVO_RIDER)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setAsignacionesActivas(activos || [])
+
+    // Asignación pendiente (esperando aceptación)
+    const { data: pendiente } = await supabase
+      .from('pedido_asignaciones')
+      .select('id, pedido_id, estado, created_at, pedidos!inner(codigo, total, modo_entrega, direccion_entrega, establecimientos(nombre, direccion))')
+      .eq('socio_id', socio.id)
+      .eq('estado', 'esperando_aceptacion')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (pendiente && !asignacionPendiente) {
+      setAsignacionPendiente(pendiente)
+    }
+  }
+
+  useEffect(() => {
+    if (!socio?.id) return
+    refreshAsignaciones()
+  }, [socio?.id])
+
+  // ─── Realtime: pedido_asignaciones del socio ───────────────
+  useEffect(() => {
+    if (!socio?.id) return
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current)
+    }
+    const ch = supabase
+      .channel(`rider-${socio.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'pedido_asignaciones',
+        filter: `socio_id=eq.${socio.id}`,
+      }, async (payload) => {
+        const newRow = payload.new
+        if (newRow?.estado === 'esperando_aceptacion') {
+          // Enriquecer con datos del pedido
+          const { data: pedido } = await supabase
+            .from('pedidos')
+            .select('codigo, total, modo_entrega, direccion_entrega, establecimientos(nombre, direccion)')
+            .eq('id', newRow.pedido_id)
+            .maybeSingle()
+          setAsignacionPendiente({ ...newRow, pedidos: pedido })
+        }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'pedido_asignaciones',
+        filter: `socio_id=eq.${socio.id}`,
+      }, () => { refreshAsignaciones() })
+      .subscribe()
+    channelRef.current = ch
+    return () => { supabase.removeChannel(ch); channelRef.current = null }
+  }, [socio?.id])
+
+  // ─── Listeners push: fallback cuando realtime no llega ─────
+  useEffect(() => {
+    const offRecv = onPushReceived(() => {
+      // Re-fetch para coger la asignación nueva
+      refreshAsignaciones()
+    })
+    const offTap = onPushTapped(() => {
+      refreshAsignaciones()
+    })
+    return () => { offRecv?.(); offTap?.() }
+  }, [socio?.id])
+
+  // ─── Dismiss asignación pendiente (tras aceptar/rechazar/timeout) ──
+  const dismissPendiente = () => {
+    setAsignacionPendiente(null)
+    // refrescar para mover a activas si aceptó
+    setTimeout(refreshAsignaciones, 500)
+  }
+
+  const value = useMemo(() => ({
+    socio,
+    user,
+    isOnline,
+    asignacionPendiente,
+    asignacionesActivas,
+    setOnline,
+    dismissPendiente,
+    refreshAsignaciones,
+  }), [socio, user, isOnline, asignacionPendiente, asignacionesActivas])
+
+  return <RiderCtx.Provider value={value}>{children}</RiderCtx.Provider>
+}
