@@ -27,8 +27,14 @@ import { colors } from './lib/uiStyles'
 
 // Detección síncrona: Capacitor expone window.Capacitor en runtime nativo.
 // En web (Vite dev o nginx) no existe → false sin flash.
+// TEMPORAL: si la URL contiene ?rider=1, fuerza modo rider en web para
+// pruebas sin APK. Quitar antes de release final.
 function isNativeRuntime() {
   if (typeof window === 'undefined') return false
+  try {
+    if (new URLSearchParams(window.location.search).get('rider') === '1') return true
+    if (localStorage.getItem('pidoo_force_rider') === '1') return true
+  } catch (_) {}
   const C = window.Capacitor
   return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform())
 }

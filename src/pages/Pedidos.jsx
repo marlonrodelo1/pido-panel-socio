@@ -123,11 +123,29 @@ export default function Pedidos() {
         Todos los pedidos asignados a tus riders.
       </p>
 
-      {/* Filtros */}
-      <div style={{ ...ds.card, padding: 18, marginBottom: 18 }}>
-        <FilterGroup label="Fecha"  options={RANGOS}  value={rango}  onChange={setRango} />
-        <FilterGroup label="Estado" options={ESTADOS} value={estado} onChange={setEstado} style={{ marginTop: 12 }} />
-        <FilterGroup label="Pago"   options={PAGOS}   value={pago}   onChange={setPago}   style={{ marginTop: 12 }} />
+      {/* Filtros compactos: 3 selects en fila */}
+      <div style={{
+        ...ds.card,
+        padding: '12px 14px', marginBottom: 18,
+        display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end',
+      }}>
+        <Select label="Fecha"  value={rango}  onChange={setRango}  options={RANGOS} />
+        <Select label="Estado" value={estado} onChange={setEstado} options={ESTADOS} />
+        <Select label="Pago"   value={pago}   onChange={setPago}   options={PAGOS} />
+        {(rango !== 'semana' || estado !== 'todos' || pago !== 'todos') && (
+          <button
+            onClick={() => { setRango('semana'); setEstado('todos'); setPago('todos') }}
+            style={{
+              marginLeft: 'auto', padding: '8px 14px',
+              borderRadius: 999, border: `1px solid ${colors.border}`,
+              background: 'transparent', color: colors.textDim,
+              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            Limpiar
+          </button>
+        )}
       </div>
 
       {/* Resumen línea */}
@@ -244,26 +262,44 @@ export default function Pedidos() {
   )
 }
 
-function FilterGroup({ label, options, value, onChange, style }) {
+/**
+ * Select compacto reutilizable. Native <select> con label arriba.
+ * Estilo coherente con la paleta cream/terracotta del design system.
+ */
+function Select({ label, value, onChange, options }) {
   return (
-    <div style={style}>
-      <div style={ds.label}>{label}</div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {options.map(o => {
-          const active = value === o.id
-          return (
-            <button key={o.id} onClick={() => onChange(o.id)} style={{
-              padding: '7px 14px', borderRadius: 999,
-              border: active ? `1px solid ${colors.ink}` : `1px solid ${colors.border}`,
-              background: active ? colors.ink : colors.paper,
-              color: active ? colors.cream : colors.textDim,
-              fontSize: type.xs, fontWeight: 600, cursor: 'pointer',
-              fontFamily: type.family,
-            }}>{o.label}</button>
-          )
-        })}
+    <label style={{
+      display: 'flex', flexDirection: 'column', gap: 4,
+      minWidth: 130, flex: '1 1 130px',
+    }}>
+      <span style={{
+        fontSize: 10, fontWeight: 700, color: colors.textMute,
+        textTransform: 'uppercase', letterSpacing: '0.06em',
+      }}>{label}</span>
+      <div style={{ position: 'relative' }}>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width: '100%', appearance: 'none', WebkitAppearance: 'none',
+            padding: '9px 32px 9px 12px', borderRadius: 10,
+            border: `1px solid ${colors.border}`, background: colors.paper,
+            color: colors.text, fontSize: 13, fontWeight: 600,
+            fontFamily: type.family, cursor: 'pointer',
+            outline: 'none',
+          }}
+        >
+          {options.map(o => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+        {/* Chevron */}
+        <span style={{
+          position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+          pointerEvents: 'none', color: colors.textMute, fontSize: 10,
+        }}>▾</span>
       </div>
-    </div>
+    </label>
   )
 }
 
