@@ -12,5 +12,8 @@ android/app/build/
 android/build/
 android/.gradle/
 android/local.properties
+android/keystore.properties
+*.jks
+*.keystore
 ios/App/build/
 ios/App/Pods/

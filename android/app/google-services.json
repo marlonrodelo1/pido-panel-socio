@@ -1,0 +1,166 @@
+{
+  "project_info": {
+    "project_number": "797553895667",
+    "project_id": "pidoo-push",
+    "storage_bucket": "pidoo-push.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:797553895667:android:be3d4a69f77604736daf86",
+        "android_client_info": {
+          "package_name": "com.pido.restaurante"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "797553895667-bt5i0mrmrfndd94ton3mkb5i92h9oqmk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.pido.restaurante",
+            "certificate_hash": "c01c05515d3dce61e6c9e529c1be59c914eb886d"
+          }
+        },
+        {
+          "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCh9KjiQ3o0LvVBCGj4KesdwtHILr8o_E0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "797553895667-u5tqm68599bggj1rieu3mi9s2ad2c6v4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "co.median.ios.bnlkxpx",
+                "app_store_id": "6759052572"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:797553895667:android:053801bfc36da7396daf86",
+        "android_client_info": {
+          "package_name": "com.pido.socio"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCh9KjiQ3o0LvVBCGj4KesdwtHILr8o_E0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "797553895667-u5tqm68599bggj1rieu3mi9s2ad2c6v4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "co.median.ios.bnlkxpx",
+                "app_store_id": "6759052572"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:797553895667:android:b336aa96d2029f296daf86",
+        "android_client_info": {
+          "package_name": "com.pidoo.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCh9KjiQ3o0LvVBCGj4KesdwtHILr8o_E0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "797553895667-u5tqm68599bggj1rieu3mi9s2ad2c6v4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "co.median.ios.bnlkxpx",
+                "app_store_id": "6759052572"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:797553895667:android:fb414c4c3b40e56f6daf86",
+        "android_client_info": {
+          "package_name": "es.pidoo.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCh9KjiQ3o0LvVBCGj4KesdwtHILr8o_E0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "797553895667-gr3vsgvcp85k0bh0b3iafkblv529g8kt.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "797553895667-u5tqm68599bggj1rieu3mi9s2ad2c6v4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "co.median.ios.bnlkxpx",
+                "app_store_id": "6759052572"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
