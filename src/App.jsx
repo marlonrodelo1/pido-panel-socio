@@ -10,6 +10,7 @@ import RestauranteDetalle from './pages/RestauranteDetalle'
 import Pedidos from './pages/Pedidos'
 import Configuracion from './pages/Configuracion'
 import MiSuscripcion from './pages/MiSuscripcion'
+import MiMarketplace from './pages/MiMarketplace'
 import EliminarCuenta from './pages/EliminarCuenta'
 import Soporte from './pages/Soporte'
 import HeaderNav from './components/HeaderNav'
@@ -42,7 +43,7 @@ function isNativeRuntime() {
 
 function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeRestaurante }) {
   // Compat: 'facturas' y 'marketplace' redirigen a 'restaurantes' (pestanas eliminadas)
-  const effectiveSection = (section === 'facturas' || section === 'marketplace') ? 'restaurantes' : section
+  const effectiveSection = (section === 'facturas') ? 'restaurantes' : section
   const page = {
     dashboard:            <Dashboard setSection={setSection} openRestaurante={openRestaurante} />,
     restaurantes:         <Restaurantes onOpenRestaurante={openRestaurante} />,
@@ -52,6 +53,7 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
     pedidos:              <Pedidos />,
     configuracion:        <Configuracion />,
     suscripcion:          <MiSuscripcion />,
+    marketplace:          <MiMarketplace />,
     'eliminar-cuenta':    <EliminarCuenta onBack={() => setSection('configuracion')} />,
     soporte:              <Soporte />,
   }[effectiveSection] || <Dashboard setSection={setSection} openRestaurante={openRestaurante} />
