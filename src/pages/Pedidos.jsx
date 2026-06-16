@@ -76,9 +76,12 @@ export default function Pedidos() {
         pedidoIds = Array.from(new Set((asigs || []).map((a) => a.pedido_id)))
       }
 
+      // Nota: se quitó el embed `rider_earnings(...)` porque esa tabla ya no
+      // existe (renombrada a _deprecated_rider_earnings) y el embed devolvía 400.
+      // El desglose de comisión del rider ya no tiene fuente de datos.
       let q = supabase
         .from('pedidos')
-        .select('id, codigo, estado, metodo_pago, total, created_at, establecimiento:establecimientos(nombre), rider_earnings(neto_rider, coste_envio, propina, comision_rider_sobre_subtotal)')
+        .select('id, codigo, estado, metodo_pago, total, created_at, establecimiento:establecimientos(nombre)')
         .order('created_at', { ascending: false })
         .limit(200)
 
@@ -95,16 +98,12 @@ export default function Pedidos() {
       if (pago !== 'todos') q = q.eq('metodo_pago', pago)
       const { data } = await q
 
-      const pedidosNorm = (data || []).map(p => {
-        const re = Array.isArray(p.rider_earnings) ? p.rider_earnings[0] : p.rider_earnings
-        return {
-          ...p,
-          comision_generada: re?.neto_rider ?? 0,
-          _re_envio: re?.coste_envio ?? 0,
-          _re_propina: re?.propina ?? 0,
-          _re_comision: re?.comision_rider_sobre_subtotal ?? 0,
-        }
-      })
+      // Sin tabla rider_earnings → no hay desglose de comisión; se deja en null
+      // para mostrar "—" en la columna Comisión (no inventamos cifras).
+      const pedidosNorm = (data || []).map(p => ({
+        ...p,
+        comision_generada: null,
+      }))
       setPedidos(pedidosNorm)
       setLoading(false)
     })()
@@ -112,8 +111,7 @@ export default function Pedidos() {
 
   const resumen = useMemo(() => {
     const total = pedidos.reduce((a, p) => a + Number(p.total || 0), 0)
-    const comision = pedidos.reduce((a, p) => a + Number(p.comision_generada || 0), 0)
-    return { count: pedidos.length, total, comision }
+    return { count: pedidos.length, total }
   }, [pedidos])
 
   return (
@@ -148,17 +146,14 @@ export default function Pedidos() {
         )}
       </div>
 
-      {/* Resumen línea */}
+      {/* Resumen línea — la comisión del rider ya no tiene fuente (rider_earnings
+          eliminada), por eso se oculta ese segmento en vez de mostrar 0. */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16, marginBottom: 14,
         fontSize: type.sm, flexWrap: 'wrap',
       }}>
         <span style={{ color: colors.textDim }}>
           <strong style={{ color: colors.text }}>{resumen.count}</strong> pedidos · total <strong style={{ color: colors.text }}>{resumen.total.toFixed(2)} €</strong>
-        </span>
-        <div style={{ width: 1, height: 16, background: colors.border }}/>
-        <span style={{ color: colors.terracotta, fontWeight: 700 }}>
-          Mi comisión: {resumen.comision.toFixed(2)} €
         </span>
       </div>
 
@@ -306,13 +301,13 @@ function Select({ label, value, onChange, options }) {
 function DetalleModal({ pedidoId, onClose }) {
   const [pedido, setPedido] = useState(null)
   const [items, setItems] = useState([])
-  const [earning, setEarning] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     ;(async () => {
       setLoading(true)
-      const [pedRes, itemsRes, earnRes] = await Promise.all([
+      // Se quitó la consulta a rider_earnings (tabla eliminada → daba 404).
+      const [pedRes, itemsRes] = await Promise.all([
         supabase
           .from('pedidos')
           .select('*, establecimiento:establecimientos(nombre, telefono, direccion), usuario:usuarios(nombre, apellido, telefono, direccion, latitud, longitud)')
@@ -322,15 +317,9 @@ function DetalleModal({ pedidoId, onClose }) {
           .from('pedido_items')
           .select('*')
           .eq('pedido_id', pedidoId),
-        supabase
-          .from('rider_earnings')
-          .select('*')
-          .eq('pedido_id', pedidoId)
-          .maybeSingle(),
       ])
       setPedido(pedRes.data || null)
       setItems(itemsRes.data || [])
-      setEarning(earnRes.data || null)
       setLoading(false)
     })()
   }, [pedidoId])
@@ -467,20 +456,9 @@ function DetalleModal({ pedidoId, onClose }) {
               <Row k="Total pagado" v={`${Number(pedido.total || 0).toFixed(2)} €`} highlight />
             </Section>
 
-            {earning && (
-              <div style={{
-                background: colors.sageSoft, borderRadius: 12, padding: 16,
-              }}>
-                <div style={{
-                  fontSize: 11, fontWeight: 800, color: colors.sage2,
-                  letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10,
-                }}>Mi comisión rider</div>
-                <Row k="Lo que cobras" v={`${Number(earning.neto_rider || 0).toFixed(2)} €`} accent />
-                {earning.coste_envio != null && <Row k="Envío" v={`${Number(earning.coste_envio).toFixed(2)} €`} muted />}
-                {earning.comision_rider_sobre_subtotal != null && <Row k="10% subtotal" v={`${Number(earning.comision_rider_sobre_subtotal).toFixed(2)} €`} muted />}
-                {earning.propina != null && <Row k="Propina" v={`${Number(earning.propina).toFixed(2)} €`} muted />}
-              </div>
-            )}
+            {/* Bloque "Mi comisión rider" eliminado: dependía de la tabla
+                rider_earnings que ya no existe. Sin fuente de datos no se
+                muestran cifras de comisión del rider. */}
 
             <Section title="Timeline">
               <Timeline pedido={pedido} />

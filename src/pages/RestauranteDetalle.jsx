@@ -30,7 +30,9 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
         const desde7 = new Date()
         desde7.setDate(desde7.getDate() - 7)
 
-        const [estRes, vincRes, pedRes, porCobrarRes, detRes, factRes] = await Promise.all([
+        // get_por_cobrar_socio ya NO existe en la DB (404) → se quita la llamada.
+        // TODO: recalcular "por cobrar" cuando exista la fuente de datos.
+        const [estRes, vincRes, pedRes, detRes, factRes] = await Promise.all([
           supabase.from('establecimientos')
             .select('id, nombre, logo_url, telefono, email, direccion, razon_social, nif, direccion_fiscal, codigo_postal, ciudad_fiscal, provincia_fiscal, slug, tipo')
             .eq('id', establecimiento_id).maybeSingle(),
@@ -42,7 +44,6 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
             .gte('created_at', desde7.toISOString())
             .order('created_at', { ascending: false }).limit(50),
-          supabase.rpc('get_por_cobrar_socio'),
           supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
           supabase.from('facturas_socio_restaurante')
             .select('id, numero, fecha_emision, total, estado, pdf_url, pedidos_count, periodo_inicio, periodo_fin')
@@ -54,8 +55,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
         setEstablecimiento(estRes.data || null)
         setVinculacion(vincRes.data || null)
         setPedidos7d(pedRes.data || [])
-        const fila = (porCobrarRes.data || []).find(r => r.establecimiento_id === establecimiento_id) || null
-        setResumenCobro(fila)
+        setResumenCobro(null)
         setDetalleEarnings(detRes.data || [])
         setHistoricoFacturas(factRes.data || [])
       } catch (e) {
@@ -125,16 +125,15 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
       ;(async () => {
         if (!establecimiento_id || !socio?.id) return
         try {
-          const [porCobrarRes, factRes, detRes] = await Promise.all([
-            supabase.rpc('get_por_cobrar_socio'),
+          // get_por_cobrar_socio eliminada (404) → no se vuelve a llamar.
+          const [factRes, detRes] = await Promise.all([
             supabase.from('facturas_socio_restaurante')
               .select('id, numero, fecha_emision, total, estado, pdf_url, pedidos_count, periodo_inicio, periodo_fin')
               .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
               .order('fecha_emision', { ascending: false }).limit(20),
             supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
           ])
-          const fila = (porCobrarRes.data || []).find(r => r.establecimiento_id === establecimiento_id) || null
-          setResumenCobro(fila)
+          setResumenCobro(null)
           setHistoricoFacturas(factRes.data || [])
           setDetalleEarnings(detRes.data || [])
         } catch (e) { console.error(e) }

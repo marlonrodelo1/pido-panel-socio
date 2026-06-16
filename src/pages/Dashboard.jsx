@@ -17,18 +17,44 @@ function endOfToday() {
 }
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
 
+function gotoSection(setSection, target) {
+  if (setSection) setSection(target)
+  else window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: target }))
+}
+
 export default function Dashboard({ setSection, openRestaurante }) {
   const { socio } = useSocio()
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     pedidosHoy: 0, pedidosSemana: 0, pedidosMes: 0,
-    ingresosHoy: 0, ingresosSemana: 0, ingresosMes: 0,
-    porCobrar: 0, pedidosPorCobrar: 0,
+    // null = sin fuente de datos disponible → se muestra "—"
+    ingresosHoy: null, ingresosSemana: null, ingresosMes: null,
+    porCobrar: null, pedidosPorCobrar: 0,
     restaurantesActivos: 0,
   })
   const [topRestaurantes, setTopRestaurantes] = useState([])
+  const [subActiva, setSubActiva] = useState(null) // null=cargando, true/false una vez resuelto
 
   const fiscalCompleto = !!(socio?.razon_social && socio?.nif && socio?.direccion_fiscal && socio?.codigo_postal && socio?.ciudad)
+
+  // Estado de la suscripción (para el banner de 7 días)
+  useEffect(() => {
+    if (!socio?.id) return
+    let cancel = false
+    ;(async () => {
+      try {
+        const { data } = await supabase
+          .from('suscripciones_socio')
+          .select('estado')
+          .eq('socio_id', socio.id)
+          .maybeSingle()
+        if (!cancel) setSubActiva(['active', 'trialing'].includes(data?.estado))
+      } catch (_) {
+        if (!cancel) setSubActiva(false)
+      }
+    })()
+    return () => { cancel = true }
+  }, [socio?.id])
 
   useEffect(() => {
     if (!socio?.id) return
@@ -40,7 +66,8 @@ export default function Dashboard({ setSection, openRestaurante }) {
         const mes = startOfMonth()
         const fin = endOfToday()
 
-        const [ph, ps, pm, rest, ingHoy, ingSem, ingMes, porCobrar] = await Promise.all([
+        // Conteos de pedidos + restaurantes (fuentes que SÍ existen)
+        const [ph, ps, pm, rest] = await Promise.all([
           supabase.from('pedidos').select('id', { count: 'exact', head: true })
             .eq('socio_id', socio.id).gte('created_at', hoy.toISOString()),
           supabase.from('pedidos').select('id', { count: 'exact', head: true })
@@ -49,29 +76,24 @@ export default function Dashboard({ setSection, openRestaurante }) {
             .eq('socio_id', socio.id).gte('created_at', mes.toISOString()),
           supabase.from('socio_establecimiento').select('id', { count: 'exact', head: true })
             .eq('socio_id', socio.id).eq('estado', 'activa'),
-          supabase.rpc('get_ingresos_socio_rango', { p_desde: hoy.toISOString(), p_hasta: fin.toISOString() }),
-          supabase.rpc('get_ingresos_socio_rango', { p_desde: semana.toISOString(), p_hasta: fin.toISOString() }),
-          supabase.rpc('get_ingresos_socio_rango', { p_desde: mes.toISOString(), p_hasta: fin.toISOString() }),
-          supabase.rpc('get_por_cobrar_socio'),
         ])
 
-        const ingRow = (data) => (Array.isArray(data?.data) && data.data[0]) || data?.data || {}
-        const ingHoyRow = ingRow(ingHoy)
-        const ingSemRow = ingRow(ingSem)
-        const ingMesRow = ingRow(ingMes)
-
-        const pcRows = porCobrar?.data || []
-        const totalPorCobrar = pcRows.reduce((s, r) => s + Number(r.total_neto || 0), 0)
-        const pedidosPorCobrar = pcRows.reduce((s, r) => s + Number(r.pedidos_count || 0), 0)
+        // Ingresos por rango y "por cobrar": las RPC get_ingresos_socio_rango /
+        // get_por_cobrar_socio ya NO existen en la DB (devolvían 404). Se
+        // eliminan las llamadas para no ensuciar la consola con peticiones
+        // fallidas; se muestra "—" en las tarjetas de importes.
+        // TODO: recalcular ingresos/por-cobrar cuando exista la fuente de datos.
+        const ingresosHoy = null, ingresosSemana = null, ingresosMes = null
+        const porCobrar = null, pedidosPorCobrar = 0, pcRows = []
 
         setStats({
           pedidosHoy: ph.count || 0,
           pedidosSemana: ps.count || 0,
           pedidosMes: pm.count || 0,
-          ingresosHoy: Number(ingHoyRow.total_neto || 0),
-          ingresosSemana: Number(ingSemRow.total_neto || 0),
-          ingresosMes: Number(ingMesRow.total_neto || 0),
-          porCobrar: totalPorCobrar,
+          ingresosHoy,
+          ingresosSemana,
+          ingresosMes,
+          porCobrar,
           pedidosPorCobrar,
           restaurantesActivos: rest.count || 0,
         })
@@ -80,6 +102,8 @@ export default function Dashboard({ setSection, openRestaurante }) {
       setLoading(false)
     })()
   }, [socio])
+
+  const fmtIngreso = (v) => (loading ? '…' : v == null ? '—' : euro(v))
 
   return (
     <div>
@@ -90,6 +114,29 @@ export default function Dashboard({ setSection, openRestaurante }) {
         </p>
       </div>
 
+      {/* Banner aviso 7 días — solo si NO hay suscripción activa/trial */}
+      {subActiva === false && (
+        <div style={{
+          background: colors.warningSoft, color: colors.warning,
+          border: `1px solid ${colors.warning}`,
+          padding: '12px 14px', borderRadius: 10, marginBottom: 18,
+          fontSize: type.sm, display: 'flex', alignItems: 'center',
+          gap: 10, flexWrap: 'wrap', fontWeight: 600, lineHeight: 1.5,
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span style={{ flex: 1, minWidth: 200 }}>
+            Tienes 7 días para añadir tu tarjeta y mantener tu marketplace activo. Si no, se pausará.
+          </span>
+          <button
+            onClick={() => gotoSection(setSection, 'suscripcion')}
+            style={{
+              ...ds.glossyBtn, height: 34, fontSize: type.xs, whiteSpace: 'nowrap',
+            }}>
+            Añadir tarjeta
+          </button>
+        </div>
+      )}
+
       {!fiscalCompleto && (
         <div style={{
           background: colors.dangerSoft, color: colors.danger,
@@ -98,10 +145,7 @@ export default function Dashboard({ setSection, openRestaurante }) {
           gap: 10, flexWrap: 'wrap',
         }}>
           <span>⚠️ Completa tus datos fiscales para poder emitir facturas a los restaurantes.</span>
-          <button onClick={() => {
-            if (setSection) setSection('configuracion')
-            else window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'configuracion' }))
-          }}
+          <button onClick={() => gotoSection(setSection, 'configuracion')}
              style={{ ...ds.dangerBtn, height: 32, fontSize: type.xs }}>
             Completar ahora
           </button>
@@ -110,10 +154,10 @@ export default function Dashboard({ setSection, openRestaurante }) {
 
       {/* Stat cards principales */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, marginBottom: 18 }}>
-        <StatCard label="Hoy" value={loading ? '…' : euro(stats.ingresosHoy)} sub={`${stats.pedidosHoy} pedido${stats.pedidosHoy !== 1 ? 's' : ''}`} />
-        <StatCard label="Esta semana" value={loading ? '…' : euro(stats.ingresosSemana)} sub={`${stats.pedidosSemana} pedido${stats.pedidosSemana !== 1 ? 's' : ''}`} tone="sage" />
-        <StatCard label="Este mes" value={loading ? '…' : euro(stats.ingresosMes)} sub={`${stats.pedidosMes} pedido${stats.pedidosMes !== 1 ? 's' : ''}`} />
-        <StatCard label="Por cobrar" value={loading ? '…' : euro(stats.porCobrar)} sub={`${stats.pedidosPorCobrar} sin facturar`} tone="terracotta" />
+        <StatCard label="Hoy" value={fmtIngreso(stats.ingresosHoy)} sub={`${stats.pedidosHoy} pedido${stats.pedidosHoy !== 1 ? 's' : ''}`} />
+        <StatCard label="Esta semana" value={fmtIngreso(stats.ingresosSemana)} sub={`${stats.pedidosSemana} pedido${stats.pedidosSemana !== 1 ? 's' : ''}`} tone="sage" />
+        <StatCard label="Este mes" value={fmtIngreso(stats.ingresosMes)} sub={`${stats.pedidosMes} pedido${stats.pedidosMes !== 1 ? 's' : ''}`} />
+        <StatCard label="Por cobrar" value={fmtIngreso(stats.porCobrar)} sub={`${stats.pedidosPorCobrar} sin facturar`} tone="terracotta" />
       </div>
 
       {/* Dos cards: restaurantes + próxima factura */}
@@ -155,17 +199,17 @@ export default function Dashboard({ setSection, openRestaurante }) {
               <div style={{
                 fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
                 letterSpacing: '0.06em', textTransform: 'uppercase',
-              }}>Próxima factura</div>
+              }}>Mi suscripción Pidoo</div>
               <div style={{
                 fontSize: 26, fontWeight: 800, color: colors.text, marginTop: 6,
                 letterSpacing: '-0.5px',
               }}>
-                {socio?.facturacion_multirider_activa ? '39,00 €' : '—'}
+                {subActiva === null ? '…' : subActiva ? 'Activa' : 'Sin plan'}
               </div>
               <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 4 }}>
-                {socio?.facturacion_multirider_activa
-                  ? `Plan multi-rider · ${socio?.n_riders_actual ?? 1} riders`
-                  : `Sin plan activo (${socio?.n_riders_actual ?? 1} rider)`}
+                {subActiva === false
+                  ? 'Añade tu tarjeta para activar tu marketplace'
+                  : 'Tu plan de marketplace · 30 €/mes'}
               </div>
             </div>
             <div style={{
@@ -177,8 +221,8 @@ export default function Dashboard({ setSection, openRestaurante }) {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
             </div>
           </div>
-          <button onClick={() => setSection?.('configuracion')} style={{ ...ds.secondaryBtn, marginTop: 14, height: 34 }}>
-            Ver facturación
+          <button onClick={() => gotoSection(setSection, 'suscripcion')} style={{ ...ds.secondaryBtn, marginTop: 14, height: 34 }}>
+            Ver suscripción
           </button>
         </div>
       </div>

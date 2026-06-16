@@ -70,6 +70,9 @@ export default function Configuracion() {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Mi suscripción Pidoo — acceso accesible también en móvil */}
+        <SuscripcionAccesoCard />
+
         {/* Datos personales */}
         <Card>
           <h2 style={{ ...ds.h2, marginBottom: 14 }}>Datos personales</h2>
@@ -217,6 +220,36 @@ export default function Configuracion() {
 
 function Card({ children, style }) {
   return <div style={{ ...ds.card, padding: 20, ...style }}>{children}</div>
+}
+
+// Acceso a la página de suscripción. En desktop existe en el menú lateral,
+// pero en móvil (BottomNav) no hay entrada → este botón da acceso desde Ajustes.
+function SuscripcionAccesoCard() {
+  const irASuscripcion = () => {
+    try { window.dispatchEvent(new CustomEvent('pidoo:goto', { detail: 'suscripcion' })) } catch (_) {}
+  }
+  return (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: 11,
+          background: colors.terracottaSoft, color: colors.terracotta,
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...ds.h2, margin: 0 }}>Mi suscripción</div>
+          <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+            Tu plan Pidoo para tener tu marketplace público.
+          </div>
+        </div>
+        <button onClick={irASuscripcion} style={{ ...ds.secondaryBtn, whiteSpace: 'nowrap' }}>
+          Ver suscripción
+        </button>
+      </div>
+    </Card>
+  )
 }
 
 function Field({ label, children, full }) {
