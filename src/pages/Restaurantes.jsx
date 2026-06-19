@@ -34,6 +34,8 @@ export default function Restaurantes({ onOpenRestaurante }) {
   const [modalSolicitar, setModalSolicitar] = useState(null)
   const [modalRechazar, setModalRechazar] = useState(null)
   const [respondiendo, setRespondiendo] = useState(null)
+  const [modalProponer, setModalProponer] = useState(null)
+  const [proponiendo, setProponiendo] = useState(false)
 
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -175,6 +177,34 @@ export default function Restaurantes({ onOpenRestaurante }) {
     }
   }
 
+  const proponerTarifa = async () => {
+    if (!modalProponer) return
+    const m = modalProponer
+    setProponiendo(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch(`${FUNCTIONS_URL}/proponer-tarifa-socio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          socio_establecimiento_id: m.vinc.id,
+          tarifa_base: Number(m.tarifa_base),
+          tarifa_radio_base_km: Number(m.tarifa_radio_base_km),
+          tarifa_precio_km: Number(m.tarifa_precio_km),
+          tarifa_maxima: m.tarifa_maxima === '' || m.tarifa_maxima == null ? null : Number(m.tarifa_maxima),
+        }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || !data?.ok) throw new Error(data?.error || `Error (${r.status})`)
+      setModalProponer(null)
+      await load()
+    } catch (e) {
+      setModalProponer(prev => prev ? ({ ...prev, error: e.message }) : null)
+    } finally {
+      setProponiendo(false)
+    }
+  }
+
   const filtrados = buscador.filter(r =>
     !query || r.nombre.toLowerCase().includes(query.toLowerCase())
   )
@@ -206,7 +236,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
       {loading ? (
         <div style={{ color: colors.textMute, fontSize: type.sm, padding: 22 }}>Cargando…</div>
       ) : tab === 'vinculados' ? (
-        renderVinculados({ vinculados, onOpenRestaurante, setTab })
+        renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', error: null }) })
       ) : tab === 'propuestas' ? (
         renderPropuestas({
           propuestas, respondiendo,
@@ -285,6 +315,16 @@ export default function Restaurantes({ onOpenRestaurante }) {
           onClose={() => setModalRechazar(null)}
         />
       )}
+
+      {modalProponer && (
+        <ModalProponer
+          state={modalProponer}
+          loading={proponiendo}
+          onChange={(patch) => setModalProponer(m => ({ ...m, ...patch }))}
+          onConfirm={proponerTarifa}
+          onClose={() => setModalProponer(null)}
+        />
+      )}
     </div>
   )
 }
@@ -322,7 +362,7 @@ function PillTabs({ tabs, value, onChange }) {
   )
 }
 
-function renderVinculados({ vinculados, onOpenRestaurante, setTab }) {
+function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer }) {
   if (vinculados.length === 0) {
     return (
       <div style={{ ...ds.card, textAlign: 'center', padding: 30 }}>
@@ -412,6 +452,12 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab }) {
                 </div>
               )}
             </div>
+            {v.estado === 'activa' && (
+              <button
+                onClick={(ev) => { ev.stopPropagation(); onProponer && onProponer(v) }}
+                style={{ ...ds.secondaryBtn, width: '100%' }}
+              >Proponer tarifa</button>
+            )}
           </div>
         )
       })}
@@ -446,9 +492,11 @@ function renderPropuestas({ propuestas, respondiendo, onAceptar, onRechazar }) {
               <div>
                 <div style={{ ...ds.h2, marginBottom: 0 }}>{e.nombre || '—'}</div>
                 <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 4 }}>
-                  Propuesta de {v.tarifa_pendiente_origen === 'restaurante' ? 'el restaurante' : v.tarifa_pendiente_origen || 'sistema'}
+                  {v.tarifa_pendiente_origen === 'socio'
+                    ? 'Tu propuesta · esperando al restaurante'
+                    : 'Propuesta del restaurante'}
                   {' · '}
-                  recibida {formatFechaCorta(v.tarifa_pendiente_at)}
+                  {formatFechaCorta(v.tarifa_pendiente_at)}
                 </div>
               </div>
               {cuenta && (
@@ -466,24 +514,24 @@ function renderPropuestas({ propuestas, respondiendo, onAceptar, onRechazar }) {
 
             <TablaComparativa filas={filas} actual={actual} propuesta={propuesta} />
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => onRechazar(v)}
-                disabled={respondiendo === v.id || cuenta?.expirada}
-                style={{
-                  ...ds.dangerBtn,
-                  opacity: (respondiendo === v.id || cuenta?.expirada) ? 0.6 : 1,
-                }}
-              >Rechazar</button>
-              <button
-                onClick={() => onAceptar(v)}
-                disabled={respondiendo === v.id || cuenta?.expirada}
-                style={{
-                  ...ds.glossyBtn,
-                  opacity: (respondiendo === v.id || cuenta?.expirada) ? 0.6 : 1,
-                }}
-              >{respondiendo === v.id ? 'Procesando…' : 'Aceptar nueva tarifa'}</button>
-            </div>
+            {v.tarifa_pendiente_origen === 'socio' ? (
+              <div style={{ marginTop: 16, fontSize: type.sm, color: colors.textMute, textAlign: 'right' }}>
+                Esperando a que el restaurante acepte o rechace tu propuesta.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => onRechazar(v)}
+                  disabled={respondiendo === v.id || cuenta?.expirada}
+                  style={{ ...ds.dangerBtn, opacity: (respondiendo === v.id || cuenta?.expirada) ? 0.6 : 1 }}
+                >Rechazar</button>
+                <button
+                  onClick={() => onAceptar(v)}
+                  disabled={respondiendo === v.id || cuenta?.expirada}
+                  style={{ ...ds.glossyBtn, opacity: (respondiendo === v.id || cuenta?.expirada) ? 0.6 : 1 }}
+                >{respondiendo === v.id ? 'Procesando…' : 'Aceptar nueva tarifa'}</button>
+              </div>
+            )}
           </div>
         )
       })}
@@ -661,6 +709,47 @@ function ModalRechazar({ state, loading, onChange, onConfirm, onClose }) {
         <button onClick={onClose} style={ds.secondaryBtn} disabled={loading}>Cancelar</button>
         <button onClick={onConfirm} disabled={loading} style={ds.dangerBtn}>
           {loading ? 'Procesando…' : 'Rechazar propuesta'}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
+  const campos = [
+    { k: 'tarifa_base', l: 'Tarifa base (€)', req: true },
+    { k: 'tarifa_radio_base_km', l: 'Radio incluido (km)', req: true },
+    { k: 'tarifa_precio_km', l: 'Precio km extra (€)', req: true },
+    { k: 'tarifa_maxima', l: 'Tarifa máxima (€)', req: false },
+  ]
+  const completo = state.tarifa_base !== '' && state.tarifa_radio_base_km !== '' && state.tarifa_precio_km !== ''
+  return (
+    <ModalShell onClose={onClose}>
+      <h2 style={{ ...ds.h2, marginBottom: 6 }}>Proponer tarifa</h2>
+      <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 16 }}>
+        Propones a <b style={{ color: colors.text }}>{state.vinc.establecimiento?.nombre}</b> la tarifa de reparto que cobrarás por pedido. El restaurante tiene 7 días para aceptarla o rechazarla.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        {campos.map(c => (
+          <div key={c.k}>
+            <label style={{ fontSize: 11, color: colors.textMute, fontWeight: 600, display: 'block', marginBottom: 4 }}>{c.l}</label>
+            <input
+              type="number" step="0.01" min="0"
+              value={state[c.k] ?? ''}
+              onChange={(e) => onChange({ [c.k]: e.target.value })}
+              placeholder={c.req ? 'Obligatorio' : 'Opcional'}
+              style={ds.input}
+            />
+          </div>
+        ))}
+      </div>
+      {state.error && (
+        <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: colors.dangerSoft, color: colors.danger, fontSize: type.xs, fontWeight: 600 }}>{state.error}</div>
+      )}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button onClick={onClose} style={ds.secondaryBtn} disabled={loading}>Cancelar</button>
+        <button onClick={onConfirm} disabled={!completo || loading} style={{ ...ds.glossyBtn, opacity: (!completo || loading) ? 0.5 : 1 }}>
+          {loading ? 'Enviando…' : 'Enviar propuesta'}
         </button>
       </div>
     </ModalShell>
