@@ -78,13 +78,24 @@ export default function Dashboard({ setSection, openRestaurante }) {
             .eq('socio_id', socio.id).eq('estado', 'activa'),
         ])
 
-        // Ingresos por rango y "por cobrar": las RPC get_ingresos_socio_rango /
-        // get_por_cobrar_socio ya NO existen en la DB (devolvían 404). Se
-        // eliminan las llamadas para no ensuciar la consola con peticiones
-        // fallidas; se muestra "—" en las tarjetas de importes.
-        // TODO: recalcular ingresos/por-cobrar cuando exista la fuente de datos.
-        const ingresosHoy = null, ingresosSemana = null, ingresosMes = null
-        const porCobrar = null, pedidosPorCobrar = 0, pcRows = []
+        // Ingresos por rango + por cobrar. RPCs seguras: derivan el socio de
+        // auth.uid() (no aceptan socio_id). Ingreso = envío+propina de los
+        // pedidos delivery entregados del socio.
+        const finIso = fin.toISOString()
+        const [rih, ris, rim, rpcCobrar, rpr] = await Promise.all([
+          supabase.rpc('get_ingresos_socio_rango', { p_desde: hoy.toISOString(), p_hasta: finIso }),
+          supabase.rpc('get_ingresos_socio_rango', { p_desde: semana.toISOString(), p_hasta: finIso }),
+          supabase.rpc('get_ingresos_socio_rango', { p_desde: mes.toISOString(), p_hasta: finIso }),
+          supabase.rpc('get_por_cobrar_socio'),
+          supabase.rpc('get_socio_por_cobrar_restaurantes'),
+        ])
+        const ingresosHoy = rih.error ? null : (rih.data ?? 0)
+        const ingresosSemana = ris.error ? null : (ris.data ?? 0)
+        const ingresosMes = rim.error ? null : (rim.data ?? 0)
+        const pcRow = Array.isArray(rpcCobrar.data) ? rpcCobrar.data[0] : rpcCobrar.data
+        const porCobrar = rpcCobrar.error ? null : (pcRow?.total ?? 0)
+        const pedidosPorCobrar = pcRow?.pedidos ?? 0
+        const pcRows = rpr.data || []
 
         setStats({
           pedidosHoy: ph.count || 0,

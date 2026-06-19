@@ -55,8 +55,8 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
         setEstablecimiento(estRes.data || null)
         setVinculacion(vincRes.data || null)
         setPedidos7d(pedRes.data || [])
-        setResumenCobro(null)
-        setDetalleEarnings(detRes.data || [])
+        setResumenCobro(Array.isArray(detRes.data) ? (detRes.data[0] || null) : (detRes.data || null))
+        setDetalleEarnings([])
         setHistoricoFacturas(factRes.data || [])
       } catch (e) {
         console.error(e)
