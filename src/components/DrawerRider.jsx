@@ -1,24 +1,24 @@
-// DrawerRider — Side drawer con foto + nombre + menú + link admin web + logout.
-import { X, ExternalLink, LifeBuoy, LogOut, User } from 'lucide-react'
+// DrawerRider — Side drawer con foto + nombre + menú de gestión + logout.
+// App única: la gestión admin se navega DENTRO de la app (sin abrir navegador).
+import { X, LifeBuoy, LogOut, Store, Utensils, Settings, Trash2 } from 'lucide-react'
 import { useSocio } from '../context/SocioContext'
-import { getPlugin } from '../lib/capacitor'
 import { colors } from '../lib/uiStyles'
 
-export default function DrawerRider({ open, onClose, onChange }) {
+// items admin que se abren a pantalla completa dentro del shell rider.
+// la clave coincide con la vista que ShellRider renderiza en adminView.
+const ADMIN_ITEMS = [
+  { key: 'marketplace',     label: 'Mi marketplace', Icon: Store },
+  { key: 'restaurantes',    label: 'Restaurantes',   Icon: Utensils },
+  { key: 'configuracion',   label: 'Configuración',  Icon: Settings },
+  { key: 'soporte',         label: 'Soporte',        Icon: LifeBuoy },
+]
+
+export default function DrawerRider({ open, onClose, onNavigate }) {
   const { socio, logout } = useSocio() || {}
 
   if (!open) return null
 
-  async function abrirAdminWeb() {
-    const Browser = await getPlugin('Browser')
-    const url = 'https://socio.pidoo.es'
-    if (Browser) {
-      try { await Browser.open({ url }) } catch (_) { window.open(url, '_blank') }
-    } else {
-      window.open(url, '_blank')
-    }
-    onClose?.()
-  }
+  const goAdmin = (key) => { onNavigate?.(key); onClose?.() }
 
   return (
     <div
@@ -42,6 +42,7 @@ export default function DrawerRider({ open, onClose, onChange }) {
           display: 'flex', flexDirection: 'column', gap: 14,
           animation: 'slideRight 0.22s ease',
           boxShadow: '6px 0 24px rgba(26,24,21,0.18)',
+          overflowY: 'auto',
         }}
       >
         <style>{`@keyframes slideRight { from { transform: translateX(-100%); } to { transform: translateX(0); } }`}</style>
@@ -77,18 +78,26 @@ export default function DrawerRider({ open, onClose, onChange }) {
 
         <div style={{ height: 1, background: colors.border, marginTop: 4 }} />
 
-        <button onClick={() => { onChange?.('chat'); onClose?.() }} style={menuBtnStyle}>
-          <LifeBuoy size={16} strokeWidth={2.2} />
-          <span>Soporte rider</span>
-        </button>
+        <div style={sectionLabelStyle}>Gestión</div>
 
-        <button onClick={abrirAdminWeb} style={menuBtnStyle}>
-          <User size={16} strokeWidth={2.2} />
-          <span>Abrir panel admin</span>
-          <ExternalLink size={12} style={{ marginLeft: 'auto', color: colors.stone2 }} />
+        {ADMIN_ITEMS.map(({ key, label, Icon }) => (
+          <button key={key} onClick={() => goAdmin(key)} style={menuBtnStyle}>
+            <Icon size={16} strokeWidth={2.2} />
+            <span>{label}</span>
+          </button>
+        ))}
+
+        <button
+          onClick={() => goAdmin('eliminar-cuenta')}
+          style={{ ...menuBtnStyle, color: colors.danger, background: 'transparent' }}
+        >
+          <Trash2 size={16} strokeWidth={2.2} />
+          <span>Eliminar cuenta</span>
         </button>
 
         <div style={{ flex: 1 }} />
+
+        <div style={{ height: 1, background: colors.border }} />
 
         <button
           onClick={async () => { await logout?.(); onClose?.() }}
@@ -109,4 +118,10 @@ const menuBtnStyle = {
   color: colors.ink, fontSize: 14, fontWeight: 600,
   border: 'none', cursor: 'pointer', textAlign: 'left',
   fontFamily: 'inherit', width: '100%',
+}
+
+const sectionLabelStyle = {
+  fontSize: 11, fontWeight: 700, color: colors.stone2,
+  textTransform: 'uppercase', letterSpacing: '0.06em',
+  margin: '6px 2px 0',
 }

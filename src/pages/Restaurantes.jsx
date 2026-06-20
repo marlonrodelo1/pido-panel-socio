@@ -379,7 +379,8 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer })
       {vinculados.map(v => {
         const e = v.establecimiento || {}
         const badge = stateBadge(v.estado)
-        const clickable = !!e.id && (v.estado === 'activa' || v.estado === 'solicitada' || v.estado === 'pendiente')
+        // Cualquier vinculado con establecimiento válido abre su detalle financiero.
+        const clickable = !!e.id
         const tienePropuesta = !!v.tarifa_pendiente && Object.keys(v.tarifa_pendiente).length > 0
         const cuenta = tienePropuesta ? formatCuentaAtras(v.tarifa_pendiente_expira_en) : null
         const tone = colorPara(e.id || e.nombre)
@@ -457,6 +458,16 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer })
                 onClick={(ev) => { ev.stopPropagation(); onProponer && onProponer(v) }}
                 style={{ ...ds.secondaryBtn, width: '100%' }}
               >Proponer tarifa</button>
+            )}
+            {clickable && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                fontSize: 11, fontWeight: 700, color: colors.terracotta,
+                letterSpacing: '0.03em', textTransform: 'uppercase',
+              }}>
+                Ver detalle
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </div>
             )}
           </div>
         )

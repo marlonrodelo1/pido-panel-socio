@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
 import { colors, ds, type } from '../lib/uiStyles'
+import { getPlugin, isNativePlatform } from '../lib/capacitor'
 
 export default function MiMarketplace() {
   const { socio, updateSocio } = useSocio()
@@ -10,7 +11,6 @@ export default function MiMarketplace() {
   const [uploading, setUploading] = useState(null)
   const [restaurantes, setRestaurantes] = useState([])
   const [loadingRest, setLoadingRest] = useState(false)
-  const [urlCopied, setUrlCopied] = useState(false)
   const [form, setForm] = useState({
     nombre_comercial: socio?.nombre_comercial || '',
     descripcion: socio?.descripcion || '',
@@ -42,12 +42,6 @@ export default function MiMarketplace() {
   }, [socio])
 
   const url = socio?.slug ? `https://pidoo.es/s/${socio.slug}` : null
-  const qrUrl = url
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&data=${encodeURIComponent(url)}`
-    : null
-  const qrDownloadUrl = url
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=1024x1024&margin=20&format=png&data=${encodeURIComponent(url)}`
-    : null
 
   const loadRestaurantes = async () => {
     if (!socio?.id) return
@@ -97,9 +91,20 @@ export default function MiMarketplace() {
     await loadRestaurantes()
   }
 
-  const copyUrl = async () => {
+  // Abre la tienda pública en una pestaña EXTERNA del navegador.
+  // En nativo usa Capacitor Browser.open (o window.open '_system' como fallback);
+  // en web abre una pestaña nueva con '_blank'.
+  const openTienda = async () => {
     if (!url) return
-    try { await navigator.clipboard.writeText(url); setUrlCopied(true); setTimeout(() => setUrlCopied(false), 1800) } catch {}
+    try {
+      if (await isNativePlatform()) {
+        const Browser = await getPlugin('Browser')
+        if (Browser) { await Browser.open({ url }); return }
+        window.open(url, '_system')
+        return
+      }
+    } catch (_) {}
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   const uploadImage = async (file, kind) => {
@@ -172,7 +177,7 @@ export default function MiMarketplace() {
         {url && (
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => navigator.clipboard?.writeText(url)} style={ds.secondaryBtn}>Copiar</button>
-            <a href={url} target="_blank" rel="noreferrer" style={{ ...ds.secondaryBtn, textDecoration: 'none' }}>Ver tienda ↗</a>
+            <button onClick={openTienda} style={ds.secondaryBtn}>Ver tienda ↗</button>
             <button onClick={toggleActivo}
               style={socio?.marketplace_activo ? { ...ds.dangerBtn } : { ...ds.primaryBtn }}>
               {socio?.marketplace_activo ? 'Desactivar' : 'Activar tienda'}
@@ -243,38 +248,6 @@ export default function MiMarketplace() {
           </div>
         </div>
       </div>
-
-      {url && (
-        <div style={{ ...ds.card, marginBottom: 16 }}>
-          <h2 style={ds.h2}>Compartir tu tienda</h2>
-          <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 0, marginBottom: 14 }}>
-            Descarga el QR e imprime carteles o compártelo en redes. Cuando alguien lo escanee, entra directo a tu marketplace.
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '170px 1fr', gap: 18, alignItems: 'center' }}>
-            <div style={{ width: 170, height: 170, background: '#fff', borderRadius: 14, padding: 10, border: `1px solid ${colors.border}` }}>
-              {qrUrl && <img src={qrUrl} alt="QR tienda" style={{ width: '100%', height: '100%', display: 'block' }} />}
-            </div>
-            <div>
-              <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>Tu URL</div>
-              <div style={{ fontSize: type.sm, color: colors.text, fontWeight: 600, marginBottom: 10, wordBreak: 'break-all' }}>{url}</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={copyUrl} style={ds.secondaryBtn}>
-                  {urlCopied ? 'Copiado ✓' : 'Copiar URL'}
-                </button>
-                <a href={qrDownloadUrl} download={`pidoo-${socio?.slug || 'tienda'}-qr.png`}
-                   target="_blank" rel="noreferrer"
-                   style={{ ...ds.secondaryBtn, textDecoration: 'none' }}>
-                  Descargar QR
-                </a>
-                <a href={url} target="_blank" rel="noreferrer"
-                   style={{ ...ds.primaryBtn, textDecoration: 'none' }}>
-                  Abrir tienda ↗
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Restaurantes destacados</h2>

@@ -24,8 +24,6 @@ import { onPushReceived, onPushTapped } from '../lib/pushNative'
 const RiderCtx = createContext(null)
 export const useRider = () => useContext(RiderCtx)
 
-const ESTADOS_PEDIDO_ACTIVO_RIDER = ['recogido', 'en_camino']
-
 export function RiderProvider({ children }) {
   const { socio, user, refreshSocio } = useSocio() || {}
   const [isOnline, setIsOnline] = useState(false)
@@ -80,15 +78,19 @@ export function RiderProvider({ children }) {
   const refreshAsignaciones = async () => {
     if (!socio?.id) return
     lastFetchRef.current = Date.now()
-    // Pedidos en curso (aceptados, recogidos, en camino)
-    const { data: activos } = await supabase
-      .from('pedidos')
-      .select('id, codigo, estado, shipday_status, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at')
+    // Pedidos en curso del rider = asignaciones ACEPTADAS aún no entregadas.
+    // El pedido.estado dentro puede ser preparando/listo (Aceptado), recogido o
+    // en_camino — la pantalla de detalle gestiona el avance. Filtrar por la
+    // asignación (no por pedido.estado) evita perder los recién aceptados.
+    const { data: asigs } = await supabase
+      .from('pedido_asignaciones')
+      .select('created_at, pedidos!inner(id, codigo, estado, shipday_status, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at)')
       .eq('socio_id', socio.id)
-      .in('estado', ESTADOS_PEDIDO_ACTIVO_RIDER)
+      .eq('estado', 'aceptado')
+      .in('pedidos.estado', ['preparando', 'listo', 'recogido', 'en_camino'])
       .order('created_at', { ascending: false })
       .limit(20)
-    setAsignacionesActivas(activos || [])
+    setAsignacionesActivas((asigs || []).map(a => a.pedidos).filter(Boolean))
 
     // Asignación pendiente (esperando aceptación)
     const { data: pendiente } = await supabase

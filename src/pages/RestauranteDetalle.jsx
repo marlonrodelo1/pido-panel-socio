@@ -3,6 +3,7 @@ import { useSocio } from '../context/SocioContext'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 import StatCard from '../components/StatCard'
+import { formatTarifa, tarifaCampos, formatFechaCorta } from '../lib/tarifas'
 
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
 
@@ -12,6 +13,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
   const [establecimiento, setEstablecimiento] = useState(null)
   const [vinculacion, setVinculacion] = useState(null)
   const [pedidos7d, setPedidos7d] = useState([])
+  const [pedidosMes, setPedidosMes] = useState([])
   const [resumenCobro, setResumenCobro] = useState(null)
   const [detalleEarnings, setDetalleEarnings] = useState([])
   const [historicoFacturas, setHistoricoFacturas] = useState([])
@@ -29,21 +31,35 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
       try {
         const desde7 = new Date()
         desde7.setDate(desde7.getDate() - 7)
+        // Primer día del mes en curso (para "lo enviado este mes")
+        const inicioMes = new Date()
+        inicioMes.setDate(1)
+        inicioMes.setHours(0, 0, 0, 0)
 
-        // get_por_cobrar_socio ya NO existe en la DB (404) → se quita la llamada.
-        // TODO: recalcular "por cobrar" cuando exista la fuente de datos.
-        const [estRes, vincRes, pedRes, detRes, factRes] = await Promise.all([
+        const [estRes, vincRes, pedRes, mesRes, detRes, factRes] = await Promise.all([
           supabase.from('establecimientos')
             .select('id, nombre, logo_url, telefono, email, direccion, razon_social, nif, direccion_fiscal, codigo_postal, ciudad_fiscal, provincia_fiscal, slug, tipo')
             .eq('id', establecimiento_id).maybeSingle(),
           supabase.from('socio_establecimiento')
-            .select('id, estado, solicitado_at, aceptado_at, exclusivo, destacado, orden_destacado')
+            .select(`
+              id, estado, solicitado_at, aceptado_at, exclusivo, destacado, orden_destacado,
+              tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, tarifa_aceptada_en,
+              tarifa_pendiente, tarifa_pendiente_origen, tarifa_pendiente_expira_en
+            `)
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id).maybeSingle(),
           supabase.from('pedidos')
             .select('id, codigo, estado, total, created_at, metodo_pago')
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
             .gte('created_at', desde7.toISOString())
             .order('created_at', { ascending: false }).limit(50),
+          // Pedidos ENTREGADOS este mes → ingresos del socio (envío + propina)
+          supabase.from('pedidos')
+            .select('id, codigo, coste_envio, propina, subtotal, entregado_at')
+            .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
+            .eq('estado', 'entregado')
+            .gte('entregado_at', inicioMes.toISOString())
+            .order('entregado_at', { ascending: false }).limit(500),
+          // RPC agregada "por cobrar" (deriva socio del auth). Si no existe → degrada.
           supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
           supabase.from('facturas_socio_restaurante')
             .select('id, numero, fecha_emision, total, estado, pdf_url, pedidos_count, periodo_inicio, periodo_fin')
@@ -55,6 +71,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
         setEstablecimiento(estRes.data || null)
         setVinculacion(vincRes.data || null)
         setPedidos7d(pedRes.data || [])
+        setPedidosMes(mesRes.data || [])
         setResumenCobro(Array.isArray(detRes.data) ? (detRes.data[0] || null) : (detRes.data || null))
         setDetalleEarnings([])
         setHistoricoFacturas(factRes.data || [])
@@ -70,8 +87,30 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
     () => historicoFacturas.filter(f => f.estado === 'pagada').reduce((s, r) => s + Number(r.total || 0), 0),
     [historicoFacturas]
   )
+  const totalFacturasPendientes = useMemo(
+    () => historicoFacturas.filter(f => f.estado !== 'pagada').reduce((s, r) => s + Number(r.total || 0), 0),
+    [historicoFacturas]
+  )
+  // "Lo enviado este mes" = ingresos del socio (envío + propina) de pedidos entregados este mes.
+  const ingresosMes = useMemo(
+    () => pedidosMes.reduce((s, p) => s + Number(p.coste_envio || 0) + Number(p.propina || 0), 0),
+    [pedidosMes]
+  )
   const totalPorCobrar = Number(resumenCobro?.total_neto || 0)
   const pedidosPendientesFactura = Number(resumenCobro?.pedidos_count || 0)
+
+  // Tarifa pactada (snapshot vigente en socio_establecimiento)
+  const tarifaPactada = useMemo(() => {
+    if (!vinculacion) return null
+    const t = {
+      tarifa_base: vinculacion.tarifa_base,
+      tarifa_radio_base_km: vinculacion.tarifa_radio_base_km,
+      tarifa_precio_km: vinculacion.tarifa_precio_km,
+      tarifa_maxima: vinculacion.tarifa_maxima,
+    }
+    const tieneAlguna = Object.values(t).some(v => v !== null && v !== undefined)
+    return tieneAlguna ? t : null
+  }, [vinculacion])
 
   const fiscalRestauranteOk = !!(establecimiento?.razon_social && establecimiento?.nif)
   const puedeFacturar = fiscalCompletoSocio && fiscalRestauranteOk && pedidosPendientesFactura > 0
@@ -125,16 +164,25 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
       ;(async () => {
         if (!establecimiento_id || !socio?.id) return
         try {
-          // get_por_cobrar_socio eliminada (404) → no se vuelve a llamar.
-          const [factRes, detRes] = await Promise.all([
+          const inicioMes = new Date()
+          inicioMes.setDate(1)
+          inicioMes.setHours(0, 0, 0, 0)
+          const [factRes, detRes, mesRes] = await Promise.all([
             supabase.from('facturas_socio_restaurante')
               .select('id, numero, fecha_emision, total, estado, pdf_url, pedidos_count, periodo_inicio, periodo_fin')
               .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
               .order('fecha_emision', { ascending: false }).limit(20),
             supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
+            supabase.from('pedidos')
+              .select('id, codigo, coste_envio, propina, subtotal, entregado_at')
+              .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
+              .eq('estado', 'entregado')
+              .gte('entregado_at', inicioMes.toISOString())
+              .order('entregado_at', { ascending: false }).limit(500),
           ])
           setResumenCobro(Array.isArray(detRes.data) ? (detRes.data[0] || null) : (detRes.data || null))
           setHistoricoFacturas(factRes.data || [])
+          setPedidosMes(mesRes.data || [])
           setDetalleEarnings([])
         } catch (e) { console.error(e) }
       })()
@@ -224,10 +272,51 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, marginBottom: 18 }}>
-        <StatCard label="Pedidos 7 días" value={pedidos7d.length} sub={pedidos7d.length === 1 ? '1 pedido' : `${pedidos7d.length} pedidos`} />
+        <StatCard label="Enviado este mes" value={euro(ingresosMes)} sub={pedidosMes.length === 1 ? '1 entregado' : `${pedidosMes.length} entregados`} tone="sage" />
         <StatCard label="Por cobrar" value={euro(totalPorCobrar)} sub={`${pedidosPendientesFactura} sin facturar`} tone="terracotta" />
-        <StatCard label="Cobrado (histórico)" value={euro(totalCobrado)} tone="sage" />
-        <StatCard label="Facturas emitidas" value={historicoFacturas.length} />
+        <StatCard label="Cobrado (histórico)" value={euro(totalCobrado)} />
+        <StatCard label="Pedidos 7 días" value={pedidos7d.length} sub={pedidos7d.length === 1 ? '1 pedido' : `${pedidos7d.length} pedidos`} />
+      </div>
+
+      {/* Tarifa pactada */}
+      <SectionTitle>Tarifa pactada</SectionTitle>
+      <div style={{ ...ds.card, padding: 18, marginBottom: 18 }}>
+        {tarifaPactada ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 14 }}>
+              {tarifaCampos(tarifaPactada).map(c => (
+                <div key={c.campo}>
+                  <div style={{ fontSize: 11, color: colors.textMute, fontWeight: 600 }}>{c.label}</div>
+                  <div style={{
+                    fontSize: 18, fontWeight: 800, color: colors.text,
+                    fontVariantNumeric: 'tabular-nums', marginTop: 2,
+                  }}>{c.fmt(c.valor)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 12 }}>
+              {formatTarifa(tarifaPactada)}
+              {vinculacion?.tarifa_aceptada_en && (
+                <span> · Vigente desde {formatFechaCorta(vinculacion.tarifa_aceptada_en)}</span>
+              )}
+            </div>
+            {vinculacion?.tarifa_pendiente && Object.keys(vinculacion.tarifa_pendiente).length > 0 && (
+              <div style={{
+                marginTop: 12, padding: '8px 12px', borderRadius: 8,
+                background: colors.warningSoft, color: colors.warning,
+                fontSize: type.xs, fontWeight: 600,
+              }}>
+                Hay una propuesta de tarifa pendiente
+                {vinculacion.tarifa_pendiente_origen === 'socio' ? ' (tuya, esperando al restaurante)' : ' del restaurante'}.
+                Revísala en Restaurantes → Propuestas.
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: type.sm, color: colors.textDim }}>
+            No hay tarifa pactada con este restaurante. Se aplica la <b>tarifa por defecto</b> de la plataforma.
+          </div>
+        )}
       </div>
 
       {/* Warning fiscal restaurante */}
@@ -297,6 +386,38 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
         </Table>
       )}
 
+      {/* Entregados este mes (lo enviado) */}
+      <SectionTitle>Entregados este mes · lo que has enviado</SectionTitle>
+      {pedidosMes.length === 0 ? (
+        <div style={{ ...ds.card, textAlign: 'center', padding: 22, marginBottom: 22, color: colors.textMute, fontSize: type.sm }}>
+          Sin pedidos entregados este mes.
+        </div>
+      ) : (
+        <Table head={['Código', 'Entregado', 'Envío', 'Propina', 'Tu ingreso']}
+          cols="110px 1fr 90px 90px 100px">
+          {pedidosMes.map(p => (
+            <TableRow key={p.id} cols="110px 1fr 90px 90px 100px">
+              <span style={{ fontWeight: 600, color: colors.text, fontFamily: type.mono }}>{p.codigo}</span>
+              <span>{p.entregado_at ? new Date(p.entregado_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(p.coste_envio)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(p.propina)}</span>
+              <span style={{ fontWeight: 700, color: colors.sage2, fontVariantNumeric: 'tabular-nums' }}>
+                {euro(Number(p.coste_envio || 0) + Number(p.propina || 0))}
+              </span>
+            </TableRow>
+          ))}
+          <div style={{
+            display: 'grid', gridTemplateColumns: '110px 1fr 90px 90px 100px', gap: 10,
+            padding: '12px 16px', alignItems: 'center',
+            borderTop: `1px solid ${colors.borderStrong}`, background: colors.surface2,
+            fontSize: type.sm,
+          }}>
+            <span style={{ fontWeight: 700, color: colors.text, gridColumn: '1 / 5' }}>Total enviado este mes</span>
+            <span style={{ fontWeight: 800, color: colors.sage2, fontVariantNumeric: 'tabular-nums' }}>{euro(ingresosMes)}</span>
+          </div>
+        </Table>
+      )}
+
       {/* Pendientes facturar */}
       {detalleEarnings.length > 0 && (
         <>
@@ -318,30 +439,44 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
       )}
 
       {/* Histórico facturas */}
-      {historicoFacturas.length > 0 && (
+      <SectionTitle>Facturas · enviadas y pendientes</SectionTitle>
+      {historicoFacturas.length === 0 ? (
+        <div style={{ ...ds.card, textAlign: 'center', padding: 22, marginBottom: 22, color: colors.textMute, fontSize: type.sm }}>
+          Aún no has emitido facturas a este restaurante.
+        </div>
+      ) : (
         <>
-          <SectionTitle>Histórico de facturas</SectionTitle>
-          <Table head={['Número', 'Fecha', 'Pedidos', 'Total', '']}
-            cols="120px 1fr 100px 100px 110px">
-            {historicoFacturas.map(f => (
-              <TableRow key={f.id} cols="120px 1fr 100px 100px 110px">
-                <span style={{ fontWeight: 600, color: colors.text, fontFamily: type.mono }}>{f.numero}</span>
-                <span>{f.fecha_emision ? new Date(f.fecha_emision).toLocaleDateString('es-ES') : '—'}</span>
-                <span>{f.pedidos_count}</span>
-                <span style={{ fontWeight: 700, color: colors.text, fontVariantNumeric: 'tabular-nums' }}>{euro(f.total)}</span>
-                <span>
-                  {f.pdf_url ? (
-                    <a href={f.pdf_url} target="_blank" rel="noreferrer"
-                      style={{
-                        ...ds.secondaryBtn, height: 30, fontSize: 11,
-                        textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
-                      }}>PDF</a>
-                  ) : (
-                    <span style={{ fontSize: 11, color: colors.textFaint }}>—</span>
-                  )}
-                </span>
-              </TableRow>
-            ))}
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12, fontSize: type.xs, color: colors.textMute }}>
+            <span>Pendiente de cobro: <b style={{ color: colors.terracotta }}>{euro(totalFacturasPendientes)}</b></span>
+            <span>Cobrado: <b style={{ color: colors.sage2 }}>{euro(totalCobrado)}</b></span>
+          </div>
+          <Table head={['Número', 'Fecha', 'Pedidos', 'Estado', 'Total', '']}
+            cols="120px 1fr 80px 110px 100px 90px">
+            {historicoFacturas.map(f => {
+              const fb = stateBadge(f.estado === 'pagada' ? 'entregado' : 'pendiente')
+              return (
+                <TableRow key={f.id} cols="120px 1fr 80px 110px 100px 90px">
+                  <span style={{ fontWeight: 600, color: colors.text, fontFamily: type.mono }}>{f.numero}</span>
+                  <span>{f.fecha_emision ? new Date(f.fecha_emision).toLocaleDateString('es-ES') : '—'}</span>
+                  <span>{f.pedidos_count}</span>
+                  <span>
+                    <span style={fb}>{f.estado === 'pagada' ? 'Pagada' : 'Pendiente'}</span>
+                  </span>
+                  <span style={{ fontWeight: 700, color: colors.text, fontVariantNumeric: 'tabular-nums' }}>{euro(f.total)}</span>
+                  <span>
+                    {f.pdf_url ? (
+                      <a href={f.pdf_url} target="_blank" rel="noreferrer"
+                        style={{
+                          ...ds.secondaryBtn, height: 30, fontSize: 11,
+                          textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
+                        }}>PDF</a>
+                    ) : (
+                      <span style={{ fontSize: 11, color: colors.textFaint }}>—</span>
+                    )}
+                  </span>
+                </TableRow>
+              )
+            })}
           </Table>
         </>
       )}

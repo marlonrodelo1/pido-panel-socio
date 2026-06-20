@@ -31,7 +31,7 @@ const features = [
   {
     icon: ICONS.box,
     title: 'Recibe pedidos en tiempo real',
-    text: 'Cuando el restaurante acepta un pedido, Shipday te asigna el envío. Notificaciones al instante y tracking en directo.',
+    text: 'Cuando el restaurante acepta un pedido, Pidoo te lo asigna directo en la app. Notificaciones al instante y tracking en directo.',
   },
   {
     icon: ICONS.chart,
@@ -50,15 +50,15 @@ const features = [
   },
   {
     icon: ICONS.truck,
-    title: 'Tu app de reparto: Shipday',
-    text: 'Usa Shipday Driver en tu móvil para repartir. Pidoo se conecta vía API. Todo el flujo es transparente.',
+    title: 'Tu app de reparto: Pidoo Socio',
+    text: 'Reparte directamente desde la app de Pidoo Socio en tu móvil. Recibes el pedido, navegas y entregas. Todo el flujo es transparente.',
   },
 ]
 
 const pasos = [
-  { n: '1', titulo: 'Regístrate', texto: 'Crea tu cuenta con email y contraseña. Onboarding rápido: nombre, teléfono y tu API key de Shipday.' },
+  { n: '1', titulo: 'Regístrate', texto: 'Crea tu cuenta con email y contraseña. Onboarding rápido: solo nombre y teléfono.' },
   { n: '2', titulo: 'Vincúlate con restaurantes', texto: 'Busca restaurantes en Pidoo, solicita vincularte o acepta propuestas que te lleguen.' },
-  { n: '3', titulo: 'Empieza a repartir', texto: 'Cada pedido aceptado llega a tu Shipday. Tú repartes, el restaurante te paga directo. Sin intermediarios.' },
+  { n: '3', titulo: 'Empieza a repartir', texto: 'Cada pedido aceptado llega directo a tu app de Pidoo Socio. Tú repartes, el restaurante te paga directo. Sin intermediarios.' },
 ]
 
 function Logo({ size = 34 }) {
@@ -190,7 +190,7 @@ export default function Landing({ onLogin }) {
               fontSize: 17, color: colors.ink2, lineHeight: 1.55,
               margin: 0, marginBottom: 28, maxWidth: 520,
             }}>
-              Eres autónomo. Te vinculas con restaurantes Pidoo, pactas tu tarifa con cada uno, y repartes con Shipday. El restaurante te paga directo. Pidoo es la plataforma que os conecta — cero comisiones para ti.
+              Eres autónomo. Te vinculas con restaurantes Pidoo, pactas tu tarifa con cada uno, y repartes desde la app de Pidoo Socio. El restaurante te paga directo. Pidoo es la plataforma que os conecta — cero comisiones para ti.
             </p>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               {CTA('Entrar a la plataforma')}
@@ -216,7 +216,7 @@ export default function Landing({ onLogin }) {
           {[
             { t: '0% comisión', d: 'Cobras el coste del envío íntegro + propina íntegra. Pidoo no se queda nada de lo tuyo.' },
             { t: 'Tarifa pactada con cada restaurante', d: 'Tú y el restaurante acordáis base, km y adicionales. Sin imposiciones.' },
-            { t: 'Tu app de reparto: Shipday', d: 'Usas la app oficial de Shipday Driver. Pidoo conecta por API.' },
+            { t: 'Tu app de reparto: Pidoo Socio', d: 'Repartes desde la propia app de Pidoo Socio. Sin apps de terceros.' },
           ].map(b => (
             <div key={b.t} style={{
               background: colors.paper, padding: 18,

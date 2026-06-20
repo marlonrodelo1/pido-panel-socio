@@ -66,7 +66,7 @@ export default function Configuracion() {
     <div style={{ maxWidth: 800 }}>
       <h1 style={ds.h1}>Configuración</h1>
       <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4, marginBottom: 22 }}>
-        Datos personales, fiscales e integración Shipday.
+        Datos personales y fiscales.
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -148,9 +148,6 @@ export default function Configuracion() {
             Canarias 0% · Península 21% · Ceuta y Melilla IPSI.
           </div>
         </Card>
-
-        {/* Integración Shipday */}
-        <ShipdayIntegrationCard socio={socio} updateSocio={updateSocio} />
 
         {/* Facturación Pidoo */}
         <FacturacionPidooCard socio={socio} />
@@ -278,162 +275,6 @@ function ChipDot({ tone, children }) {
       <span style={{ width: 6, height: 6, borderRadius: 3, background: m.dot }}/>
       {children}
     </span>
-  )
-}
-
-// ─────────────── Shipday ───────────────
-const SHIPDAY_WEBHOOK_URL = 'https://rmrbxrabngdmpgpfmjbo.supabase.co/functions/v1/shipday-webhook'
-const SHIPDAY_WEBHOOK_TOKEN = 'pidoo-shipday-2026'
-
-function ShipdayIntegrationCard({ socio, updateSocio }) {
-  const initialKey = socio?.shipday_api_key || ''
-  const [apiKey, setApiKey] = useState(initialKey)
-  const [showKey, setShowKey] = useState(false)
-  const [validateState, setValidateState] = useState('idle')
-  const [validateMsg, setValidateMsg] = useState(null)
-  const [copied, setCopied] = useState(null)
-
-  useEffect(() => {
-    setApiKey(socio?.shipday_api_key || '')
-  }, [socio?.shipday_api_key])
-
-  const tieneKeyGuardada = !!(socio?.shipday_api_key && socio.shipday_api_key.trim())
-
-  const validarYGuardar = async () => {
-    const trimmed = (apiKey || '').trim()
-    if (!trimmed) return
-    if (trimmed === (socio?.shipday_api_key || '').trim()) return
-
-    setValidateState('loading')
-    setValidateMsg(null)
-
-    try {
-      const { data, error } = await supabase.functions.invoke('validar-shipday-key', {
-        body: { api_key: trimmed },
-      })
-      if (error) throw error
-
-      if (data?.ok === true) {
-        setValidateState('ok')
-        setValidateMsg(`API válida — ${data.carriers_count ?? 0} riders detectados`)
-        try { await updateSocio({ shipday_api_key: trimmed }) } catch (_) {}
-      } else if (data?.reason === 'invalid_key') {
-        setValidateState('invalid'); setValidateMsg('API Key incorrecta')
-      } else {
-        setValidateState('unreachable'); setValidateMsg('No se pudo contactar Shipday')
-      }
-    } catch (e) {
-      setValidateState('unreachable'); setValidateMsg('No se pudo contactar Shipday')
-    }
-  }
-
-  const copiar = async (texto, key) => {
-    try {
-      await navigator.clipboard.writeText(texto)
-      setCopied(key); setTimeout(() => setCopied(null), 1800)
-    } catch (_) {}
-  }
-
-  return (
-    <Card>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-        <div style={{
-          width: 44, height: 44, borderRadius: 11,
-          background: tieneKeyGuardada ? colors.sageSoft : colors.dangerSoft,
-          color: tieneKeyGuardada ? colors.sage2 : colors.danger,
-          display: 'grid', placeItems: 'center', flexShrink: 0,
-        }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6h2l3 6"/><path d="M3 12h12"/><path d="M11 6L6 12"/></svg>
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ ...ds.h2, margin: 0 }}>Integración Shipday</div>
-          <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
-            Conecta para recibir pedidos en tiempo real.
-          </div>
-        </div>
-        <ChipDot tone={tieneKeyGuardada ? 'sage' : 'danger'}>
-          {tieneKeyGuardada ? 'Conectado' : 'Sin conectar'}
-        </ChipDot>
-      </div>
-
-      {/* Banner */}
-      <div style={{
-        background: tieneKeyGuardada ? colors.sageSoft : colors.dangerSoft,
-        color: tieneKeyGuardada ? colors.sage2 : colors.danger,
-        borderRadius: 10, padding: '10px 14px',
-        fontSize: type.xs, fontWeight: 600, marginBottom: 14,
-      }}>
-        {tieneKeyGuardada
-          ? 'Listo para recibir pedidos.'
-          : 'No recibirás pedidos hasta configurar tu integración con Shipday.'}
-      </div>
-
-      {/* API key */}
-      <label style={ds.label}>API Key Shipday</label>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        <input
-          type={showKey ? 'text' : 'password'}
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-          onBlur={validarYGuardar}
-          placeholder="pega aquí tu API Key"
-          style={{ ...ds.input, flex: 1, fontFamily: type.mono }}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <button
-          type="button"
-          onClick={() => setShowKey(s => !s)}
-          style={{
-            ...ds.secondaryBtn, padding: '0 14px', fontSize: type.xs, whiteSpace: 'nowrap',
-          }}
-        >
-          {showKey ? 'Ocultar' : 'Mostrar'}
-        </button>
-      </div>
-
-      {validateState === 'loading' && (
-        <div style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 12 }}>Validando…</div>
-      )}
-      {validateMsg && validateState !== 'loading' && (
-        <div style={{
-          fontSize: type.xs, fontWeight: 600, marginBottom: 12,
-          color: validateState === 'ok' ? colors.sage2 : validateState === 'invalid' ? colors.danger : colors.warning,
-        }}>
-          {validateState === 'ok' ? '✓ ' : validateState === 'invalid' ? '✗ ' : '⚠ '}{validateMsg}
-        </div>
-      )}
-
-      {/* Webhook URL */}
-      {tieneKeyGuardada && (
-        <div style={{ marginTop: 4 }}>
-          <label style={ds.label}>Webhook URL</label>
-          <div style={{
-            background: colors.surface2, borderRadius: 10,
-            padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span style={{
-              fontFamily: type.mono, fontSize: 12, color: colors.text,
-              fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>{SHIPDAY_WEBHOOK_URL}</span>
-            <button
-              type="button"
-              onClick={() => copiar(SHIPDAY_WEBHOOK_URL, 'url')}
-              style={{
-                padding: '4px 10px', borderRadius: 6,
-                background: colors.paper, border: `1px solid ${colors.border}`,
-                fontSize: 11, fontWeight: 700, color: colors.textDim, cursor: 'pointer',
-                fontFamily: type.family,
-              }}
-            >{copied === 'url' ? '✓' : 'Copiar'}</button>
-          </div>
-          <div style={{ fontSize: 11, color: colors.textMute, marginTop: 6, lineHeight: 1.5 }}>
-            Pega esta URL en Shipday → Settings → Integrations → Webhooks. Token (opcional):
-            {' '}<code style={{ background: colors.surface2, padding: '1px 6px', borderRadius: 4 }}>{SHIPDAY_WEBHOOK_TOKEN}</code>
-          </div>
-        </div>
-      )}
-    </Card>
   )
 }
 

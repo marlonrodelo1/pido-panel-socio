@@ -79,3 +79,15 @@ export function riderDeliver(pedidoId, fotoUrl = null) {
 export function riderFailDelivery(pedidoId, motivo) {
   return invoke('rider-fail-delivery', { pedido_id: pedidoId, motivo })
 }
+
+// ────────────────────────────────────────────────────────────
+// MÁQUINA DE ESTADOS DEL REPARTO (edge unificada `rider-estado`)
+// ────────────────────────────────────────────────────────────
+//
+// accion = 'recogido' | 'en_camino' | 'entregado' | 'fallido'
+//   - 'fallido' admite extra = { motivo }
+//   - 'entregado' admite extra = { foto_url } opcional
+// El backend actualiza pedido.estado y dispara el push al cliente.
+export function riderEstado(pedidoId, accion, extra = {}) {
+  return invoke('rider-estado', { pedido_id: pedidoId, accion, ...extra })
+}

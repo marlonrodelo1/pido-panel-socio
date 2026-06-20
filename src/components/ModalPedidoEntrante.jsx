@@ -22,7 +22,7 @@ export default function ModalPedidoEntrante() {
 
     // Sonido loop
     try {
-      audioRef.current = new Audio('/sounds/alarm.mp3')
+      audioRef.current = new Audio('/sounds/pedido-rider.mp3')
       audioRef.current.loop = true
       audioRef.current.volume = 0.85
       audioRef.current.play().catch(() => { /* user gesture pendiente */ })

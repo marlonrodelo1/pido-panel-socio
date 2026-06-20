@@ -19,6 +19,7 @@ import SeguirPedido from './pages/SeguirPedido'
 import HeaderRider from './components/HeaderRider'
 import BottomNavRider from './components/BottomNavRider'
 import DrawerRider from './components/DrawerRider'
+import { ChevronLeft } from 'lucide-react'
 import ModalPedidoEntrante from './components/ModalPedidoEntrante'
 import RiderEsperando from './pages/rider/RiderEsperando'
 import RiderPedidos from './pages/rider/RiderPedidos'
@@ -107,13 +108,130 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
 }
 
 // ─────────────────────────────────────────────────────────────
+// AdminViewRider — páginas de gestión a pantalla completa dentro
+// del shell rider. Cabecera con "Volver" que regresa a la vista rider.
+// Reutiliza tal cual los componentes del panel web.
+// ─────────────────────────────────────────────────────────────
+const ADMIN_TITLES = {
+  marketplace:          'Mi marketplace',
+  restaurantes:         'Restaurantes',
+  'restaurante-detalle':'Restaurante',
+  suscripcion:          'Mi suscripción',
+  configuracion:        'Configuración',
+  soporte:              'Soporte',
+  'eliminar-cuenta':    'Eliminar cuenta',
+}
+
+function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, onBack }) {
+  const page = {
+    marketplace:          <MiMarketplace />,
+    restaurantes:         <Restaurantes onOpenRestaurante={onOpenRestaurante} />,
+    'restaurante-detalle': estId
+      ? <RestauranteDetalle establecimiento_id={estId} onBack={onCloseRestaurante} />
+      : <Restaurantes onOpenRestaurante={onOpenRestaurante} />,
+    suscripcion:          <MiSuscripcion />,
+    configuracion:        <Configuracion />,
+    soporte:              <Soporte />,
+    'eliminar-cuenta':    <EliminarCuenta onBack={onBack} />,
+  }[view] || <Configuracion />
+
+  // En restaurante-detalle el "Volver" regresa al listado (no a la vista rider)
+  const headerBack = (view === 'restaurante-detalle') ? onCloseRestaurante : onBack
+
+  return (
+    <div style={{ background: colors.cream, minHeight: '100vh' }}>
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 30,
+        background: colors.paper,
+        borderBottom: `1px solid ${colors.border}`,
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 10px)',
+        paddingLeft: 10, paddingRight: 14, paddingBottom: 10,
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontFamily: "'Plus Jakarta Sans', sans-serif",
+      }}>
+        <button
+          onClick={headerBack}
+          aria-label="Volver"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            height: 38, padding: '0 12px 0 8px', borderRadius: 10, border: 'none',
+            background: colors.cream2, color: colors.ink,
+            cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
+          }}
+        >
+          <ChevronLeft size={18} strokeWidth={2.2} />
+          Volver
+        </button>
+        <div style={{
+          fontSize: 15, fontWeight: 700, color: colors.ink,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {ADMIN_TITLES[view] || 'Gestión'}
+        </div>
+      </header>
+
+      <div style={{
+        maxWidth: 720, margin: '0 auto',
+        padding: '16px 14px calc(env(safe-area-inset-bottom, 0px) + 92px)',
+      }}>
+        {page}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
 // ShellRider — la app rider nativa (Capacitor Android)
 // ─────────────────────────────────────────────────────────────
 function ShellRider() {
   const [tab, setTab] = useState('esperando') // esperando|pedidos|chat|completadas
   const [openDetail, setOpenDetail] = useState(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [adminView, setAdminView] = useState(null) // null = vista rider; si no, sección admin
+  const [adminEstId, setAdminEstId] = useState(null)
   const { asignacionesActivas } = useRider() || {}
+
+  const openRestaurante = (id) => {
+    if (!id) return
+    setAdminEstId(id)
+    setAdminView('restaurante-detalle')
+  }
+  const closeRestaurante = () => {
+    setAdminEstId(null)
+    setAdminView('restaurantes')
+  }
+
+  // Pulsar una pestaña del bottom nav desde cualquier vista vuelve a la
+  // vista rider correspondiente (sale de admin y cierra detalle abierto).
+  const goRiderTab = (t) => {
+    setAdminView(null)
+    setAdminEstId(null)
+    setOpenDetail(null)
+    setTab(t)
+  }
+
+  // ── Vista admin a pantalla completa (secundaria, desde el drawer) ──
+  // La barra inferior sigue visible: tocar una pestaña sale de gestión.
+  if (adminView) {
+    return (
+      <div style={{ background: colors.cream, minHeight: '100vh', paddingBottom: 70 }}>
+        <AdminViewRider
+          view={adminView}
+          estId={adminEstId}
+          onOpenRestaurante={openRestaurante}
+          onCloseRestaurante={closeRestaurante}
+          onBack={() => { setAdminView(null); setAdminEstId(null) }}
+        />
+        <BottomNavRider
+          active={tab}
+          onChange={goRiderTab}
+          asignacionesActivasCount={asignacionesActivas?.length || 0}
+        />
+        {/* El modal de pedido entrante sigue activo aunque esté en gestión */}
+        <ModalPedidoEntrante />
+      </div>
+    )
+  }
 
   // Si hay detalle abierto, ocupa toda la pantalla (sin bottom nav)
   if (openDetail) {
@@ -136,14 +254,18 @@ function ShellRider() {
 
       <BottomNavRider
         active={tab}
-        onChange={(t) => { setTab(t); setOpenDetail(null) }}
+        onChange={goRiderTab}
         asignacionesActivasCount={asignacionesActivas?.length || 0}
       />
 
       <DrawerRider
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        onChange={(t) => setTab(t)}
+        onNavigate={(key) => {
+          setOpenDetail(null)
+          if (key === 'restaurantes') { setAdminEstId(null); setAdminView('restaurantes') }
+          else setAdminView(key)
+        }}
       />
 
       <ModalPedidoEntrante />

@@ -39,6 +39,10 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     captureInput: true,
     webContentsDebuggingEnabled: false,
+    // Requerido por @capacitor-community/background-geolocation: sin el bridge
+    // legacy, los updates de ubicación se detienen tras 5 min en background.
+    // Ref: https://github.com/capacitor-community/background-geolocation/issues/89
+    useLegacyBridge: true,
   },
 }
 
