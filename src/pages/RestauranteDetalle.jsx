@@ -133,9 +133,9 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
               .order('fecha_emision', { ascending: false }).limit(20),
             supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
           ])
-          setResumenCobro(null)
+          setResumenCobro(Array.isArray(detRes.data) ? (detRes.data[0] || null) : (detRes.data || null))
           setHistoricoFacturas(factRes.data || [])
-          setDetalleEarnings(detRes.data || [])
+          setDetalleEarnings([])
         } catch (e) { console.error(e) }
       })()
     }
