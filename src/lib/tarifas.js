@@ -14,6 +14,13 @@ const fmtKm = (n) => {
   }) + ' km'
 }
 
+export const fmtPct = (n) => {
+  if (n === null || n === undefined || isNaN(Number(n))) return '—'
+  return Number(n).toLocaleString('es-ES', {
+    minimumFractionDigits: 0, maximumFractionDigits: 1,
+  }) + ' %'
+}
+
 // Formato compacto: "3,00 € (≤5 km) · +0,50 €/km · máx 10,00 €"
 export function formatTarifa(t) {
   if (!t) return 'Tarifa por defecto de la plataforma'
@@ -31,6 +38,9 @@ export function formatTarifa(t) {
   }
   if (max !== null && max !== undefined) {
     partes.push(`máx ${fmtEuro(max)}`)
+  }
+  if (t.comision_pct !== null && t.comision_pct !== undefined) {
+    partes.push(`${fmtPct(t.comision_pct)} comisión`)
   }
   if (partes.length === 0) return 'Tarifa por defecto de la plataforma'
   return partes.join(' · ')
@@ -71,6 +81,7 @@ export function compararTarifas(actual, propuesta) {
     cmp('tarifa_radio_base_km', false),
     cmp('tarifa_precio_km', true),
     cmp('tarifa_maxima', true),
+    cmp('comision_pct', true),
   ]
 }
 

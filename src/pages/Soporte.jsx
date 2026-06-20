@@ -12,7 +12,7 @@ const MOTIVOS = [
 ]
 
 export default function Soporte() {
-  const { socio, user } = useSocio()
+  const { socio } = useSocio()
   const [motivo, setMotivo] = useState(MOTIVOS[0])
   const [mensaje, setMensaje] = useState('')
   const [sending, setSending] = useState(false)
@@ -21,18 +21,20 @@ export default function Soporte() {
 
   const enviar = async () => {
     if (!mensaje.trim()) return
+    if (!socio?.id) { setErr('Tu cuenta aún no está lista. Recarga e inténtalo de nuevo.'); return }
     setSending(true); setErr(null); setOk(false)
     try {
-      const { error } = await supabase.from('soporte').insert({
-        user_id: user.id,
-        socio_id: socio?.id || null,
-        motivo,
-        mensaje: mensaje.trim(),
-        canal: 'panel-socio',
+      // Mismo buzón que el Chat del rider (rider_support_messages); el motivo
+      // se antepone al texto para que el equipo lo vea en la conversación.
+      const { error } = await supabase.from('rider_support_messages').insert({
+        socio_id: socio.id,
+        remitente: 'rider',
+        mensaje: `[${motivo}] ${mensaje.trim()}`,
       })
       if (error) throw error
       setMensaje(''); setOk(true); setTimeout(() => setOk(false), 3500)
     } catch (e) {
+      console.error('[Soporte] insert error:', e)
       setErr(e.message || 'No se pudo enviar. Escríbenos a soporte@pidoo.es')
     } finally { setSending(false) }
   }

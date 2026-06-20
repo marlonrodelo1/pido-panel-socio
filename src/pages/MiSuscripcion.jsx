@@ -3,9 +3,9 @@ import { useSocio } from '../context/SocioContext'
 import { colors, ds, type } from '../lib/uiStyles'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 
-// Plan Pidoo del socio: 30 €/mes (mensual) o 312 €/año (26 €/mes facturado anual).
+// Plan Pidoo del socio: 30 €/mes con 7 días de prueba.
 // Usa Stripe Checkout (hosted) — el panel socio no tiene Stripe Elements.
-// La edge function crear-suscripcion-socio aplica 7 días de prueba.
+// La edge function crear-suscripcion-socio aplica los 7 días de prueba.
 
 const ESTADOS = {
   active:   { label: 'Activa',         color: colors.stateOk,      bg: colors.stateOkSoft },
@@ -22,7 +22,6 @@ export default function MiSuscripcion() {
   const [loading, setLoading] = useState(true)
   const [yendo, setYendo] = useState(false)
   const [err, setErr] = useState(null)
-  const [plan, setPlan] = useState('anual') // anual recomendado por defecto
 
   useEffect(() => {
     if (!socio?.id) return
@@ -51,7 +50,7 @@ export default function MiSuscripcion() {
       const res = await fetch(`${FUNCTIONS_URL}/crear-suscripcion-socio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-        body: JSON.stringify({ socio_id: socio.id, plan }),
+        body: JSON.stringify({ socio_id: socio.id, plan: 'mensual' }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || 'No se pudo iniciar la suscripción')
@@ -129,33 +128,25 @@ export default function MiSuscripcion() {
               </div>
             </>
           ) : (
-            // ─── Sin plan: selector mensual/anual + activar ───
+            // ─── Sin plan: plan único 30 €/mes + activar ───
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 12, marginBottom: 16 }}>
-                <PlanCard
-                  tipo="mensual"
-                  selected={plan === 'mensual'}
-                  onSelect={() => setPlan('mensual')}
-                  precio="30 €"
-                  periodo="/mes"
-                  detalle="Facturado cada mes."
-                />
-                <PlanCard
-                  tipo="anual"
-                  recomendada
-                  ahorro="Ahorra ~13%"
-                  selected={plan === 'anual'}
-                  onSelect={() => setPlan('anual')}
-                  precio="26 €"
-                  periodo="/mes"
-                  detalle="312 €/año, facturado anual."
-                />
-              </div>
-
-              <div style={{
-                fontSize: type.sm, color: colors.stone, marginBottom: 16, lineHeight: 1.5,
-              }}>
-                7 días de prueba al empezar · Cancela cuando quieras.
+              <div style={{ ...ds.card, padding: 22, marginBottom: 16 }}>
+                <div style={{
+                  fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
+                  letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8,
+                }}>Plan Pidoo</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontFamily: type.mono, fontSize: 34, fontWeight: 800, color: colors.ink }}>30</span>
+                  <span style={{ fontSize: 18, color: colors.ink, fontWeight: 700 }}>€</span>
+                  <span style={{ color: colors.stone, fontSize: 14 }}>/mes</span>
+                </div>
+                <div style={{ fontSize: type.sm, color: colors.stone, marginTop: 10, lineHeight: 1.5 }}>
+                  Tu propio marketplace público en{' '}
+                  <b style={{ color: colors.ink }}>pidoo.es/s/{socio?.slug}</b>.
+                </div>
+                <div style={{ fontSize: type.sm, color: colors.stone, marginTop: 4 }}>
+                  7 días de prueba al empezar · Cancela cuando quieras.
+                </div>
               </div>
 
               {(estado === 'past_due' || estado === 'unpaid') && (
@@ -179,11 +170,7 @@ export default function MiSuscripcion() {
                 disabled={yendo}
                 style={{ ...ds.primaryBtn, height: 48, padding: '0 26px', fontSize: type.base, opacity: yendo ? 0.6 : 1 }}
               >
-                {yendo
-                  ? 'Redirigiendo a Stripe…'
-                  : plan === 'anual'
-                    ? 'Activar plan anual · 312 €/año (7 días gratis)'
-                    : 'Activar plan mensual · 30 €/mes (7 días gratis)'}
+                {yendo ? 'Redirigiendo a Stripe…' : 'Activar plan · 30 €/mes (7 días gratis)'}
               </button>
             </>
           )}
@@ -194,47 +181,6 @@ export default function MiSuscripcion() {
 }
 
 // ─────────────────────── Sub-componentes ───────────────────────
-
-function PlanCard({ tipo, recomendada, ahorro, selected, onSelect, precio, periodo, detalle }) {
-  return (
-    <button
-      onClick={onSelect}
-      style={{
-        position: 'relative', textAlign: 'left', cursor: 'pointer',
-        ...ds.card, padding: 18,
-        border: `2px solid ${selected ? colors.terracotta : colors.border}`,
-        background: selected ? colors.terracottaSoft : colors.paper,
-        fontFamily: type.family, transition: 'border 0.15s, background 0.15s',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <span style={{
-          fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
-          letterSpacing: '0.06em', textTransform: 'uppercase',
-        }}>{tipo === 'anual' ? 'Anual' : 'Mensual'}</span>
-        {recomendada && (
-          <span style={{
-            fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999,
-            background: colors.terracotta, color: '#fff',
-            letterSpacing: '0.04em', textTransform: 'uppercase',
-          }}>Recomendada</span>
-        )}
-        {ahorro && (
-          <span style={{
-            fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 999,
-            background: colors.sageSoft, color: colors.sage2,
-            letterSpacing: '0.04em', textTransform: 'uppercase',
-          }}>{ahorro}</span>
-        )}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-        <span style={{ fontFamily: type.mono, fontSize: 28, fontWeight: 800, color: colors.ink }}>{precio}</span>
-        <span style={{ color: colors.stone, fontSize: 14 }}>{periodo}</span>
-      </div>
-      <div style={{ fontSize: type.xs, color: colors.stone, marginTop: 6 }}>{detalle}</div>
-    </button>
-  )
-}
 
 function Banner7Dias() {
   return (

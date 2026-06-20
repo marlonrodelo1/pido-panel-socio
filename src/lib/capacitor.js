@@ -74,6 +74,10 @@ export async function getPlugin(name) {
         mod = await import('@capacitor/browser')
         _pluginsCache[name] = mod.Browser
         break
+      case 'Clipboard':
+        mod = await import('@capacitor/clipboard')
+        _pluginsCache[name] = mod.Clipboard
+        break
       case 'Haptics':
         mod = await import('@capacitor/haptics')
         _pluginsCache[name] = mod.Haptics

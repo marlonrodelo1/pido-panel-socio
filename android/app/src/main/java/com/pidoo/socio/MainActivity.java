@@ -1,4 +1,4 @@
-package com.pido.socio;
+package com.pidoo.socio;
 
 import com.getcapacitor.BridgeActivity;
 

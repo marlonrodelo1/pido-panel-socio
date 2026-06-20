@@ -16,13 +16,13 @@ export default function RiderEsperando({ onOpenPedido }) {
     ;(async () => {
       const { data } = await supabase
         .from('socio_establecimiento')
-        .select('establecimiento_id, establecimientos(id, nombre, direccion, logo_url, tiene_delivery)')
+        .select('establecimiento_id, estado, establecimientos(id, nombre, direccion, logo_url, tiene_delivery)')
         .eq('socio_id', socio.id)
-        .eq('estado', 'activa')
-      if (!cancel) setRestaurantes((data || []).map(r => r.establecimientos).filter(Boolean))
+        .in('estado', ['activa', 'pausada'])
+      if (!cancel) setRestaurantes((data || []).map(r => ({ ...r.establecimientos, _estado: r.estado })).filter(Boolean))
     })()
     return () => { cancel = true }
-  }, [socio?.id])
+  }, [socio?.id, isOnline])
 
   return (
     <div style={{

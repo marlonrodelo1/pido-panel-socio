@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name">Pidoo Socio</string>
     <string name="title_activity_main">Pidoo Socio</string>
-    <string name="package_name">com.pido.socio</string>
-    <string name="custom_url_scheme">com.pido.socio</string>
+    <string name="package_name">com.pidoo.socio</string>
+    <string name="custom_url_scheme">com.pidoo.socio</string>
     <!-- Canal de la notificación persistente del foreground service de ubicación
          (@capacitor-community/background-geolocation). -->
     <string name="capacitor_background_geolocation_notification_channel_name">Pidoo en servicio</string>

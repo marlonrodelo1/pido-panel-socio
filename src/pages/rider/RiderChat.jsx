@@ -19,7 +19,7 @@ export default function RiderChat() {
     ;(async () => {
       const { data } = await supabase
         .from('rider_support_messages')
-        .select('id, socio_id, autor, texto, created_at')
+        .select('id, socio_id, remitente, mensaje, created_at')
         .eq('socio_id', socio.id)
         .order('created_at', { ascending: true })
         .limit(200)
@@ -49,11 +49,11 @@ export default function RiderChat() {
     if (Date.now() - lastSendRef.current < 2000) return
     lastSendRef.current = Date.now()
     setEnviando(true)
-    const optimistic = { id: 'opt-' + Date.now(), socio_id: socio.id, autor: 'rider', texto: t, created_at: new Date().toISOString() }
+    const optimistic = { id: 'opt-' + Date.now(), socio_id: socio.id, remitente: 'rider', mensaje: t, created_at: new Date().toISOString() }
     setMensajes(prev => [...prev, optimistic])
     setTexto('')
     const { error } = await supabase.from('rider_support_messages').insert({
-      socio_id: socio.id, autor: 'rider', texto: t,
+      socio_id: socio.id, remitente: 'rider', mensaje: t,
     })
     setEnviando(false)
     if (error) {
@@ -86,7 +86,7 @@ export default function RiderChat() {
           </div>
         )}
         {mensajes.map((m) => {
-          const mio = m.autor === 'rider'
+          const mio = m.remitente === 'rider'
           return (
             <div key={m.id} style={{
               alignSelf: mio ? 'flex-end' : 'flex-start',
@@ -98,7 +98,7 @@ export default function RiderChat() {
               fontSize: 13, lineHeight: 1.35,
               wordBreak: 'break-word',
             }}>
-              {m.texto}
+              {m.mensaje}
             </div>
           )
         })}

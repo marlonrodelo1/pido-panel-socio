@@ -1,6 +1,6 @@
 // DrawerRider — Side drawer con foto + nombre + menú de gestión + logout.
 // App única: la gestión admin se navega DENTRO de la app (sin abrir navegador).
-import { X, LifeBuoy, LogOut, Store, Utensils, Settings, Trash2 } from 'lucide-react'
+import { X, LifeBuoy, LogOut, Store, Utensils, Settings, Wallet, History } from 'lucide-react'
 import { useSocio } from '../context/SocioContext'
 import { colors } from '../lib/uiStyles'
 
@@ -9,6 +9,8 @@ import { colors } from '../lib/uiStyles'
 const ADMIN_ITEMS = [
   { key: 'marketplace',     label: 'Mi marketplace', Icon: Store },
   { key: 'restaurantes',    label: 'Restaurantes',   Icon: Utensils },
+  { key: 'ganancias',       label: 'Ganancias',      Icon: Wallet },
+  { key: 'pedidos',         label: 'Historial',      Icon: History },
   { key: 'configuracion',   label: 'Configuración',  Icon: Settings },
   { key: 'soporte',         label: 'Soporte',        Icon: LifeBuoy },
 ]
@@ -86,14 +88,6 @@ export default function DrawerRider({ open, onClose, onNavigate }) {
             <span>{label}</span>
           </button>
         ))}
-
-        <button
-          onClick={() => goAdmin('eliminar-cuenta')}
-          style={{ ...menuBtnStyle, color: colors.danger, background: 'transparent' }}
-        >
-          <Trash2 size={16} strokeWidth={2.2} />
-          <span>Eliminar cuenta</span>
-        </button>
 
         <div style={{ flex: 1 }} />
 

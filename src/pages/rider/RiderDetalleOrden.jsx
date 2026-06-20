@@ -7,12 +7,13 @@
 //   - En camino: "Entregado" → 'entregado'  +  "No se pudo entregar" → 'fallido' { motivo }
 //   - Entregado: cerrado, mensaje de éxito.
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Phone, MessageCircle, MapPin, Package, Truck, CheckCircle2, Navigation } from 'lucide-react'
+import { ArrowLeft, Phone, MessageCircle, Package, Truck, CheckCircle2, Navigation } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { riderEstado } from '../../lib/riderApi'
 import { useRider } from '../../context/RiderContext'
 import { isNativeSync } from '../../lib/capacitor'
 import { colors } from '../../lib/uiStyles'
+import { calcGanancia } from '../../lib/ganancia'
 
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
@@ -188,15 +189,14 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
             }}
             aria-label="Abrir navegación"
           >
-            <img src={mapaUrl} alt="Mapa del reparto" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            <img src={mapaUrl} alt="Mapa del reparto" onError={(e) => { e.currentTarget.style.display = 'none' }} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
             <span style={{
               position: 'absolute', right: 10, bottom: 10,
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              padding: '6px 11px', borderRadius: 999,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              padding: 8, borderRadius: 999,
               background: 'rgba(26,24,21,0.82)', color: '#fff',
-              fontSize: 11, fontWeight: 700,
             }}>
-              <Navigation size={12} strokeWidth={2.4} /> Navegar
+              <Navigation size={14} strokeWidth={2.4} />
             </span>
           </button>
         )}
@@ -222,15 +222,19 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                   {est.direccion && (
                     <div style={{ fontSize: 12, color: colors.stone, marginTop: 1, lineHeight: 1.4 }}>{est.direccion}</div>
                   )}
-                  <button onClick={() => abrirMaps(est.latitud, est.longitud, est.direccion)} style={linkBtnStyle}>
-                    <MapPin size={11} strokeWidth={2.2} /> Cómo llegar
-                  </button>
                 </div>
                 {est.telefono && (
                   <a href={`tel:${est.telefono}`} aria-label="Llamar restaurante" style={callBtnStyle}>
                     <Phone size={16} strokeWidth={2.4} />
                   </a>
                 )}
+                <button
+                  onClick={() => abrirMaps(est.latitud, est.longitud, est.direccion)}
+                  aria-label="Navegar a la recogida"
+                  style={navBtnStyle}
+                >
+                  <Navigation size={16} strokeWidth={2.4} />
+                </button>
               </div>
             </>
           )}
@@ -254,10 +258,14 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                   <div style={{ fontSize: 12, color: colors.stone, marginTop: 1, lineHeight: 1.4 }}>
                     {pedido.direccion_entrega}
                   </div>
-                  <button onClick={() => abrirMaps(pedido.lat_entrega, pedido.lng_entrega, pedido.direccion_entrega)} style={linkBtnStyle}>
-                    <MapPin size={11} strokeWidth={2.2} /> Navegar al destino
-                  </button>
                 </div>
+                <button
+                  onClick={() => abrirMaps(pedido.lat_entrega, pedido.lng_entrega, pedido.direccion_entrega)}
+                  aria-label="Navegar a la entrega"
+                  style={navBtnStyle}
+                >
+                  <Navigation size={16} strokeWidth={2.4} />
+                </button>
               </div>
 
               {/* Contacto cliente: llamar + WhatsApp */}
@@ -323,6 +331,9 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
             Pago: {pedido.metodo_pago === 'efectivo' ? '💵 Efectivo (cobra al cliente)' : '💳 Tarjeta (ya pagado)'}
           </div>
         </Card>
+
+        {/* TU GANANCIA — desglose de lo que gana el socio en este pedido */}
+        <GananciaCard pedido={pedido} />
 
         {/* ACCIONES según estado */}
         {paso === 0 && (
@@ -422,6 +433,45 @@ function Stepper({ paso }) {
   )
 }
 
+// ─── Tu ganancia (desglose para el socio) ───────────────────
+function GananciaCard({ pedido }) {
+  const isDelivery = pedido.modo_entrega === 'delivery'
+  const g = calcGanancia(pedido)
+  return (
+    <div style={{
+      background: colors.sageSoft, borderRadius: 14, padding: 14,
+      border: `1px solid ${colors.sage}`,
+    }}>
+      <SectionLabel>Tu ganancia</SectionLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+        {isDelivery && <GananciaRow label="Envío" value={g.envio} />}
+        {isDelivery && <GananciaRow label="Propina" value={g.propina} />}
+        <GananciaRow label="Comisión 10%" value={g.comision} />
+      </div>
+
+      <div style={{ height: 1, background: colors.sage, opacity: 0.5, margin: '12px 0' }} />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 13, color: colors.sage2, fontWeight: 700 }}>Total ganancia</span>
+        <span style={{ fontSize: 21, fontWeight: 800, color: colors.sage2 }}>
+          {g.total.toFixed(2).replace('.', ',')} €
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function GananciaRow({ label, value }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+      <span style={{ color: colors.stone }}>{label}</span>
+      <span style={{ color: colors.ink, fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>
+        {Number(value).toFixed(2)}€
+      </span>
+    </div>
+  )
+}
+
 // ─── Helpers ────────────────────────────────────────────────
 
 // Normaliza un teléfono a solo dígitos con prefijo 34 si no lo trae.
@@ -487,15 +537,17 @@ function Row({ label, value }) {
   )
 }
 
-const linkBtnStyle = {
-  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-  color: colors.terracotta, fontSize: 11, fontWeight: 600,
-  fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4,
-}
-
 const callBtnStyle = {
   width: 38, height: 38, borderRadius: '50%',
   background: colors.sageSoft, color: colors.sage2,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  textDecoration: 'none', flexShrink: 0,
+}
+
+const navBtnStyle = {
+  width: 38, height: 38, borderRadius: '50%',
+  background: colors.terracottaSoft, color: colors.terracotta,
+  border: 'none', cursor: 'pointer',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   textDecoration: 'none', flexShrink: 0,
 }

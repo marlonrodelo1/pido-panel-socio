@@ -52,7 +52,7 @@ export default function Pedidos() {
   const { socio } = useSocio()
   const [pedidos, setPedidos] = useState([])
   const [loading, setLoading] = useState(true)
-  const [rango, setRango] = useState('semana')
+  const [rango, setRango] = useState('mes')
   const [estado, setEstado] = useState('todos')
   const [pago, setPago] = useState('todos')
   const [detalle, setDetalle] = useState(null)
@@ -130,9 +130,9 @@ export default function Pedidos() {
         <Select label="Fecha"  value={rango}  onChange={setRango}  options={RANGOS} />
         <Select label="Estado" value={estado} onChange={setEstado} options={ESTADOS} />
         <Select label="Pago"   value={pago}   onChange={setPago}   options={PAGOS} />
-        {(rango !== 'semana' || estado !== 'todos' || pago !== 'todos') && (
+        {(rango !== 'mes' || estado !== 'todos' || pago !== 'todos') && (
           <button
-            onClick={() => { setRango('semana'); setEstado('todos'); setPago('todos') }}
+            onClick={() => { setRango('mes'); setEstado('todos'); setPago('todos') }}
             style={{
               marginLeft: 'auto', padding: '8px 14px',
               borderRadius: 999, border: `1px solid ${colors.border}`,

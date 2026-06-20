@@ -3,7 +3,7 @@ import { useSocio } from '../context/SocioContext'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 import {
-  formatTarifa, tarifaCampos, compararTarifas,
+  formatTarifa, tarifaCampos, compararTarifas, fmtPct,
   formatCuentaAtras, formatFechaCorta,
 } from '../lib/tarifas'
 
@@ -51,7 +51,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
         supabase.from('socio_establecimiento')
           .select(`
             id, estado, solicitado_at, aceptado_at,
-            tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima,
+            tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct,
             tarifa_aceptada_en, tarifa_pendiente, tarifa_pendiente_at,
             tarifa_pendiente_origen, tarifa_pendiente_expira_en,
             establecimiento:establecimientos(id, nombre, logo_url, slug, tipo, rating, activo)
@@ -192,6 +192,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
           tarifa_radio_base_km: Number(m.tarifa_radio_base_km),
           tarifa_precio_km: Number(m.tarifa_precio_km),
           tarifa_maxima: m.tarifa_maxima === '' || m.tarifa_maxima == null ? null : Number(m.tarifa_maxima),
+          comision_pct: m.comision_pct === '' || m.comision_pct == null ? 10 : Number(m.comision_pct),
         }),
       })
       const data = await r.json().catch(() => ({}))
@@ -236,7 +237,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
       {loading ? (
         <div style={{ color: colors.textMute, fontSize: type.sm, padding: 22 }}>Cargando…</div>
       ) : tab === 'vinculados' ? (
-        renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', error: null }) })
+        renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', comision_pct: vinc.comision_pct ?? 10, error: null }) })
       ) : tab === 'propuestas' ? (
         renderPropuestas({
           propuestas, respondiendo,
@@ -437,6 +438,7 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer })
                 tarifa_radio_base_km: v.tarifa_radio_base_km,
                 tarifa_precio_km: v.tarifa_precio_km,
                 tarifa_maxima: v.tarifa_maxima,
+                comision_pct: v.comision_pct,
               } : null)}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
@@ -494,6 +496,7 @@ function renderPropuestas({ propuestas, respondiendo, onAceptar, onRechazar }) {
           tarifa_radio_base_km: v.tarifa_radio_base_km,
           tarifa_precio_km: v.tarifa_precio_km,
           tarifa_maxima: v.tarifa_maxima,
+          comision_pct: v.comision_pct,
         }
         const propuesta = v.tarifa_pendiente || {}
         const filas = compararTarifas(actual, propuesta)
@@ -564,13 +567,14 @@ function TablaComparativa({ filas, actual, propuesta }) {
       }}>
         <span>Concepto</span><span>Actual</span><span>Propuesta</span>
       </div>
-      {tarifaCampos(actual).map((row, i) => {
+      {[...tarifaCampos(actual), { campo: 'comision_pct', label: 'Comisión', valor: actual?.comision_pct, fmt: fmtPct }].map((row, i) => {
         const fila = filas.find(f => f.campo === row.campo)
         const labelMap = {
           tarifa_base: 'Tarifa base',
           tarifa_radio_base_km: 'Radio incluido',
           tarifa_precio_km: 'Precio km extra',
           tarifa_maxima: 'Tarifa máxima',
+          comision_pct: 'Comisión',
         }
         const fmt = row.fmt
         const cambia = fila?.mejor !== 'igual'
@@ -732,8 +736,9 @@ function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
     { k: 'tarifa_radio_base_km', l: 'Radio incluido (km)', req: true },
     { k: 'tarifa_precio_km', l: 'Precio km extra (€)', req: true },
     { k: 'tarifa_maxima', l: 'Tarifa máxima (€)', req: false },
+    { k: 'comision_pct', l: 'Comisión (%)', req: true },
   ]
-  const completo = state.tarifa_base !== '' && state.tarifa_radio_base_km !== '' && state.tarifa_precio_km !== ''
+  const completo = state.tarifa_base !== '' && state.tarifa_radio_base_km !== '' && state.tarifa_precio_km !== '' && state.comision_pct !== '' && state.comision_pct != null
   return (
     <ModalShell onClose={onClose}>
       <h2 style={{ ...ds.h2, marginBottom: 6 }}>Proponer tarifa</h2>
@@ -745,7 +750,8 @@ function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
           <div key={c.k}>
             <label style={{ fontSize: 11, color: colors.textMute, fontWeight: 600, display: 'block', marginBottom: 4 }}>{c.l}</label>
             <input
-              type="number" step="0.01" min="0"
+              type="number" step={c.k === 'comision_pct' ? '0.5' : '0.01'} min="0"
+              max={c.k === 'comision_pct' ? '100' : undefined}
               value={state[c.k] ?? ''}
               onChange={(e) => onChange({ [c.k]: e.target.value })}
               placeholder={c.req ? 'Obligatorio' : 'Opcional'}
@@ -753,6 +759,12 @@ function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
             />
           </div>
         ))}
+      </div>
+      <div style={{
+        marginBottom: 14, padding: '10px 12px', borderRadius: 10,
+        background: colors.surface2, fontSize: type.xs, color: colors.textMute, lineHeight: 1.5,
+      }}>
+        La <b style={{ color: colors.text }}>comisión</b> es el % del importe del pedido que cobras a este restaurante (por defecto 10%). Puedes ajustarlo.
       </div>
       {state.error && (
         <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: colors.dangerSoft, color: colors.danger, fontSize: type.xs, fontWeight: 600 }}>{state.error}</div>

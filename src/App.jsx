@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { SocioProvider, useSocio } from './context/SocioContext'
+import { supabase } from './lib/supabase'
+import { getPlugin } from './lib/capacitor'
 import { RiderProvider, useRider } from './context/RiderContext'
 import Login from './pages/Login'
 import Landing from './pages/Landing'
@@ -8,8 +10,10 @@ import Dashboard from './pages/Dashboard'
 import Restaurantes from './pages/Restaurantes'
 import RestauranteDetalle from './pages/RestauranteDetalle'
 import Pedidos from './pages/Pedidos'
+import Ganancias from './pages/Ganancias'
 import Configuracion from './pages/Configuracion'
 import MiSuscripcion from './pages/MiSuscripcion'
+import ResetPassword from './pages/ResetPassword'
 import MiMarketplace from './pages/MiMarketplace'
 import EliminarCuenta from './pages/EliminarCuenta'
 import Soporte from './pages/Soporte'
@@ -21,6 +25,7 @@ import BottomNavRider from './components/BottomNavRider'
 import DrawerRider from './components/DrawerRider'
 import { ChevronLeft } from 'lucide-react'
 import ModalPedidoEntrante from './components/ModalPedidoEntrante'
+import OnlineToggleFloat from './components/OnlineToggleFloat'
 import RiderEsperando from './pages/rider/RiderEsperando'
 import RiderPedidos from './pages/rider/RiderPedidos'
 import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
@@ -116,6 +121,8 @@ const ADMIN_TITLES = {
   marketplace:          'Mi marketplace',
   restaurantes:         'Restaurantes',
   'restaurante-detalle':'Restaurante',
+  ganancias:            'Ganancias',
+  pedidos:              'Historial',
   suscripcion:          'Mi suscripción',
   configuracion:        'Configuración',
   soporte:              'Soporte',
@@ -127,8 +134,10 @@ function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, on
     marketplace:          <MiMarketplace />,
     restaurantes:         <Restaurantes onOpenRestaurante={onOpenRestaurante} />,
     'restaurante-detalle': estId
-      ? <RestauranteDetalle establecimiento_id={estId} onBack={onCloseRestaurante} />
+      ? <RestauranteDetalle establecimiento_id={estId} onBack={onCloseRestaurante} hideBack />
       : <Restaurantes onOpenRestaurante={onOpenRestaurante} />,
+    ganancias:            <Ganancias />,
+    pedidos:              <Pedidos />,
     suscripcion:          <MiSuscripcion />,
     configuracion:        <Configuracion />,
     soporte:              <Soporte />,
@@ -210,6 +219,24 @@ function ShellRider() {
     setTab(t)
   }
 
+  // Botones internos (p. ej. "Ver suscripción" o "Eliminar cuenta" dentro de
+  // Configuración) navegan vía evento global 'pidoo:goto'. Sin este listener,
+  // en la app rider esos botones no hacían nada (solo ShellAdmin los escuchaba).
+  useEffect(() => {
+    const handler = (e) => {
+      const target = e?.detail
+      if (typeof target === 'string') {
+        setOpenDetail(null)
+        if (target === 'restaurantes') { setAdminEstId(null); setAdminView('restaurantes') }
+        else setAdminView(target)
+      } else if (target && typeof target === 'object' && target.section === 'restaurante-detalle' && target.id) {
+        setOpenDetail(null); setAdminEstId(target.id); setAdminView('restaurante-detalle')
+      }
+    }
+    window.addEventListener('pidoo:goto', handler)
+    return () => window.removeEventListener('pidoo:goto', handler)
+  }, [])
+
   // ── Vista admin a pantalla completa (secundaria, desde el drawer) ──
   // La barra inferior sigue visible: tocar una pestaña sale de gestión.
   if (adminView) {
@@ -227,6 +254,8 @@ function ShellRider() {
           onChange={goRiderTab}
           asignacionesActivasCount={asignacionesActivas?.length || 0}
         />
+        {/* Estado online visible/accionable también en gestión */}
+        <OnlineToggleFloat />
         {/* El modal de pedido entrante sigue activo aunque esté en gestión */}
         <ModalPedidoEntrante />
       </div>
@@ -238,6 +267,7 @@ function ShellRider() {
     return (
       <div style={{ background: colors.cream, minHeight: '100vh' }}>
         <RiderDetalleOrden pedido={openDetail} onBack={() => setOpenDetail(null)} />
+        <OnlineToggleFloat />
         <ModalPedidoEntrante />
       </div>
     )
@@ -300,6 +330,32 @@ function Shell() {
     }
     window.addEventListener('pidoo:goto', handler)
     return () => window.removeEventListener('pidoo:goto', handler)
+  }, [])
+
+  // Deep link de OAuth (Google) en la app nativa: com.pidoo.socio://login?code=...
+  // En web no aplica (getPlugin('App') devuelve null); el ?code= lo intercambia
+  // detectSessionInUrl del cliente Supabase al volver al origen.
+  useEffect(() => {
+    let handle, cancel = false
+    ;(async () => {
+      const CapApp = await getPlugin('App')
+      if (!CapApp || cancel) return
+      handle = await CapApp.addListener('appUrlOpen', async ({ url }) => {
+        try {
+          const Browser = await getPlugin('Browser')
+          try { await Browser?.close() } catch (_) {}
+          const parsed = new URL(url)
+          const params = new URLSearchParams(
+            parsed.hash ? parsed.hash.substring(1) : (parsed.search ? parsed.search.substring(1) : '')
+          )
+          const code = params.get('code')
+          if (code) { await supabase.auth.exchangeCodeForSession(code); return }
+          const at = params.get('access_token'), rt = params.get('refresh_token')
+          if (at && rt) await supabase.auth.setSession({ access_token: at, refresh_token: rt })
+        } catch (err) { console.error('[oauth deeplink]', err) }
+      })
+    })()
+    return () => { cancel = true; try { handle?.remove?.() } catch (_) {} }
   }, [])
 
   const [vistaPublica, setVistaPublica] = useState(
@@ -365,6 +421,9 @@ function Shell() {
 export default function App() {
   // Tracking publico /seguir/<codigo> sin auth ni providers
   if (typeof window !== 'undefined') {
+    if (window.location.pathname.startsWith('/reset-password')) {
+      return <ResetPassword />
+    }
     const m = window.location.pathname.match(/^\/seguir\/([^/]+)/)
     if (m) {
       return <SeguirPedido codigo={decodeURIComponent(m[1])} />

@@ -1,17 +1,21 @@
 // ModalPedidoEntrante — Overlay full-screen cuando llega una asignación pendiente.
 // Countdown 180s, sonido + vibración, botones Aceptar / Rechazar.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bike, MapPin, Clock } from 'lucide-react'
 import { useRider } from '../context/RiderContext'
 import { riderAcceptOrder, riderRejectOrder } from '../lib/riderApi'
+import { supabase } from '../lib/supabase'
 import { colors } from '../lib/uiStyles'
+import { calcGanancia } from '../lib/ganancia'
 
 const COUNTDOWN_SECONDS = 180
+const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
 export default function ModalPedidoEntrante() {
   const { asignacionPendiente, dismissPendiente } = useRider() || {}
   const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECONDS)
   const [busy, setBusy] = useState(null) // 'accept' | 'reject' | null
+  const [pedidoFull, setPedidoFull] = useState(null) // pedido completo (mapa + ganancia)
   const audioRef = useRef(null)
   const intervalRef = useRef(null)
 
@@ -51,11 +55,51 @@ export default function ModalPedidoEntrante() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asignacionPendiente?.id])
 
+  // El objeto asignacionPendiente.pedidos viene PARCIAL. Cargamos el pedido
+  // completo para poder pintar el mini-mapa y calcular la ganancia del socio.
+  useEffect(() => {
+    setPedidoFull(null)
+    const pedidoId = asignacionPendiente?.pedido_id
+    if (!pedidoId) return
+    let cancel = false
+    ;(async () => {
+      const { data } = await supabase
+        .from('pedidos')
+        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,direccion_entrega,lat_entrega,lng_entrega,guest_nombre,usuario_id,establecimientos(nombre,direccion,latitud,longitud)')
+        .eq('id', pedidoId)
+        .maybeSingle()
+      if (!cancel && data) setPedidoFull(data)
+    })()
+    return () => { cancel = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asignacionPendiente?.pedido_id])
+
+  // Mini-mapa estático: restaurante (terracotta) + entrega (verde) + path.
+  // pedidoFull puede ser null mientras carga → mapa solo cuando hay coords + key.
+  const estLat = pedidoFull?.establecimientos?.latitud
+  const estLng = pedidoFull?.establecimientos?.longitud
+  const entLat = pedidoFull?.lat_entrega
+  const entLng = pedidoFull?.lng_entrega
+  const mapaUrl = useMemo(() => {
+    if (!GMAPS_KEY) return null
+    if (estLat == null || estLng == null || entLat == null || entLng == null) return null
+    const o = `${estLat},${estLng}`
+    const d = `${entLat},${entLng}`
+    return `https://maps.googleapis.com/maps/api/staticmap?size=640x300&scale=2`
+      + `&markers=color:0xC5562C%7C${o}`
+      + `&markers=color:0x2E7D32%7C${d}`
+      + `&path=color:0x8B9D7A%7Cweight:4%7C${o}%7C${d}`
+      + `&key=${encodeURIComponent(GMAPS_KEY)}`
+  }, [estLat, estLng, entLat, entLng])
+
   if (!asignacionPendiente) return null
 
-  const pedido = asignacionPendiente.pedidos || {}
+  // Cae al objeto parcial mientras carga el completo.
+  const pedido = pedidoFull || asignacionPendiente.pedidos || {}
   const est = pedido.establecimientos || {}
   const total = Number(pedido.total || 0)
+  const ganancia = calcGanancia(pedido)
+  const isDelivery = pedido.modo_entrega === 'delivery'
 
   const mins = Math.floor(secondsLeft / 60)
   const secs = secondsLeft % 60
@@ -66,9 +110,18 @@ export default function ModalPedidoEntrante() {
     setBusy('accept')
     try {
       const res = await riderAcceptOrder(asignacionPendiente.id)
-      if (!res.ok) console.error('rider-accept fallo:', res.error)
-    } finally {
+      if (!res?.ok) {
+        console.error('rider-accept fallo:', res?.error)
+        try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
+        alert('No se pudo aceptar el pedido. Puede que ya lo haya tomado otro repartidor. Inténtalo de nuevo.')
+        setBusy(null)
+        return
+      }
       dismissPendiente?.()
+    } catch (e) {
+      console.error('rider-accept error:', e)
+      alert('No se pudo aceptar el pedido. Revisa tu conexión e inténtalo de nuevo.')
+      setBusy(null)
     }
   }
 
@@ -113,6 +166,21 @@ export default function ModalPedidoEntrante() {
       }}>
         <style>{`@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
 
+        {/* MINI-MAPA: recogida (terracotta) + entrega (verde). Oculto si falta key/coords. */}
+        {mapaUrl && (
+          <div style={{
+            width: '100%', height: 130, borderRadius: 14, overflow: 'hidden',
+            border: `1px solid ${colors.border}`, background: colors.cream2,
+          }}>
+            <img
+              src={mapaUrl}
+              alt="Mapa del reparto"
+              onError={(e) => { const p = e.currentTarget.parentElement; if (p) p.style.display = 'none' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+          </div>
+        )}
+
         <div>
           <div style={{
             fontSize: 11, color: colors.stone, fontWeight: 700,
@@ -150,10 +218,31 @@ export default function ModalPedidoEntrante() {
 
         <div style={{ height: 1, background: colors.border }} />
 
+        {/* Total del pedido = lo que cobra al cliente */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div style={{ fontSize: 12, color: colors.stone }}>Total del pedido</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: colors.terracotta }}>
+          <div>
+            <div style={{ fontSize: 12, color: colors.stone, fontWeight: 600 }}>Total del pedido</div>
+            <div style={{ fontSize: 10, color: colors.stone2 }}>Lo que cobra al cliente</div>
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: colors.ink }}>
             {total.toFixed(2).replace('.', ',')} €
+          </div>
+        </div>
+
+        {/* Tu ganancia = lo que gana el socio (destacado en verde) */}
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+          background: colors.sageSoft, borderRadius: 12, padding: '10px 12px',
+          border: `1px solid ${colors.sage}`,
+        }}>
+          <div>
+            <div style={{ fontSize: 12, color: colors.sage2, fontWeight: 700 }}>Tu ganancia</div>
+            <div style={{ fontSize: 10, color: colors.stone }}>
+              {isDelivery ? 'Envío + 10% + propina' : '10% del subtotal'}
+            </div>
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: colors.sage2 }}>
+            {ganancia.total.toFixed(2).replace('.', ',')} €
           </div>
         </div>
       </div>

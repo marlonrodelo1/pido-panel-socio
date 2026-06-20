@@ -3,11 +3,11 @@ import { useSocio } from '../context/SocioContext'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 import StatCard from '../components/StatCard'
-import { formatTarifa, tarifaCampos, formatFechaCorta } from '../lib/tarifas'
+import { formatTarifa, tarifaCampos, fmtPct, formatFechaCorta } from '../lib/tarifas'
 
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
 
-export default function RestauranteDetalle({ establecimiento_id, onBack }) {
+export default function RestauranteDetalle({ establecimiento_id, onBack, hideBack }) {
   const { socio } = useSocio()
   const [loading, setLoading] = useState(true)
   const [establecimiento, setEstablecimiento] = useState(null)
@@ -20,6 +20,8 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
   const [emitiendo, setEmitiendo] = useState(false)
   const [msg, setMsg] = useState(null)
   const [togglingDestacado, setTogglingDestacado] = useState(false)
+  const [confirmarDesv, setConfirmarDesv] = useState(false)
+  const [desvinculando, setDesvinculando] = useState(false)
 
   const fiscalCompletoSocio = !!(socio?.razon_social && socio?.nif && socio?.direccion_fiscal && socio?.codigo_postal && socio?.ciudad)
 
@@ -43,7 +45,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
           supabase.from('socio_establecimiento')
             .select(`
               id, estado, solicitado_at, aceptado_at, exclusivo, destacado, orden_destacado,
-              tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, tarifa_aceptada_en,
+              tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct, tarifa_aceptada_en,
               tarifa_pendiente, tarifa_pendiente_origen, tarifa_pendiente_expira_en
             `)
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id).maybeSingle(),
@@ -109,7 +111,8 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
       tarifa_maxima: vinculacion.tarifa_maxima,
     }
     const tieneAlguna = Object.values(t).some(v => v !== null && v !== undefined)
-    return tieneAlguna ? t : null
+    if (!tieneAlguna) return null
+    return { ...t, comision_pct: vinculacion.comision_pct }
   }, [vinculacion])
 
   const fiscalRestauranteOk = !!(establecimiento?.razon_social && establecimiento?.nif)
@@ -132,6 +135,32 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
       setMsg({ tipo: 'error', txt: 'No se pudo actualizar: ' + e.message })
     } finally {
       setTogglingDestacado(false)
+    }
+  }
+
+  const desvincular = async () => {
+    if (!vinculacion?.id) return
+    setDesvinculando(true); setMsg(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch(`${FUNCTIONS_URL}/desvincular-socio-establecimiento`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ socio_establecimiento_id: vinculacion.id }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(data.error || `Error ${r.status}`)
+      setConfirmarDesv(false)
+      // La vinculación ya no existe → volver al listado (se refresca al montar).
+      if (onBack) onBack()
+    } catch (e) {
+      setConfirmarDesv(false)
+      setMsg({ tipo: 'error', txt: 'No se pudo desvincular: ' + e.message })
+    } finally {
+      setDesvinculando(false)
     }
   }
 
@@ -197,7 +226,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
   if (!establecimiento) {
     return (
       <div>
-        <BackBtn onBack={onBack} />
+        {!hideBack && <BackBtn onBack={onBack} />}
         <div style={{ ...ds.card, textAlign: 'center', padding: 28 }}>
           <div style={{ fontSize: type.base, fontWeight: 700 }}>Restaurante no encontrado</div>
         </div>
@@ -211,20 +240,20 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
 
   return (
     <div>
-      <BackBtn onBack={onBack} />
+      {!hideBack && <BackBtn onBack={onBack} />}
 
       {/* Header card */}
       <div style={{ ...ds.card, padding: 22, marginBottom: 18 }}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           {establecimiento.logo_url ? (
             <div style={{
-              width: 72, height: 72, borderRadius: 14, flexShrink: 0,
+              width: 64, height: 64, borderRadius: 14, flexShrink: 0,
               background: `url(${establecimiento.logo_url}) center/cover`,
               border: `1.5px solid ${colors.terracotta}`,
             }} />
           ) : (
             <div style={{
-              width: 72, height: 72, borderRadius: 14, flexShrink: 0,
+              width: 64, height: 64, borderRadius: 14, flexShrink: 0,
               background: colors.terracottaSoft, color: colors.terracotta,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontWeight: 800, fontSize: 22, border: `1.5px solid ${colors.terracotta}`,
@@ -232,41 +261,42 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
-              fontSize: 22, fontWeight: 800, color: colors.text,
-              letterSpacing: '-0.4px',
+              fontSize: 20, fontWeight: 800, color: colors.text, letterSpacing: '-0.4px',
             }}>{nombre}</div>
             <div style={{
               fontSize: 11, color: colors.textFaint, marginTop: 4,
               fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
             }}>{tipo}</div>
-            <div style={{
-              display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8,
-              fontSize: type.xs, color: colors.textMute,
-            }}>
-              {establecimiento.telefono && <span>📞 {establecimiento.telefono}</span>}
-              {establecimiento.email && <span>✉️ {establecimiento.email}</span>}
-              {establecimiento.direccion && <span>📍 {establecimiento.direccion}</span>}
-            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
-            {vinculacion && <div style={badge}>{badge._label}</div>}
-            {vinculacion?.estado === 'activa' && (
-              <button onClick={toggleDestacado} disabled={togglingDestacado}
-                title={vinculacion.destacado ? 'Quitar destacado' : 'Marcar como destacado'}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '7px 14px', borderRadius: 999, cursor: 'pointer',
-                  fontSize: 12, fontWeight: 700, fontFamily: type.family,
-                  background: vinculacion.destacado ? colors.terracotta : colors.surface2,
-                  color: vinculacion.destacado ? '#fff' : colors.textDim,
-                  border: `1px solid ${vinculacion.destacado ? colors.terracotta : colors.border}`,
-                  opacity: togglingDestacado ? 0.6 : 1,
-                }}>
-                <span style={{ fontSize: 13 }}>{vinculacion.destacado ? '★' : '☆'}</span>
-                {vinculacion.destacado ? 'Destacado' : 'Destacar'}
-              </button>
-            )}
-          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+          {vinculacion && <div style={badge}>{badge._label}</div>}
+          {vinculacion?.estado === 'activa' && (
+            <button onClick={toggleDestacado} disabled={togglingDestacado}
+              title={vinculacion.destacado ? 'Quitar destacado' : 'Marcar como destacado'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px', borderRadius: 999, cursor: 'pointer',
+                fontSize: 12, fontWeight: 700, fontFamily: type.family, whiteSpace: 'nowrap',
+                background: vinculacion.destacado ? colors.terracotta : colors.surface2,
+                color: vinculacion.destacado ? '#fff' : colors.textDim,
+                border: `1px solid ${vinculacion.destacado ? colors.terracotta : colors.border}`,
+                opacity: togglingDestacado ? 0.6 : 1,
+              }}>
+              <span style={{ fontSize: 13 }}>{vinculacion.destacado ? '★' : '☆'}</span>
+              {vinculacion.destacado ? 'Destacado' : 'Destacar'}
+            </button>
+          )}
+        </div>
+
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14,
+          fontSize: type.xs, color: colors.textMute,
+        }}>
+          {establecimiento.telefono && <span>📞 {establecimiento.telefono}</span>}
+          {establecimiento.email && <span style={{ wordBreak: 'break-all' }}>✉️ {establecimiento.email}</span>}
+          {establecimiento.direccion && <span>📍 {establecimiento.direccion}</span>}
         </div>
       </div>
 
@@ -284,7 +314,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
         {tarifaPactada ? (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 14 }}>
-              {tarifaCampos(tarifaPactada).map(c => (
+              {[...tarifaCampos(tarifaPactada), { campo: 'comision_pct', label: 'Comisión', valor: tarifaPactada.comision_pct, fmt: fmtPct }].map(c => (
                 <div key={c.campo}>
                   <div style={{ fontSize: 11, color: colors.textMute, fontWeight: 600 }}>{c.label}</div>
                   <div style={{
@@ -479,6 +509,40 @@ export default function RestauranteDetalle({ establecimiento_id, onBack }) {
             })}
           </Table>
         </>
+      )}
+
+      {/* Zona peligrosa — desvincular del restaurante */}
+      {vinculacion && vinculacion.estado !== 'rechazada' && (
+        <div style={{ marginTop: 8, padding: 18, borderRadius: 14, background: colors.dangerSoft }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: colors.danger, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Zona peligrosa</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: type.sm, color: colors.danger, flex: '1 1 200px' }}>
+              Dejar de trabajar con este restaurante. Se le enviará una notificación.
+            </div>
+            <button onClick={() => setConfirmarDesv(true)} style={{ ...ds.dangerBtn, background: 'transparent', whiteSpace: 'nowrap' }}>
+              Desvincular
+            </button>
+          </div>
+        </div>
+      )}
+
+      {confirmarDesv && (
+        <div onClick={() => !desvinculando && setConfirmarDesv(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(26,24,21,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background: colors.paper, borderRadius: 16, maxWidth: 420, width: '100%', padding: 24, border: `1px solid ${colors.border}`, boxShadow: colors.shadowLg }}>
+            <h2 style={{ ...ds.h2, marginBottom: 8 }}>Desvincular restaurante</h2>
+            <p style={{ fontSize: type.sm, color: colors.textDim, lineHeight: 1.5, marginBottom: 18 }}>
+              ¿Seguro que quieres desvincularte de <b style={{ color: colors.text }}>{nombre}</b>? Dejarás de recibir sus pedidos y se le enviará una notificación. Podrás volver a solicitar la vinculación más adelante.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmarDesv(false)} disabled={desvinculando} style={ds.secondaryBtn}>Cancelar</button>
+              <button onClick={desvincular} disabled={desvinculando} style={{ ...ds.dangerBtn, opacity: desvinculando ? 0.6 : 1 }}>
+                {desvinculando ? 'Desvinculando…' : 'Sí, desvincular'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

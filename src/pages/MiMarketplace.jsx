@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
-import { supabase } from '../lib/supabase'
+import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type } from '../lib/uiStyles'
 import { getPlugin, isNativePlatform } from '../lib/capacitor'
 
 export default function MiMarketplace() {
-  const { socio, updateSocio } = useSocio()
+  const { socio, updateSocio, refreshSocio } = useSocio()
   const logoInputRef = useRef(null)
   const bannerInputRef = useRef(null)
   const [uploading, setUploading] = useState(null)
@@ -25,6 +25,10 @@ export default function MiMarketplace() {
   const [saving, setSaving] = useState(false)
   const [ok, setOk] = useState(false)
   const [err, setErr] = useState(null)
+  const [copiado, setCopiado] = useState(false)
+  const [slugInput, setSlugInput] = useState('')
+  const [slugStatus, setSlugStatus] = useState('idle') // idle|short|checking|ok|taken|invalid
+  const [creandoTienda, setCreandoTienda] = useState(false)
 
   useEffect(() => {
     if (!socio) return
@@ -42,6 +46,44 @@ export default function MiMarketplace() {
   }, [socio])
 
   const url = socio?.slug ? `https://pidoo.es/s/${socio.slug}` : null
+
+  const slugify = (s) => String(s || '').toLowerCase().trim()
+    .replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+
+  // Prefill del slug desde el nombre comercial/nombre la primera vez (solo si aún no hay tienda).
+  useEffect(() => {
+    if (socio && !socio.slug && !slugInput) {
+      const base = slugify(socio.nombre_comercial || socio.nombre || '')
+      if (base) setSlugInput(base)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socio])
+
+  // Comprobación de disponibilidad del slug en vivo (debounce 450ms) vía reserve-socio-slug.
+  useEffect(() => {
+    if (socio?.slug) return
+    const clean = slugify(slugInput)
+    if (clean.length === 0) { setSlugStatus('idle'); return }
+    if (clean.length < 3) { setSlugStatus('short'); return }
+    setSlugStatus('checking')
+    let cancel = false
+    const t = setTimeout(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const res = await fetch(`${FUNCTIONS_URL}/reserve-socio-slug`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+          body: JSON.stringify({ slug: clean, check_only: true }),
+        })
+        const j = await res.json().catch(() => ({}))
+        if (cancel) return
+        if (res.ok && j.disponible) setSlugStatus('ok')
+        else if (j.disponible === false) setSlugStatus('taken')
+        else setSlugStatus('invalid')
+      } catch { if (!cancel) setSlugStatus('invalid') }
+    }, 450)
+    return () => { cancel = true; clearTimeout(t) }
+  }, [slugInput, socio?.slug])
 
   const loadRestaurantes = async () => {
     if (!socio?.id) return
@@ -107,18 +149,59 @@ export default function MiMarketplace() {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  // Copia la URL pública con fallback robusto + feedback visual.
+  // 1) Capacitor Clipboard (nativo) → 2) navigator.clipboard → 3) textarea + execCommand.
+  const copiarUrl = async () => {
+    if (!url) return
+    let copied = false
+    try {
+      const Clip = await getPlugin('Clipboard')
+      if (Clip) { await Clip.write({ string: url }); copied = true }
+    } catch (_) {}
+    if (!copied) {
+      try {
+        await navigator.clipboard?.writeText(url)
+        copied = true
+      } catch (_) {}
+    }
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = url
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.focus()
+        ta.select()
+        copied = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch (_) {}
+    }
+    if (copied) {
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 1500)
+    }
+  }
+
   const uploadImage = async (file, kind) => {
     if (!file || !socio?.user_id) return
     setUploading(kind); setErr(null)
     try {
       const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
       const path = `${socio.user_id}/${kind}-${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage
-        .from('socios-media')
-        .upload(path, file, { cacheControl: '3600', upsert: true, contentType: file.type })
-      if (upErr) throw upErr
-      const { data: pub } = supabase.storage.from('socios-media').getPublicUrl(path)
-      const publicUrl = pub.publicUrl
+      // Storage no valida el JWT ES256 → subimos vía edge function (service_role).
+      const { data: { session } } = await supabase.auth.getSession()
+      const fd = new FormData()
+      fd.append('path', path)
+      fd.append('file', file)
+      const res = await fetch(`${FUNCTIONS_URL}/subir-imagen-socio`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+        body: fd,
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j.error || 'No se pudo subir la imagen')
+      const publicUrl = j.publicUrl
       setForm(f => ({ ...f, [kind === 'logo' ? 'logo_url' : 'banner_url']: publicUrl }))
       await updateSocio({ [kind === 'logo' ? 'logo_url' : 'banner_url']: publicUrl })
       setOk(true); setTimeout(() => setOk(false), 2500)
@@ -160,6 +243,45 @@ export default function MiMarketplace() {
     } catch (e) { alert(e.message) }
   }
 
+  // Crea la tienda pública: reserva el slug (reserve-socio-slug escribe socios.slug),
+  // guarda el nombre comercial y activa el marketplace. updateSocio refresca el socio
+  // local (que ya incluye el slug recién escrito) y la UI cambia al modo completo.
+  const crearTienda = async () => {
+    const clean = slugify(slugInput)
+    if (clean.length < 3 || slugStatus !== 'ok') return
+    setCreandoTienda(true); setErr(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${FUNCTIONS_URL}/reserve-socio-slug`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+        body: JSON.stringify({ slug: clean }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j.ok) throw new Error(j.error || 'No se pudo crear la tienda')
+      const cambios = { marketplace_activo: true }
+      if (form.nombre_comercial?.trim()) cambios.nombre_comercial = form.nombre_comercial.trim()
+      await updateSocio(cambios)
+      await refreshSocio()
+      setOk(true); setTimeout(() => setOk(false), 2500)
+    } catch (e) {
+      setErr(e.message || 'No se pudo crear la tienda')
+    } finally {
+      setCreandoTienda(false)
+    }
+  }
+
+  const slugMsg = {
+    idle: '', short: 'Mínimo 3 caracteres',
+    checking: 'Comprobando disponibilidad…',
+    ok: `Disponible: pidoo.es/s/${slugify(slugInput)}`,
+    taken: 'No disponible, prueba con otra',
+    invalid: 'Dirección no válida',
+  }[slugStatus] || ''
+  const slugMsgColor = slugStatus === 'ok' ? (colors.stateOk || colors.sage2)
+    : slugStatus === 'checking' ? colors.textMute
+    : colors.danger
+
   return (
     <div>
       <h1 style={ds.h1}>Mi marketplace</h1>
@@ -167,25 +289,48 @@ export default function MiMarketplace() {
         Así verán tus clientes tu tienda pública.
       </p>
 
-      <div style={{ ...ds.card, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase' }}>URL pública</div>
-          <div style={{ fontSize: type.base, fontWeight: 600, color: colors.text }}>
-            {url || <span style={{ color: colors.textMute, fontWeight: 500 }}>Configura tu slug primero en Configuración</span>}
+      {!socio?.slug ? (
+        <div style={{ ...ds.card, marginBottom: 16 }}>
+          <h2 style={ds.h2}>Crea tu tienda pública</h2>
+          <p style={{ fontSize: type.sm, color: colors.textMute, marginTop: 4, marginBottom: 16 }}>
+            Elige el nombre y la dirección web de tu marketplace. Tus clientes pedirán desde ahí.
+          </p>
+          <label style={ds.label}>Nombre comercial</label>
+          <input value={form.nombre_comercial}
+            onChange={e => setForm({ ...form, nombre_comercial: e.target.value })}
+            placeholder="Ej: Agora Express" style={{ ...ds.input, marginBottom: 14 }} />
+          <label style={ds.label}>Dirección de tu tienda</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: colors.surface2, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0 12px' }}>
+            <span style={{ fontSize: type.sm, color: colors.textMute, whiteSpace: 'nowrap' }}>pidoo.es/s/</span>
+            <input value={slugInput} onChange={e => setSlugInput(e.target.value)}
+              placeholder="tu-marca" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              style={{ ...ds.input, border: 'none', background: 'transparent', padding: '12px 0', flex: 1 }} />
           </div>
+          {slugMsg && (
+            <div style={{ fontSize: 12, marginTop: 6, fontWeight: 600, color: slugMsgColor }}>{slugMsg}</div>
+          )}
+          {err && <div style={{ background: colors.dangerSoft, color: colors.danger, padding: '10px 12px', borderRadius: 8, marginTop: 12, fontSize: type.xs }}>{err}</div>}
+          <button onClick={crearTienda} disabled={slugStatus !== 'ok' || creandoTienda}
+            style={{ ...ds.primaryBtn, marginTop: 14, opacity: (slugStatus === 'ok' && !creandoTienda) ? 1 : 0.55 }}>
+            {creandoTienda ? 'Creando…' : 'Crear mi tienda'}
+          </button>
         </div>
-        {url && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => navigator.clipboard?.writeText(url)} style={ds.secondaryBtn}>Copiar</button>
-            <button onClick={openTienda} style={ds.secondaryBtn}>Ver tienda ↗</button>
+      ) : (
+        <div style={{ ...ds.card, marginBottom: 16 }}>
+          <div style={{ fontSize: type.xxs, fontWeight: 700, color: colors.textMute, letterSpacing: '0.06em', textTransform: 'uppercase' }}>URL pública</div>
+          <div style={{ fontSize: type.base, fontWeight: 600, color: colors.text, marginTop: 2, wordBreak: 'break-all' }}>{url}</div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <button onClick={copiarUrl} style={{ ...ds.secondaryBtn, flex: '1 1 auto', whiteSpace: 'nowrap' }}>{copiado ? 'Copiado ✓' : 'Copiar'}</button>
+            <button onClick={openTienda} style={{ ...ds.secondaryBtn, flex: '1 1 auto', whiteSpace: 'nowrap' }}>Ver tienda ↗</button>
             <button onClick={toggleActivo}
-              style={socio?.marketplace_activo ? { ...ds.dangerBtn } : { ...ds.primaryBtn }}>
+              style={{ ...(socio?.marketplace_activo ? ds.dangerBtn : ds.primaryBtn), flex: '1 1 auto', whiteSpace: 'nowrap' }}>
               {socio?.marketplace_activo ? 'Desactivar' : 'Activar tienda'}
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
+      {socio?.slug && (<>
       <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Branding</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
@@ -271,13 +416,14 @@ export default function MiMarketplace() {
                 <div key={link.id} style={{
                   display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
                   borderTop: idx === 0 ? 'none' : `1px solid ${colors.border}`,
+                  flexWrap: 'wrap',
                 }}>
                   <div style={{
                     width: 40, height: 40, borderRadius: 8, flexShrink: 0,
                     background: e.logo_url ? `url(${e.logo_url}) center/cover` : colors.surface2,
                     border: `1px solid ${colors.border}`,
                   }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ flex: '1 1 130px', minWidth: 0 }}>
                     <div style={{ fontSize: type.sm, color: colors.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {e.nombre || '—'}
                     </div>
@@ -287,18 +433,20 @@ export default function MiMarketplace() {
                       </div>
                     )}
                   </div>
-                  {link.destacado && (
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button onClick={() => moverOrden(link, -1)} disabled={dIdx <= 0}
-                        style={{ ...ds.secondaryBtn, width: 32, height: 32, padding: 0, opacity: dIdx <= 0 ? 0.4 : 1 }} aria-label="Subir">↑</button>
-                      <button onClick={() => moverOrden(link, 1)} disabled={dIdx >= destacados.length - 1}
-                        style={{ ...ds.secondaryBtn, width: 32, height: 32, padding: 0, opacity: dIdx >= destacados.length - 1 ? 0.4 : 1 }} aria-label="Bajar">↓</button>
-                    </div>
-                  )}
-                  <button onClick={() => toggleDestacado(link)}
-                    style={link.destacado ? ds.primaryBtn : ds.secondaryBtn}>
-                    {link.destacado ? '★ Destacado' : '☆ Destacar'}
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                    {link.destacado && (
+                      <>
+                        <button onClick={() => moverOrden(link, -1)} disabled={dIdx <= 0}
+                          style={{ ...ds.secondaryBtn, width: 32, height: 32, padding: 0, opacity: dIdx <= 0 ? 0.4 : 1 }} aria-label="Subir">↑</button>
+                        <button onClick={() => moverOrden(link, 1)} disabled={dIdx >= destacados.length - 1}
+                          style={{ ...ds.secondaryBtn, width: 32, height: 32, padding: 0, opacity: dIdx >= destacados.length - 1 ? 0.4 : 1 }} aria-label="Bajar">↓</button>
+                      </>
+                    )}
+                    <button onClick={() => toggleDestacado(link)}
+                      style={{ ...(link.destacado ? ds.primaryBtn : ds.secondaryBtn), whiteSpace: 'nowrap' }}>
+                      {link.destacado ? '★ Destacado' : '☆ Destacar'}
+                    </button>
+                  </div>
                 </div>
               )
             })}
@@ -314,6 +462,7 @@ export default function MiMarketplace() {
           {saving ? 'Guardando…' : 'Guardar cambios'}
         </button>
       </div>
+      </>)}
     </div>
   )
 }

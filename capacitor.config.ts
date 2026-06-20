@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
-  appId: 'com.pido.socio',
+  appId: 'com.pidoo.socio',
   appName: 'Pidoo Socio',
   webDir: 'dist',
   bundledWebRuntime: false,
