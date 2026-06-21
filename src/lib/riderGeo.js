@@ -65,7 +65,7 @@ let intervalMs = ACTIVE_INTERVAL_MS
  * online en caso de denegación dura.
  */
 export async function requestLocationPermission() {
-  const Geo = await getPlugin('Geolocation')
+  const Geo = (await getPlugin('Geolocation'))?.plugin
   if (!Geo) {
     // En web, navigator.geolocation requiere que el usuario lo dispare desde un
     // gesto. Devolvemos true y dejamos que getCurrentPosition lo pida luego.
@@ -91,7 +91,7 @@ export async function requestLocationPermission() {
  * Usa @capacitor/geolocation en nativo y navigator.geolocation en web.
  */
 export async function getCurrentPosition() {
-  const Geo = await getPlugin('Geolocation')
+  const Geo = (await getPlugin('Geolocation'))?.plugin
   try {
     if (Geo) {
       const pos = await Geo.getCurrentPosition(POS_OPTS)
@@ -262,7 +262,7 @@ function scheduleNext() {
 let lifecycleBound = false
 async function bindLifecycle() {
   if (lifecycleBound) return
-  const App = await getPlugin('App')
+  const App = (await getPlugin('App'))?.plugin
   if (!App) return
   App.addListener('appStateChange', (state) => {
     intervalMs = state.isActive ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS

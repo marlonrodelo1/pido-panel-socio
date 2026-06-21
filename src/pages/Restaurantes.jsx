@@ -28,7 +28,9 @@ export default function Restaurantes({ onOpenRestaurante }) {
   const [vinculados, setVinculados] = useState([])
   const [buscador, setBuscador] = useState([])
   const [query, setQuery] = useState('')
+  const [categoria, setCategoria] = useState('')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [enviando, setEnviando] = useState(null)
 
   const [modalSolicitar, setModalSolicitar] = useState(null)
@@ -45,9 +47,9 @@ export default function Restaurantes({ onOpenRestaurante }) {
 
   const load = async () => {
     if (!socio?.id) return
-    setLoading(true)
+    setLoading(true); setError(false)
     try {
-      const [vinc, rest] = await Promise.all([
+      const queries = Promise.all([
         supabase.from('socio_establecimiento')
           .select(`
             id, estado, solicitado_at, aceptado_at,
@@ -63,10 +65,13 @@ export default function Restaurantes({ onOpenRestaurante }) {
           .eq('activo', true)
           .limit(100),
       ])
+      // Timeout 12s: en red lenta la consulta puede colgarse sin dar error.
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000))
+      const [vinc, rest] = await Promise.race([queries, timeout])
       setVinculados(vinc.data || [])
       const vinculadosIds = new Set((vinc.data || []).map(v => v.establecimiento?.id))
       setBuscador((rest.data || []).filter(r => !vinculadosIds.has(r.id)))
-    } catch (e) { console.error(e) }
+    } catch (e) { console.error(e); setError(true) }
     setLoading(false)
   }
 
@@ -206,8 +211,15 @@ export default function Restaurantes({ onOpenRestaurante }) {
     }
   }
 
+  // Categorías disponibles (derivadas del tipo de los restaurantes buscables).
+  const categorias = useMemo(
+    () => [...new Set(buscador.map(r => r.tipo).filter(Boolean))].sort(),
+    [buscador]
+  )
+
   const filtrados = buscador.filter(r =>
-    !query || r.nombre.toLowerCase().includes(query.toLowerCase())
+    (!query || r.nombre.toLowerCase().includes(query.toLowerCase())) &&
+    (!categoria || r.tipo === categoria)
   )
 
   const activos = vinculados.filter(v => v.estado === 'activa').length
@@ -236,6 +248,12 @@ export default function Restaurantes({ onOpenRestaurante }) {
 
       {loading ? (
         <div style={{ color: colors.textMute, fontSize: type.sm, padding: 22 }}>Cargando…</div>
+      ) : error ? (
+        <div style={{ textAlign: 'center', padding: 30 }}>
+          <div style={{ fontSize: type.base, fontWeight: 700, color: colors.text, marginBottom: 6 }}>No se pudo cargar</div>
+          <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 14 }}>Revisa tu conexión e inténtalo de nuevo.</div>
+          <button onClick={load} style={ds.primaryBtn}>Reintentar</button>
+        </div>
       ) : tab === 'vinculados' ? (
         renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', comision_pct: vinc.comision_pct ?? 10, error: null }) })
       ) : tab === 'propuestas' ? (
@@ -249,8 +267,18 @@ export default function Restaurantes({ onOpenRestaurante }) {
           <input
             value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Buscar por nombre…"
-            style={{ ...ds.input, marginBottom: 14 }}
+            style={{ ...ds.input, marginBottom: categorias.length > 0 ? 12 : 14 }}
           />
+          {categorias.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: colors.textMute, letterSpacing: '0.04em', textTransform: 'uppercase', marginRight: 2 }}>Categorías</span>
+              <CategoriaChip label="Todas" active={!categoria} onClick={() => setCategoria('')} />
+              {categorias.map(c => (
+                <CategoriaChip key={c} label={c} active={categoria === c}
+                  onClick={() => setCategoria(categoria === c ? '' : c)} />
+              ))}
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 14 }}>
             {filtrados.map(r => {
               const tone = colorPara(r.id || r.nombre)
@@ -360,6 +388,20 @@ function PillTabs({ tabs, value, onChange }) {
         )
       })}
     </div>
+  )
+}
+
+// ───────────── Chip de categoría (filtro del buscador) ─────────────
+function CategoriaChip({ label, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '6px 12px', borderRadius: 999,
+      border: active ? `1px solid ${colors.terracotta}` : `1px solid ${colors.border}`,
+      background: active ? colors.terracotta : colors.paper,
+      color: active ? '#fff' : colors.textDim,
+      fontSize: type.xs, fontWeight: 700, cursor: 'pointer',
+      fontFamily: type.family, textTransform: 'capitalize', transition: 'background 0.15s',
+    }}>{label}</button>
   )
 }
 

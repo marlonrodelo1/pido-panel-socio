@@ -338,11 +338,11 @@ function Shell() {
   useEffect(() => {
     let handle, cancel = false
     ;(async () => {
-      const CapApp = await getPlugin('App')
+      const CapApp = (await getPlugin('App'))?.plugin
       if (!CapApp || cancel) return
       handle = await CapApp.addListener('appUrlOpen', async ({ url }) => {
         try {
-          const Browser = await getPlugin('Browser')
+          const Browser = (await getPlugin('Browser'))?.plugin
           try { await Browser?.close() } catch (_) {}
           const parsed = new URL(url)
           const params = new URLSearchParams(

@@ -56,7 +56,7 @@ const features = [
 ]
 
 const pasos = [
-  { n: '1', titulo: 'Regístrate', texto: 'Crea tu cuenta con email y contraseña. Onboarding rápido: solo nombre y teléfono.' },
+  { n: '1', titulo: 'Regístrate', texto: 'Crea tu cuenta con email o Google. En un paso eliges tu nombre comercial y se genera tu marketplace.' },
   { n: '2', titulo: 'Vincúlate con restaurantes', texto: 'Busca restaurantes en Pidoo, solicita vincularte o acepta propuestas que te lleguen.' },
   { n: '3', titulo: 'Empieza a repartir', texto: 'Cada pedido aceptado llega directo a tu app de Pidoo Socio. Tú repartes, el restaurante te paga directo. Sin intermediarios.' },
 ]

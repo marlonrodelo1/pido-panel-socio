@@ -49,7 +49,15 @@ export async function getPlatform() {
  * Devuelve null si Capacitor no está disponible o el plugin no se importa.
  */
 export async function getPlugin(name) {
-  if (_pluginsCache[name]) return _pluginsCache[name]
+  // IMPORTANTE: devolvemos { plugin } (NO el proxy directo). Un proxy de plugin
+  // Capacitor responde a CUALQUIER propiedad (incluido `.then`) con una función,
+  // así que es "thenable": si una función async lo devuelve, o se hace
+  // `await proxy`, el motor de promesas intenta asimilarlo y llama a
+  // `proxy.then(resolve, reject)` → Capacitor responde "X.then() is not
+  // implemented on android" y el await se queda colgado para siempre (y lanza un
+  // unhandledrejection que el try/catch del caller no atrapa). Por eso envolvemos
+  // el proxy en un objeto plano y el caller hace `(await getPlugin('X'))?.plugin`.
+  if (_pluginsCache[name]) return { plugin: _pluginsCache[name] }
   if (!(await isNativePlatform())) return null
   try {
     let mod
@@ -89,7 +97,7 @@ export async function getPlugin(name) {
       default:
         return null
     }
-    return _pluginsCache[name]
+    return { plugin: _pluginsCache[name] }
   } catch (e) {
     console.warn(`[capacitor] No se pudo cargar plugin ${name}:`, e?.message)
     return null
@@ -101,11 +109,14 @@ export async function getPlugin(name) {
  * Llamar desde main.jsx tras montar React.
  */
 export async function setupStatusBar() {
-  const SB = await getPlugin('StatusBar')
+  const SB = (await getPlugin('StatusBar'))?.plugin
   if (!SB) return
   try {
     await SB.setOverlaysWebView({ overlay: true })
-    await SB.setStyle({ style: 'DARK' })
+    // OJO: en Capacitor 'Light' = iconos OSCUROS (para fondos claros) y 'Dark' =
+    // iconos claros. El socio tiene fondo claro (#FAFAF7), así que va 'LIGHT' para
+    // que la hora/wifi/batería se vean (con 'DARK' salían blancos = invisibles).
+    await SB.setStyle({ style: 'LIGHT' })
     await SB.setBackgroundColor({ color: '#FAFAF7' })
   } catch (e) {
     console.warn('[capacitor] StatusBar setup failed:', e?.message)
@@ -116,7 +127,7 @@ export async function setupStatusBar() {
  * Oculta el splash screen tras N ms. Llamar tras login resuelto.
  */
 export async function hideSplash() {
-  const SS = await getPlugin('SplashScreen')
+  const SS = (await getPlugin('SplashScreen'))?.plugin
   if (!SS) return
   try { await SS.hide({ fadeOutDuration: 200 }) } catch (_) {}
 }

@@ -140,7 +140,7 @@ export default function MiMarketplace() {
     if (!url) return
     try {
       if (await isNativePlatform()) {
-        const Browser = await getPlugin('Browser')
+        const Browser = (await getPlugin('Browser'))?.plugin
         if (Browser) { await Browser.open({ url }); return }
         window.open(url, '_system')
         return
@@ -155,7 +155,7 @@ export default function MiMarketplace() {
     if (!url) return
     let copied = false
     try {
-      const Clip = await getPlugin('Clipboard')
+      const Clip = (await getPlugin('Clipboard'))?.plugin
       if (Clip) { await Clip.write({ string: url }); copied = true }
     } catch (_) {}
     if (!copied) {

@@ -23,7 +23,7 @@ let registered = false
 export async function registerSocioPushNative(userId) {
   if (registered) return { ok: true, already: true }
   if (!(await isNativePlatform())) return { ok: false, reason: 'web' }
-  const Push = await getPlugin('PushNotifications')
+  const Push = (await getPlugin('PushNotifications'))?.plugin
   if (!Push) return { ok: false, reason: 'no_plugin' }
 
   try {
@@ -61,16 +61,25 @@ export async function registerSocioPushNative(userId) {
       const fcmToken = token?.value || token
       console.log('[pushNative] FCM token:', fcmToken?.slice(0, 20) + '…')
       try {
-        await supabase.from('push_subscriptions').upsert(
-          {
-            user_id: userId,
-            user_type: 'socio',
-            fcm_token: fcmToken,
-            plataforma: 'android_socio',
-            activo: true,
-          },
-          { onConflict: 'user_id,fcm_token' },
-        )
+        // enviar_push v28 enruta al socio por user_id y exige endpoint LIKE 'fcm:%'.
+        // La tabla no tiene unique constraint (solo PK id) → no se puede usar
+        // onConflict. Hacemos delete del token previo + insert idempotente.
+        const endpoint = 'fcm:' + fcmToken
+        const row = {
+          user_id: userId,
+          user_type: 'socio',
+          endpoint,
+          fcm_token: fcmToken,
+          p256dh: '',
+          auth: '',
+        }
+        await supabase
+          .from('push_subscriptions')
+          .delete()
+          .eq('user_type', 'socio')
+          .eq('fcm_token', fcmToken)
+        const { error } = await supabase.from('push_subscriptions').insert(row)
+        if (error) console.warn('[pushNative] insert push_subscriptions failed:', error.message)
       } catch (e) {
         console.warn('[pushNative] upsert push_subscriptions failed:', e?.message)
       }
@@ -113,7 +122,7 @@ export async function unregisterSocioPushNative(userId) {
   try {
     await supabase
       .from('push_subscriptions')
-      .update({ activo: false })
+      .delete()
       .eq('user_id', userId)
       .eq('user_type', 'socio')
   } catch (e) {

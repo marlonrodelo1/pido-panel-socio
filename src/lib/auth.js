@@ -15,7 +15,7 @@ export async function loginGoogle() {
   })
   if (error) throw error
   if (isNative && data?.url) {
-    const Browser = await getPlugin('Browser')
+    const Browser = (await getPlugin('Browser'))?.plugin
     if (Browser) await Browser.open({ url: data.url })
     else window.open(data.url, '_system')
   }
