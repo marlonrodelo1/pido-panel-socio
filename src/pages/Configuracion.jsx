@@ -1,31 +1,75 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { colors, ds, type } from '../lib/uiStyles'
+
+// Campos fiscales obligatorios para poder emitir facturas a los restaurantes
+// (mismo criterio que el gate en Dashboard.jsx y RestauranteDetalle.jsx).
+const REQUERIDOS_FISCALES = ['razon_social', 'nif', 'direccion_fiscal', 'codigo_postal', 'ciudad']
+
+const FISCAL_INIT = (socio) => ({
+  razon_social: socio?.razon_social || '',
+  nif: socio?.nif || '',
+  direccion_fiscal: socio?.direccion_fiscal || '',
+  codigo_postal: socio?.codigo_postal || '',
+  ciudad: socio?.ciudad || '',
+  provincia: socio?.provincia || '',
+  pais: socio?.pais || 'España',
+  iban: socio?.iban || '',
+})
 
 export default function Configuracion() {
   const { socio, updateSocio, logout } = useSocio()
   const [form, setForm] = useState({
     nombre: socio?.nombre || '',
     telefono: socio?.telefono || '',
+    ...FISCAL_INIT(socio),
   })
   const [saving, setSaving] = useState(false)
   const [ok, setOk] = useState(false)
   const [err, setErr] = useState(null)
+  const fiscalRef = useRef(null)
 
   useEffect(() => {
     if (!socio) return
     setForm({
       nombre: socio.nombre || '',
       telefono: socio.telefono || '',
+      ...FISCAL_INIT(socio),
     })
   }, [socio])
+
+  const fiscalCompleto = REQUERIDOS_FISCALES.every(k => (form[k] || '').trim())
+
+  // Si el socio llega aquí con los datos fiscales incompletos (p. ej. desde el
+  // aviso "Ir a Configuración"), llevamos el scroll a la sección fiscal.
+  useEffect(() => {
+    if (!socio) return
+    const completo = REQUERIDOS_FISCALES.every(k => (socio[k] || '').toString().trim())
+    if (!completo && fiscalRef.current) {
+      const t = setTimeout(() => {
+        try { fiscalRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch (_) {}
+      }, 250)
+      return () => clearTimeout(t)
+    }
+  }, [socio])
+
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }))
+  const clean = (v) => { const t = (v || '').trim(); return t || null }
 
   const save = async () => {
     setSaving(true); setErr(null); setOk(false)
     try {
       await updateSocio({
         nombre: form.nombre,
-        telefono: form.telefono || null,
+        telefono: clean(form.telefono),
+        razon_social: clean(form.razon_social),
+        nif: clean(form.nif) ? form.nif.trim().toUpperCase() : null,
+        direccion_fiscal: clean(form.direccion_fiscal),
+        codigo_postal: clean(form.codigo_postal),
+        ciudad: clean(form.ciudad),
+        provincia: clean(form.provincia),
+        pais: clean(form.pais),
+        iban: clean(form.iban) ? form.iban.replace(/\s+/g, '').toUpperCase() : null,
       })
       setOk(true); setTimeout(() => setOk(false), 2500)
     } catch (e) { setErr(e.message) }
@@ -36,7 +80,7 @@ export default function Configuracion() {
     <div style={{ maxWidth: 800 }}>
       <h1 style={ds.h1}>Configuración</h1>
       <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4, marginBottom: 22 }}>
-        Datos personales.
+        Datos personales y fiscales.
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -48,13 +92,72 @@ export default function Configuracion() {
           <h2 style={{ ...ds.h2, marginBottom: 14 }}>Datos personales</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
             <Field label="Nombre completo">
-              <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} style={ds.input} />
+              <input value={form.nombre} onChange={set('nombre')} style={ds.input} />
             </Field>
             <Field label="Teléfono">
-              <input value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })}
+              <input value={form.telefono} onChange={set('telefono')}
                 placeholder="+34 600 000 000" style={ds.input} />
             </Field>
           </div>
+        </Card>
+
+        {/* Datos fiscales — necesarios para emitir facturas a los restaurantes */}
+        <Card style={{ scrollMarginTop: 80 }}>
+          <div ref={fiscalRef} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+            <h2 style={{ ...ds.h2, margin: 0 }}>Datos fiscales</h2>
+            <span style={{
+              padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+              background: fiscalCompleto ? colors.sageSoft : colors.dangerSoft,
+              color: fiscalCompleto ? colors.sage2 : colors.danger,
+            }}>{fiscalCompleto ? '✓ Completo' : 'Incompleto'}</span>
+          </div>
+          <p style={{ color: colors.textMute, fontSize: type.xs, marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
+            Necesitas estos datos para poder <b>emitir facturas</b> a los restaurantes. Aparecerán como
+            emisor en cada factura. El IBAN se usa para recibir tus liquidaciones semanales.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+            <Field label="Razón social *">
+              <input value={form.razon_social} onChange={set('razon_social')}
+                placeholder="Nombre fiscal o autónomo" style={ds.input} />
+            </Field>
+            <Field label="NIF / CIF *">
+              <input value={form.nif} onChange={set('nif')}
+                placeholder="12345678Z" style={ds.input} />
+            </Field>
+            <Field label="Dirección fiscal *" full>
+              <input value={form.direccion_fiscal} onChange={set('direccion_fiscal')}
+                placeholder="Calle, número, piso" style={ds.input} />
+            </Field>
+            <Field label="Código postal *">
+              <input value={form.codigo_postal} onChange={set('codigo_postal')}
+                placeholder="38001" style={ds.input} />
+            </Field>
+            <Field label="Ciudad *">
+              <input value={form.ciudad} onChange={set('ciudad')}
+                placeholder="Santa Cruz de Tenerife" style={ds.input} />
+            </Field>
+            <Field label="Provincia">
+              <input value={form.provincia} onChange={set('provincia')}
+                placeholder="Santa Cruz de Tenerife" style={ds.input} />
+            </Field>
+            <Field label="País">
+              <input value={form.pais} onChange={set('pais')}
+                placeholder="España" style={ds.input} />
+            </Field>
+            <Field label="IBAN (para cobros)" full>
+              <input value={form.iban} onChange={set('iban')}
+                placeholder="ES00 0000 0000 0000 0000 0000" style={ds.input} />
+            </Field>
+          </div>
+          {!fiscalCompleto && (
+            <div style={{
+              marginTop: 12, background: colors.dangerSoft, color: colors.danger,
+              padding: '10px 14px', borderRadius: 10, fontSize: type.xs, lineHeight: 1.5,
+            }}>
+              Los campos marcados con <b>*</b> son obligatorios para emitir facturas.
+            </div>
+          )}
         </Card>
 
         {err && (
