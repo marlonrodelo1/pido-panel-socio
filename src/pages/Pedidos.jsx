@@ -24,6 +24,18 @@ const PAGOS = [
   { id: 'efectivo', label: 'Efectivo' },
 ]
 
+// Solo dos métodos: tarjeta (pagado online) o efectivo (cobrar al cliente).
+// Cualquier valor legacy (p.ej. 'datafono') se trata como cobro en persona.
+const esPagadoOnline = (m) => m === 'tarjeta'
+const metodoPagoLabel = (m) => (esPagadoOnline(m) ? 'Tarjeta' : 'Efectivo')
+
+// Origen del pedido para el socio.
+const origenLabel = (o) => {
+  if (o === 'tienda_publica') return 'Tienda del restaurante'
+  if (o === 'marketplace_socio') return 'Mi marketplace'
+  return 'App Pidoo'
+}
+
 function rangoToDesde(id) {
   if (id === 'todos') return null
   const now = new Date()
@@ -81,7 +93,7 @@ export default function Pedidos() {
       // El desglose de comisión del rider ya no tiene fuente de datos.
       let q = supabase
         .from('pedidos')
-        .select('id, codigo, estado, metodo_pago, total, created_at, establecimiento:establecimientos(nombre)')
+        .select('id, codigo, estado, metodo_pago, total, created_at, origen_pedido, establecimiento:establecimientos(nombre)')
         .order('created_at', { ascending: false })
         .limit(200)
 
@@ -186,8 +198,9 @@ export default function Pedidos() {
           </div>
           {pedidos.map((p, i) => {
             const b = stateBadge(p.estado)
-            const pagoTone = p.metodo_pago === 'efectivo' ? colors.warningSoft : colors.surface2
-            const pagoColor = p.metodo_pago === 'efectivo' ? colors.warning : colors.textDim
+            const cobrar = !esPagadoOnline(p.metodo_pago)
+            const pagoTone = cobrar ? colors.warningSoft : colors.surface2
+            const pagoColor = cobrar ? colors.warning : colors.textDim
             return (
               <div
                 key={p.id}
@@ -215,8 +228,8 @@ export default function Pedidos() {
                   fontSize: 11, fontWeight: 700,
                   background: pagoTone, color: pagoColor,
                   padding: '3px 8px', borderRadius: 999,
-                  textTransform: 'capitalize', justifySelf: 'start',
-                }}>{p.metodo_pago || '—'}</span>
+                  justifySelf: 'start',
+                }}>{metodoPagoLabel(p.metodo_pago)}</span>
                 <span style={{
                   color: colors.text, fontWeight: 600,
                   fontVariantNumeric: 'tabular-nums',
@@ -377,7 +390,9 @@ function DetalleModal({ pedidoId, onClose }) {
           <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <Section title="Resumen">
               <Row k="Fecha" v={new Date(pedido.created_at).toLocaleString('es-ES')} />
-              <Row k="Método pago" v={(pedido.metodo_pago || '—').toUpperCase()} />
+              <Row k="Origen" v={origenLabel(pedido.origen_pedido)} />
+              <Row k="Método de pago" v={metodoPagoLabel(pedido.metodo_pago)} />
+              <Row k="Cobro" v={esPagadoOnline(pedido.metodo_pago) ? 'Pagado online (no cobrar)' : 'Cobrar al cliente'} />
               <Row k="Total" v={`${Number(pedido.total || 0).toFixed(2)} €`} highlight />
               {pedido.minutos_preparacion && <Row k="Tiempo prep." v={`${pedido.minutos_preparacion} min`} />}
             </Section>
