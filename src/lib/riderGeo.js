@@ -82,6 +82,19 @@ export async function requestLocationPermission() {
   }
 }
 
+/**
+ * Abre los ajustes del sistema para que el usuario conceda el permiso de
+ * ubicación manualmente (tras haberlo denegado con "no volver a preguntar").
+ * Usa BackgroundGeolocation.openSettings(). Best-effort: no-op en web.
+ */
+export async function openLocationSettings() {
+  try {
+    await BackgroundGeolocation.openSettings()
+  } catch (e) {
+    console.warn('[riderGeo] openSettings no disponible:', e?.message)
+  }
+}
+
 // ──────────────────────────────────────────────────────────────
 // Posición puntual
 // ──────────────────────────────────────────────────────────────

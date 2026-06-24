@@ -1,14 +1,15 @@
 // RiderEsperando — Pantalla por defecto cuando rider está online esperando.
 // Muestra estado, último GPS, restaurantes vinculados.
 import { useEffect, useState } from 'react'
-import { Bike, MapPin, AlertCircle } from 'lucide-react'
+import { Bike, MapPin, AlertCircle, X } from 'lucide-react'
 import { useRider } from '../../context/RiderContext'
 import { supabase } from '../../lib/supabase'
 import { colors } from '../../lib/uiStyles'
 
 export default function RiderEsperando({ onOpenPedido }) {
-  const { socio, isOnline, asignacionesActivas } = useRider() || {}
+  const { socio, isOnline, needsLocation, actionError, retryLocation, clearActionError, asignacionesActivas } = useRider() || {}
   const [restaurantes, setRestaurantes] = useState([])
+  const [retrying, setRetrying] = useState(false)
 
   useEffect(() => {
     if (!socio?.id) return
@@ -41,6 +42,53 @@ export default function RiderEsperando({ onOpenPedido }) {
             <div style={{ fontSize: 12, marginTop: 2, opacity: 0.85 }}>
               Activa "En línea" arriba para empezar a recibir pedidos.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error de red al conectar/desconectar (desechable) */}
+      {actionError && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 14, marginBottom: 14,
+          background: '#FDE8E4', color: '#9B3412',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <AlertCircle size={18} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>{actionError}</div>
+          <button onClick={() => clearActionError?.()} aria-label="Cerrar" style={{
+            border: 'none', background: 'transparent', color: 'inherit',
+            cursor: 'pointer', padding: 0, display: 'flex',
+          }}>
+            <X size={16} strokeWidth={2.4} />
+          </button>
+        </div>
+      )}
+
+      {/* Online pero sin permiso de ubicación: banner persistente con acción */}
+      {isOnline && needsLocation && (
+        <div style={{
+          padding: '14px 16px', borderRadius: 14, marginBottom: 14,
+          background: colors.warningSoft, color: '#8B6126',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <MapPin size={18} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>Activa la ubicación</div>
+            <div style={{ fontSize: 12, marginTop: 2, opacity: 0.85 }}>
+              Sin tu ubicación no podremos asignarte pedidos cercanos. Estás en línea, pero necesitamos el GPS.
+            </div>
+            <button
+              onClick={async () => { if (retrying) return; setRetrying(true); try { await retryLocation?.() } finally { setRetrying(false) } }}
+              disabled={retrying}
+              style={{
+                marginTop: 10, padding: '8px 14px', borderRadius: 999, border: 'none',
+                background: '#8B6126', color: '#fff', fontWeight: 700, fontSize: 12,
+                cursor: retrying ? 'wait' : 'pointer', opacity: retrying ? 0.7 : 1,
+                fontFamily: 'inherit',
+              }}
+            >
+              {retrying ? 'Comprobando…' : 'Activar ubicación'}
+            </button>
           </div>
         </div>
       )}

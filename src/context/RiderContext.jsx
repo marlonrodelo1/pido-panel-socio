@@ -14,11 +14,11 @@
 //   { socio, isOnline, asignacionPendiente, asignacionesActivas,
 //     setOnline(boolean), dismissPendiente(), refreshAsignaciones() }
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline } from '../lib/riderApi'
-import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission } from '../lib/riderGeo'
+import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
 
 const RiderCtx = createContext(null)
@@ -27,6 +27,8 @@ export const useRider = () => useContext(RiderCtx)
 export function RiderProvider({ children }) {
   const { socio, user, refreshSocio } = useSocio() || {}
   const [isOnline, setIsOnline] = useState(false)
+  const [needsLocation, setNeedsLocation] = useState(false) // online sin permiso GPS → banner
+  const [actionError, setActionError] = useState(null)      // error de red al conectar/desconectar
   const [asignacionPendiente, setAsignacionPendiente] = useState(null) // { id, pedido_id, codigo, ... }
   const [asignacionesActivas, setAsignacionesActivas] = useState([]) // pedidos en curso del rider
   const channelRef = useRef(null)
@@ -38,17 +40,20 @@ export function RiderProvider({ children }) {
   }, [socio?.en_servicio])
 
   // ─── Acción: cambiar online/offline ────────────────────────
+  // El estado online lo fija la edge `rider-online` (fuente de verdad). El permiso
+  // GPS es BEST-EFFORT: si falta, NO bloqueamos ni revertimos el online — la edge
+  // pone en_servicio aunque no haya coordenadas y avisamos con `needsLocation`
+  // (banner en RiderEsperando). Solo revertimos si la edge falla de verdad (red).
   const setOnline = async (next) => {
-    // Optimistic update
-    setIsOnline(next)
+    setActionError(null)
+    setIsOnline(next) // optimista
     if (next) {
       const granted = await requestLocationPermission()
-      if (!granted) {
-        console.warn('[RiderContext] permiso GPS denegado, abortando online')
-        setIsOnline(false)
-        return { ok: false, reason: 'gps_denied' }
+      setNeedsLocation(!granted)
+      let pos = null
+      if (granted) {
+        try { pos = await getCurrentPosition() } catch (_) {}
       }
-      const pos = await getCurrentPosition()
       const res = await riderOnline({
         latitud: pos?.latitud,
         longitud: pos?.longitud,
@@ -56,26 +61,44 @@ export function RiderProvider({ children }) {
       })
       if (!res.ok) {
         setIsOnline(false)
+        setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
         return res
       }
-      startTracking({
-        onUpdate: () => {
-          // No hace falta hacer nada extra, riderApi.riderUpdateLocation ya
-          // persiste. Solo loggear.
-        },
-      })
+      if (granted) startTracking({ onUpdate: () => {} })
       refreshSocio?.()
       return res
     } else {
       stopTracking()
+      setNeedsLocation(false)
       const res = await riderOffline()
+      if (!res.ok) {
+        setIsOnline(true)
+        setActionError('No se pudo desconectar. Inténtalo de nuevo.')
+        return res
+      }
       refreshSocio?.()
       return res
     }
   }
 
+  // Reintentar el permiso de ubicación desde el banner. Si se concede y ya
+  // estamos online, arranca el tracking y empuja una posición; si sigue
+  // denegado, abre los ajustes del sistema para que el usuario lo active.
+  const retryLocation = async () => {
+    const granted = await requestLocationPermission()
+    setNeedsLocation(!granted)
+    if (granted) {
+      if (isOnline) { startTracking({ onUpdate: () => {} }); captureAndPush() }
+    } else {
+      openLocationSettings()
+    }
+    return granted
+  }
+
+  const clearActionError = () => setActionError(null)
+
   // ─── Cargar asignaciones activas del rider ─────────────────
-  const refreshAsignaciones = async () => {
+  const refreshAsignaciones = useCallback(async () => {
     if (!socio?.id) return
     lastFetchRef.current = Date.now()
     // Pedidos en curso del rider = asignaciones ACEPTADAS aún no entregadas.
@@ -101,15 +124,14 @@ export function RiderProvider({ children }) {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    if (pendiente && !asignacionPendiente) {
-      setAsignacionPendiente(pendiente)
-    }
-  }
+    // Funcional: no pisar una pendiente ya mostrada (evita leer estado stale).
+    if (pendiente) setAsignacionPendiente((prev) => prev || pendiente)
+  }, [socio?.id])
 
   useEffect(() => {
     if (!socio?.id) return
     refreshAsignaciones()
-  }, [socio?.id])
+  }, [socio?.id, refreshAsignaciones])
 
   // ─── Realtime: pedido_asignaciones del socio ───────────────
   useEffect(() => {
@@ -145,7 +167,7 @@ export function RiderProvider({ children }) {
       .subscribe()
     channelRef.current = ch
     return () => { supabase.removeChannel(ch); channelRef.current = null }
-  }, [socio?.id])
+  }, [socio?.id, refreshAsignaciones])
 
   // ─── Listeners push: fallback cuando realtime no llega ─────
   useEffect(() => {
@@ -157,7 +179,7 @@ export function RiderProvider({ children }) {
       refreshAsignaciones()
     })
     return () => { offRecv?.(); offTap?.() }
-  }, [socio?.id])
+  }, [socio?.id, refreshAsignaciones])
 
   // ─── Dismiss asignación pendiente (tras aceptar/rechazar/timeout) ──
   const dismissPendiente = () => {
@@ -170,12 +192,16 @@ export function RiderProvider({ children }) {
     socio,
     user,
     isOnline,
+    needsLocation,
+    actionError,
     asignacionPendiente,
     asignacionesActivas,
     setOnline,
+    retryLocation,
+    clearActionError,
     dismissPendiente,
     refreshAsignaciones,
-  }), [socio, user, isOnline, asignacionPendiente, asignacionesActivas])
+  }), [socio, user, isOnline, needsLocation, actionError, asignacionPendiente, asignacionesActivas, refreshAsignaciones])
 
   return <RiderCtx.Provider value={value}>{children}</RiderCtx.Provider>
 }

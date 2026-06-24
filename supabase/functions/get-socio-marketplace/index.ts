@@ -1,7 +1,19 @@
-// get-socio-marketplace v6 — filtro por radio del marketplace.
+// get-socio-marketplace v10 — offline NO cierra la tienda + blindaje de delivery per-socio.
 //
-// La tienda publica del socio queda abierta solo si socios.en_servicio = true
-// y socios.activo = true y socios.marketplace_activo = true.
+// La tienda publica del socio queda ABIERTA si socios.activo = true y
+// socios.marketplace_activo = true. El estado en_servicio (online/offline) YA NO
+// cierra la tienda: si el socio esta offline, la tienda sigue abierta pero en
+// modo SOLO RECOGIDA. Solo se cierra del todo si el socio esta desactivado
+// (activo=false) o ha pausado su marketplace (marketplace_activo=false).
+//
+// BLINDAJE v10: el delivery del marketplace del socio depende del propio socio
+// (socio = rider). Por eso forzamos `tiene_delivery = en_servicio && tiene_delivery`
+// en CADA restaurante devuelto: si el socio esta offline, TODOS sus restaurantes
+// salen como solo-recogida, independientemente del flag global del establecimiento
+// (que es compartido entre varios socios y no sirve para decidir per-socio).
+//
+// rider_online = !!socios.en_servicio indica al frontend si hay reparto a
+// domicilio disponible (true) o solo recogida (false).
 //
 // Si el cliente envia lat/lng en query string, ademas filtramos los
 // restaurantes vinculados que esten a > socios.radio_marketplace_km de su
@@ -50,16 +62,22 @@ Deno.serve(async (req) => {
     if (error) throw error
     if (!socio) return json({ error: 'socio no encontrado' }, 404)
 
-    const tiendaCerrada = socio.activo === false || socio.marketplace_activo === false || socio.en_servicio !== true
+    // La tienda solo se cierra si el socio esta desactivado o ha pausado su
+    // marketplace. Offline (en_servicio=false) NO la cierra: queda solo recogida.
+    const tiendaCerrada = socio.activo === false || socio.marketplace_activo === false
 
     if (tiendaCerrada) {
       return json({
         socio: { ...socio, rider_online: !!socio.en_servicio },
         restaurantes: [],
         tienda_cerrada: true,
-        razon: !socio.activo ? 'desactivado' : (!socio.marketplace_activo ? 'marketplace_pausado' : 'rider_offline'),
+        razon: !socio.activo ? 'desactivado' : 'marketplace_pausado',
       })
     }
+
+    // En el marketplace del socio, el socio ES el repartidor: si esta offline,
+    // ningun restaurante puede ofrecer domicilio (solo recogida).
+    const socioOnline = !!socio.en_servicio
 
     const { data: vinculaciones } = await supabase
       .from('socio_establecimiento')
@@ -77,7 +95,13 @@ Deno.serve(async (req) => {
         .eq('activo', true)
         .eq('estado', 'activo')
       const vincMap = new Map((vinculaciones || []).map((v) => [v.establecimiento_id, v]))
-      let listado = (rests || []).map((r) => ({ ...r, destacado: vincMap.get(r.id)?.destacado || false, orden_destacado: vincMap.get(r.id)?.orden_destacado || 999 }))
+      let listado = (rests || []).map((r) => ({
+        ...r,
+        // Blindaje per-socio: delivery solo si el socio esta online.
+        tiene_delivery: socioOnline && !!r.tiene_delivery,
+        destacado: vincMap.get(r.id)?.destacado || false,
+        orden_destacado: vincMap.get(r.id)?.orden_destacado || 999,
+      }))
 
       // Filtro por radio del marketplace del socio (si tenemos ubicacion).
       const radioKm = Number(socio.radio_marketplace_km) > 0 ? Number(socio.radio_marketplace_km) : null
@@ -93,7 +117,7 @@ Deno.serve(async (req) => {
     }
 
     return json({
-      socio: { ...socio, rider_online: true },
+      socio: { ...socio, rider_online: socioOnline },
       restaurantes,
       tienda_cerrada: false,
     })
