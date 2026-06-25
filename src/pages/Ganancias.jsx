@@ -147,13 +147,18 @@ export default function Ganancias() {
         </div>
       </div>
 
+      <div style={{ fontSize: type.xs, color: colors.textFaint, marginBottom: 14, marginTop: -4, lineHeight: 1.5 }}>
+        Es lo que facturas a cada restaurante por tus repartos: envío + comisión + propina (sin IVA).
+        En pedidos en efectivo recuerda que ya cobraste el total al cliente y debes entregarle al restaurante su parte.
+      </div>
+
       {loading ? (
         <div style={{ color: colors.textMute, padding: 20 }}>Cargando…</div>
       ) : porRestaurante.length === 0 ? (
         <div style={{ ...ds.card, textAlign: 'center', padding: 30 }}>
           <div style={{ fontSize: type.base, fontWeight: 700 }}>No tienes nada por cobrar</div>
           <div style={{ fontSize: type.sm, color: colors.textMute, marginTop: 4 }}>
-            Cuando entregues pedidos en efectivo, aquí verás lo que cada restaurante te debe.
+            Cuando entregues pedidos, aquí verás lo que facturas a cada restaurante por tus repartos.
           </div>
         </div>
       ) : (
@@ -235,7 +240,7 @@ function DesglosePeriodo({ titulo, loading, data, tone }) {
       <div style={{ height: 1, background: colors.border, margin: '14px 0 10px' }} />
 
       <DesgloseRow k="Envíos" v={loading || data == null ? '—' : euro(data.total_envio)} />
-      <DesgloseRow k="Comisión (10%)" v={loading || data == null ? '—' : euro(data.total_comision)} />
+      <DesgloseRow k="Comisión" v={loading || data == null ? '—' : euro(data.total_comision)} />
       <DesgloseRow k="Propinas" v={loading || data == null ? '—' : euro(data.total_propina)} />
     </div>
   )

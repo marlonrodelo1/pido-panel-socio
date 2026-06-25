@@ -47,7 +47,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
       // Re-cargamos el pedido completo (el objeto entrante puede venir parcial).
       const [pedRes, itemsRes] = await Promise.all([
         supabase.from('pedidos')
-          .select('id, codigo, estado, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, guest_telefono, guest_nombre')
+          .select('id, codigo, estado, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, cliente_telefono, guest_telefono, guest_nombre')
           .eq('id', pedido.id).maybeSingle(),
         supabase.from('pedido_items').select('*').eq('pedido_id', pedido.id),
       ])
@@ -112,8 +112,9 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
   const paso = pasoActual(pedido.estado)
   const cerrado = paso >= 3
 
-  // Teléfono del cliente: usuario registrado o invitado.
-  const telefonoCliente = cliente?.telefono || pedido.guest_telefono || null
+  // Teléfono del cliente: snapshot en el pedido (siempre presente desde el checkout
+  // nuevo) y, como respaldo, usuario registrado o invitado.
+  const telefonoCliente = pedido.cliente_telefono || cliente?.telefono || pedido.guest_telefono || null
   const nombreCliente = [cliente?.nombre, cliente?.apellido].filter(Boolean).join(' ').trim()
     || pedido.guest_nombre || 'Cliente'
 
@@ -267,23 +268,32 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                   <Navigation size={16} strokeWidth={2.4} />
                 </button>
               </div>
-
-              {/* Contacto cliente: llamar + WhatsApp */}
-              {telefonoCliente && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                  <a href={`tel:${telefonoCliente}`} style={contactBtn(colors.sageSoft, colors.sage2)}>
-                    <Phone size={15} strokeWidth={2.4} /> Llamar
-                  </a>
-                  <a
-                    href={waLink(telefonoCliente, pedido.codigo)}
-                    target="_blank" rel="noopener noreferrer"
-                    style={contactBtn('#DCF8C6', '#128C2E')}
-                  >
-                    <MessageCircle size={15} strokeWidth={2.4} /> WhatsApp
-                  </a>
-                </div>
-              )}
             </>
+          )}
+
+          {/* Contacto del cliente — SIEMPRE (delivery y recogida) para poder llamar */}
+          <div style={{ height: 1, background: colors.border, margin: '12px 0' }} />
+          <SectionLabel>Contacto del cliente</SectionLabel>
+          {!isDelivery && (
+            <div style={{ fontSize: 14, fontWeight: 700, color: colors.ink, marginBottom: 8 }}>{nombreCliente}</div>
+          )}
+          {telefonoCliente ? (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <a href={`tel:${telefonoCliente}`} style={contactBtn(colors.sageSoft, colors.sage2)}>
+                <Phone size={15} strokeWidth={2.4} /> Llamar
+              </a>
+              <a
+                href={waLink(telefonoCliente, pedido.codigo)}
+                target="_blank" rel="noopener noreferrer"
+                style={contactBtn('#DCF8C6', '#128C2E')}
+              >
+                <MessageCircle size={15} strokeWidth={2.4} /> WhatsApp
+              </a>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: colors.stone, fontWeight: 600 }}>
+              Este pedido no tiene teléfono de contacto del cliente.
+            </div>
           )}
         </Card>
 

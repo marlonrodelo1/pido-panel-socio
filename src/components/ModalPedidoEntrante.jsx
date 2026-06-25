@@ -1,7 +1,7 @@
 // ModalPedidoEntrante — Overlay full-screen cuando llega una asignación pendiente.
 // Countdown 180s, sonido + vibración, botones Aceptar / Rechazar.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bike, MapPin, Clock } from 'lucide-react'
+import { Bike, MapPin, Clock, Phone } from 'lucide-react'
 import { useRider } from '../context/RiderContext'
 import { riderAcceptOrder, riderRejectOrder } from '../lib/riderApi'
 import { supabase } from '../lib/supabase'
@@ -65,7 +65,7 @@ export default function ModalPedidoEntrante() {
     ;(async () => {
       const { data } = await supabase
         .from('pedidos')
-        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,direccion_entrega,lat_entrega,lng_entrega,guest_nombre,usuario_id,establecimientos(nombre,direccion,latitud,longitud)')
+        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimientos(nombre,direccion,latitud,longitud)')
         .eq('id', pedidoId)
         .maybeSingle()
       if (!cancel && data) setPedidoFull(data)
@@ -214,6 +214,20 @@ export default function ModalPedidoEntrante() {
             <MapPin size={14} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 2, color: colors.terracotta }} />
             <span>{pedido.direccion_entrega || '—'}</span>
           </div>
+          {(pedido.cliente_telefono || pedido.guest_telefono) && (
+            <a
+              href={`tel:${pedido.cliente_telefono || pedido.guest_telefono}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                marginTop: 10, padding: '8px 14px', borderRadius: 10,
+                background: colors.sageSoft, color: colors.sage2,
+                fontSize: 13, fontWeight: 700, textDecoration: 'none',
+              }}
+            >
+              <Phone size={14} strokeWidth={2.4} /> Llamar al cliente
+            </a>
+          )}
         </div>
 
         <div style={{ height: 1, background: colors.border }} />
