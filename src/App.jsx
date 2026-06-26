@@ -148,9 +148,12 @@ function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, on
   const headerBack = (view === 'restaurante-detalle') ? onCloseRestaurante : onBack
 
   return (
-    <div style={{ background: colors.cream, minHeight: '100vh' }}>
+    <div style={{
+      position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column',
+      background: colors.cream, overflow: 'hidden',
+    }}>
       <header style={{
-        position: 'sticky', top: 0, zIndex: 30,
+        position: 'relative', zIndex: 30, flexShrink: 0,
         background: colors.paper,
         borderBottom: `1px solid ${colors.border}`,
         paddingTop: 'calc(env(safe-area-inset-top, 0px) + 10px)',
@@ -179,12 +182,17 @@ function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, on
         </div>
       </header>
 
-      <div style={{
-        maxWidth: 720, margin: '0 auto',
-        padding: '16px 14px calc(env(safe-area-inset-bottom, 0px) + 92px)',
+      <main style={{
+        flex: 1, minHeight: 0,
+        overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
       }}>
-        {page}
-      </div>
+        <div style={{
+          maxWidth: 720, margin: '0 auto',
+          padding: '16px 14px calc(env(safe-area-inset-bottom, 0px) + 92px)',
+        }}>
+          {page}
+        </div>
+      </main>
     </div>
   )
 }
@@ -241,7 +249,7 @@ function ShellRider() {
   // La barra inferior sigue visible: tocar una pestaña sale de gestión.
   if (adminView) {
     return (
-      <div style={{ background: colors.cream, minHeight: '100vh', paddingBottom: 70 }}>
+      <>
         <AdminViewRider
           view={adminView}
           estId={adminEstId}
@@ -258,18 +266,23 @@ function ShellRider() {
         <OnlineToggleFloat />
         {/* El modal de pedido entrante sigue activo aunque esté en gestión */}
         <ModalPedidoEntrante />
-      </div>
+      </>
     )
   }
 
   // Si hay detalle abierto, ocupa toda la pantalla (sin bottom nav)
   if (openDetail) {
     return (
-      <div style={{ background: colors.cream, minHeight: '100vh' }}>
-        <RiderDetalleOrden pedido={openDetail} onBack={() => setOpenDetail(null)} />
+      <>
+        <div style={{
+          position: 'fixed', inset: 0, background: colors.cream,
+          overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+        }}>
+          <RiderDetalleOrden pedido={openDetail} onBack={() => setOpenDetail(null)} />
+        </div>
         <OnlineToggleFloat />
         <ModalPedidoEntrante />
-      </div>
+      </>
     )
   }
 
