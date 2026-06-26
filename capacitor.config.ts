@@ -19,7 +19,8 @@ const config: CapacitorConfig = {
       splashImmersive: false,
     },
     StatusBar: {
-      style: 'DARK',
+      // 'LIGHT' = iconos OSCUROS (para el fondo claro del socio). Con 'DARK' salían blancos/invisibles.
+      style: 'LIGHT',
       backgroundColor: '#FAFAF7',
       overlaysWebView: true,
     },
