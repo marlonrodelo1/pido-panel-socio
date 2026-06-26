@@ -18,7 +18,7 @@ export default function HeaderRider({ onOpenDrawer }) {
 
   return (
     <header style={{
-      position: 'sticky', top: 0, zIndex: 30,
+      position: 'relative', zIndex: 30, flexShrink: 0,
       background: colors.paper,
       borderBottom: `1px solid ${colors.border}`,
       paddingTop: 'calc(env(safe-area-inset-top, 0px) + 10px)',

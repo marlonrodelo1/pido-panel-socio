@@ -274,13 +274,24 @@ function ShellRider() {
   }
 
   return (
-    <div style={{ background: colors.cream, minHeight: '100vh', paddingBottom: 70 }}>
+    <div style={{
+      position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column',
+      background: colors.cream, overflow: 'hidden',
+    }}>
       <HeaderRider onOpenDrawer={() => setDrawerOpen(true)} />
 
-      {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} />}
-      {tab === 'pedidos'     && <RiderPedidos onOpenPedido={setOpenDetail} />}
-      {tab === 'chat'        && <RiderChat />}
-      {tab === 'completadas' && <RiderCompletadas />}
+      {/* Solo el contenido del medio scrollea (y solo si no cabe). La cabecera y el
+          bottom nav quedan fijos; sin rebote del documento en iOS. */}
+      <main style={{
+        flex: 1, minHeight: 0,
+        overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)',
+      }}>
+        {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} />}
+        {tab === 'pedidos'     && <RiderPedidos onOpenPedido={setOpenDetail} />}
+        {tab === 'chat'        && <RiderChat />}
+        {tab === 'completadas' && <RiderCompletadas />}
+      </main>
 
       <BottomNavRider
         active={tab}
