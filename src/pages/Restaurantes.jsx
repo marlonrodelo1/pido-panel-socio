@@ -6,6 +6,7 @@ import {
   formatTarifa, tarifaCampos, compararTarifas, fmtPct,
   formatCuentaAtras, formatFechaCorta,
 } from '../lib/tarifas'
+import AddressAutocomplete from '../components/AddressAutocomplete'
 
 const ESTADOS_PENDIENTES = ['pendiente', 'solicitada']
 
@@ -20,6 +21,24 @@ function colorPara(seed) {
 function iniciales(nombre) {
   if (!nombre) return '?'
   return nombre.split(' ').slice(0, 2).map(w => w[0] || '').join('').toUpperCase().slice(0, 2)
+}
+
+function nuevoAltaState() {
+  return { nombre: '', email: '', telefono: '', direccion: '', latitud: null, longitud: null, loading: false, error: null, success: null }
+}
+
+// Badge extra para restaurantes que el socio dio de alta (es_captador) y aún están
+// pasando las dos puertas: confirmación del restaurante + verificación del super-admin.
+function altaEstadoBadge(v) {
+  if (!v?.es_captador) return null
+  const e = v.establecimiento || {}
+  if (e.alta_confirmada_at == null) {
+    return { label: 'Pendiente confirmación', bg: colors.warningSoft, color: colors.warning }
+  }
+  if (e.estado === 'pendiente_verificacion') {
+    return { label: 'Pendiente verificación', bg: colors.infoSoft, color: colors.info }
+  }
+  return null
 }
 
 export default function Restaurantes({ onOpenRestaurante }) {
@@ -38,6 +57,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
   const [respondiendo, setRespondiendo] = useState(null)
   const [modalProponer, setModalProponer] = useState(null)
   const [proponiendo, setProponiendo] = useState(false)
+  const [modalAlta, setModalAlta] = useState(null)
 
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -52,11 +72,11 @@ export default function Restaurantes({ onOpenRestaurante }) {
       const queries = Promise.all([
         supabase.from('socio_establecimiento')
           .select(`
-            id, estado, solicitado_at, aceptado_at,
+            id, estado, es_captador, solicitado_at, aceptado_at,
             tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct,
             tarifa_aceptada_en, tarifa_pendiente, tarifa_pendiente_at,
             tarifa_pendiente_origen, tarifa_pendiente_expira_en,
-            establecimiento:establecimientos(id, nombre, logo_url, slug, tipo, rating, activo)
+            establecimiento:establecimientos(id, nombre, logo_url, slug, tipo, rating, activo, estado, alta_confirmada_at)
           `)
           .eq('socio_id', socio.id)
           .order('solicitado_at', { ascending: false }),
@@ -211,6 +231,33 @@ export default function Restaurantes({ onOpenRestaurante }) {
     }
   }
 
+  const crearRestaurante = async () => {
+    if (!modalAlta) return
+    const m = modalAlta
+    setModalAlta(s => ({ ...s, loading: true, error: null }))
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch(`${FUNCTIONS_URL}/socio-crear-restaurante`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify({
+          nombre: m.nombre.trim(),
+          email: m.email.trim(),
+          telefono: m.telefono.trim() || null,
+          direccion: m.direccion.trim(),
+          latitud: m.latitud,
+          longitud: m.longitud,
+        }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || !data?.ok) throw new Error(data?.message || data?.error || `Error (${r.status})`)
+      setModalAlta(s => s ? ({ ...s, loading: false, success: { email: m.email.trim(), email_enviado: !!data.email_enviado } }) : null)
+      await load()
+    } catch (e) {
+      setModalAlta(s => s ? ({ ...s, loading: false, error: e.message }) : null)
+    }
+  }
+
   // Categorías disponibles (derivadas del tipo de los restaurantes buscables).
   const categorias = useMemo(
     () => [...new Set(buscador.map(r => r.tipo).filter(Boolean))].sort(),
@@ -233,6 +280,9 @@ export default function Restaurantes({ onOpenRestaurante }) {
             {activos} / {socio?.limite_restaurantes ?? 5} activos
           </p>
         </div>
+        <button onClick={() => setModalAlta(nuevoAltaState())} style={ds.glossyBtn}>
+          + Dar de alta restaurante
+        </button>
       </div>
 
       {/* Pills tabs */}
@@ -255,7 +305,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
           <button onClick={load} style={ds.primaryBtn}>Reintentar</button>
         </div>
       ) : tab === 'vinculados' ? (
-        renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', comision_pct: vinc.comision_pct ?? 10, error: null }) })
+        renderVinculados({ vinculados, onOpenRestaurante, setTab, onAlta: () => setModalAlta(nuevoAltaState()), onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', comision_pct: vinc.comision_pct ?? 10, error: null }) })
       ) : tab === 'propuestas' ? (
         renderPropuestas({
           propuestas, respondiendo,
@@ -354,6 +404,15 @@ export default function Restaurantes({ onOpenRestaurante }) {
           onClose={() => setModalProponer(null)}
         />
       )}
+
+      {modalAlta && (
+        <ModalAlta
+          state={modalAlta}
+          onChange={(patch) => setModalAlta(m => m ? ({ ...m, ...patch }) : null)}
+          onConfirm={crearRestaurante}
+          onClose={() => { const exito = !!modalAlta.success; setModalAlta(null); if (exito) setTab('vinculados') }}
+        />
+      )}
     </div>
   )
 }
@@ -405,15 +464,18 @@ function CategoriaChip({ label, active, onClick }) {
   )
 }
 
-function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer }) {
+function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer, onAlta }) {
   if (vinculados.length === 0) {
     return (
       <div style={{ ...ds.card, textAlign: 'center', padding: 30 }}>
         <div style={{ fontSize: type.base, fontWeight: 700, marginBottom: 6 }}>Aún no tienes restaurantes</div>
         <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 14 }}>
-          Busca y solicita vinculación con los que quieras repartir.
+          Da de alta tu propio restaurante, o busca y solicita vinculación con los que quieras repartir.
         </div>
-        <button onClick={() => setTab('buscar')} style={ds.primaryBtn}>Buscar restaurantes</button>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={onAlta} style={ds.glossyBtn}>+ Dar de alta restaurante</button>
+          <button onClick={() => setTab('buscar')} style={ds.secondaryBtn}>Buscar restaurantes</button>
+        </div>
       </div>
     )
   }
@@ -422,6 +484,7 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer })
       {vinculados.map(v => {
         const e = v.establecimiento || {}
         const badge = stateBadge(v.estado)
+        const altaBadge = altaEstadoBadge(v)
         // Cualquier vinculado con establecimiento válido abre su detalle financiero.
         const clickable = !!e.id
         const tienePropuesta = !!v.tarifa_pendiente && Object.keys(v.tarifa_pendiente).length > 0
@@ -484,7 +547,16 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer })
               } : null)}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <div style={badge}>{badge._label}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <div style={badge}>{badge._label}</div>
+                {altaBadge && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 6,
+                    letterSpacing: '0.04em', textTransform: 'uppercase',
+                    background: altaBadge.bg, color: altaBadge.color,
+                  }}>{altaBadge.label}</span>
+                )}
+              </div>
               {tienePropuesta && (
                 <div style={{
                   fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 999,
@@ -815,6 +887,88 @@ function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
         <button onClick={onClose} style={ds.secondaryBtn} disabled={loading}>Cancelar</button>
         <button onClick={onConfirm} disabled={!completo || loading} style={{ ...ds.glossyBtn, opacity: (!completo || loading) ? 0.5 : 1 }}>
           {loading ? 'Enviando…' : 'Enviar propuesta'}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+function ModalAlta({ state, onChange, onConfirm, onClose }) {
+  const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((state.email || '').trim())
+  const completo = state.nombre.trim().length >= 2 && emailValido && state.direccion.trim().length >= 3
+
+  if (state.success) {
+    return (
+      <ModalShell onClose={onClose}>
+        <div style={{ textAlign: 'center', padding: '8px 4px' }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: 999, background: colors.sageSoft, color: colors.sage2,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+          }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h2 style={{ ...ds.h2, marginBottom: 8 }}>Restaurante creado</h2>
+          <p style={{ fontSize: type.sm, color: colors.textMute, lineHeight: 1.5, marginBottom: 6 }}>
+            {state.success.email_enviado
+              ? <>Hemos enviado una invitación a <b style={{ color: colors.text }}>{state.success.email}</b>. Cuando el restaurante confirme y el equipo Pidoo lo verifique, aparecerá activo en tu marketplace.</>
+              : <>El restaurante <b style={{ color: colors.text }}>{state.success.email}</b> quedó creado, pero el email de invitación aún no está configurado. Contacta con el equipo Pidoo para que el restaurante reciba su acceso.</>}
+          </p>
+          <div style={{ marginTop: 16 }}>
+            <button onClick={onClose} style={ds.glossyBtn}>Entendido</button>
+          </div>
+        </div>
+      </ModalShell>
+    )
+  }
+
+  return (
+    <ModalShell onClose={state.loading ? () => {} : onClose}>
+      <h2 style={{ ...ds.h2, marginBottom: 6 }}>Dar de alta restaurante</h2>
+      <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 16 }}>
+        Crea el restaurante y le enviaremos una invitación por email para que confirme su alta y cree su contraseña. Quedará vinculado a tu marketplace y saldrá público cuando el equipo Pidoo lo verifique.
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
+        <div>
+          <label style={ds.label}>Nombre del restaurante</label>
+          <input value={state.nombre} onChange={e => onChange({ nombre: e.target.value })} placeholder="Ej. Guachinche La Esquina" style={ds.input} />
+        </div>
+        <div>
+          <label style={ds.label}>Dirección</label>
+          <AddressAutocomplete
+            value={state.direccion}
+            onChange={(v) => onChange({ direccion: v, latitud: null, longitud: null })}
+            onSelect={(p) => onChange({ direccion: p.direccion, latitud: p.latitud, longitud: p.longitud })}
+            placeholder="Busca la dirección del restaurante…"
+          />
+          {state.latitud != null && (
+            <div style={{ fontSize: 11, color: colors.sage2, fontWeight: 600, marginTop: 4 }}>Ubicación fijada ✓</div>
+          )}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={ds.label}>Email del restaurante</label>
+            <input type="email" value={state.email} onChange={e => onChange({ email: e.target.value })} placeholder="restaurante@email.com" style={ds.input} />
+          </div>
+          <div>
+            <label style={ds.label}>Teléfono (opcional)</label>
+            <input value={state.telefono} onChange={e => onChange({ telefono: e.target.value })} placeholder="600 000 000" inputMode="tel" style={ds.input} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: colors.surface2, fontSize: type.xs, color: colors.textMute, lineHeight: 1.5 }}>
+        Usa un email <b style={{ color: colors.text }}>distinto al tuyo de socio</b>. Ahí llegará la invitación para que el restaurante gestione su carta y sus pedidos.
+      </div>
+
+      {state.error && (
+        <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: colors.dangerSoft, color: colors.danger, fontSize: type.xs, fontWeight: 600 }}>{state.error}</div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button onClick={onClose} style={ds.secondaryBtn} disabled={state.loading}>Cancelar</button>
+        <button onClick={onConfirm} disabled={!completo || state.loading} style={{ ...ds.glossyBtn, opacity: (!completo || state.loading) ? 0.5 : 1 }}>
+          {state.loading ? 'Creando…' : 'Crear y enviar invitación'}
         </button>
       </div>
     </ModalShell>
