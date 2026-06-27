@@ -312,14 +312,15 @@ function Select({ label, value, onChange, options }) {
 }
 
 function DetalleModal({ pedidoId, onClose }) {
+  const { socio } = useSocio()
   const [pedido, setPedido] = useState(null)
   const [items, setItems] = useState([])
+  const [comisionPct, setComisionPct] = useState(10)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     ;(async () => {
       setLoading(true)
-      // Se quitó la consulta a rider_earnings (tabla eliminada → daba 404).
       const [pedRes, itemsRes] = await Promise.all([
         supabase
           .from('pedidos')
@@ -331,11 +332,23 @@ function DetalleModal({ pedidoId, onClose }) {
           .select('*')
           .eq('pedido_id', pedidoId),
       ])
-      setPedido(pedRes.data || null)
+      const ped = pedRes.data || null
+      setPedido(ped)
       setItems(itemsRes.data || [])
+      // Comisión REAL del socio para este restaurante (para el desglose de ganancia,
+      // en vez de asumir 10%). Si no hay vinculación, queda el default 10%.
+      if (ped?.establecimiento_id && socio?.id) {
+        const { data: vinc } = await supabase
+          .from('socio_establecimiento')
+          .select('comision_pct')
+          .eq('socio_id', socio.id)
+          .eq('establecimiento_id', ped.establecimiento_id)
+          .maybeSingle()
+        if (vinc?.comision_pct != null) setComisionPct(Number(vinc.comision_pct))
+      }
       setLoading(false)
     })()
-  }, [pedidoId])
+  }, [pedidoId, socio?.id])
 
   const coords = pedido?.usuario?.latitud && pedido?.usuario?.longitud
     ? { lat: pedido.usuario.latitud, lng: pedido.usuario.longitud }
@@ -345,6 +358,10 @@ function DetalleModal({ pedidoId, onClose }) {
   const envio = Number(pedido?.coste_envio || pedido?.precio_envio || 0)
   const propina = Number(pedido?.propina || 0)
   const badge = pedido?.estado ? stateBadge(pedido.estado) : null
+  // Ganancia del socio (rider) para este pedido: envío + comisión% del subtotal + propina.
+  const esReparto = pedido?.modo_entrega === 'delivery' || envio > 0
+  const comisionSocio = subtotal * (comisionPct / 100)
+  const gananciaSocio = envio + comisionSocio + propina
 
   return (
     <div
@@ -471,9 +488,17 @@ function DetalleModal({ pedidoId, onClose }) {
               <Row k="Total pagado" v={`${Number(pedido.total || 0).toFixed(2)} €`} highlight />
             </Section>
 
-            {/* Bloque "Mi comisión rider" eliminado: dependía de la tabla
-                rider_earnings que ya no existe. Sin fuente de datos no se
-                muestran cifras de comisión del rider. */}
+            {esReparto && (
+              <Section title="Tu ganancia por este pedido">
+                <Row k="Envío" v={`${envio.toFixed(2)} €`} />
+                <Row k={`Comisión (${comisionPct}% del subtotal)`} v={`${comisionSocio.toFixed(2)} €`} />
+                {propina > 0 && <Row k="Propina (100% para ti)" v={`${propina.toFixed(2)} €`} />}
+                <Row k="Total para ti" v={`${gananciaSocio.toFixed(2)} €`} highlight />
+                <div style={{ fontSize: 11, color: colors.textMute, marginTop: 8, lineHeight: 1.4 }}>
+                  Cifra orientativa según tu tarifa con este restaurante. El importe que cobras es el de tus facturas / lo que tienes por cobrar.
+                </div>
+              </Section>
+            )}
 
             <Section title="Timeline">
               <Timeline pedido={pedido} />
