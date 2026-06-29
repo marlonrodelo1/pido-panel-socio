@@ -2,8 +2,19 @@
 //
 // Wraps supabase.functions.invoke con logging a push_debug_logs para depurar
 // en producción cuando algo falla. Sin estado, solo funciones puras.
+//
+// ENVÍO NATIVO (junio 2026): las llamadas de ubicación y latido (rider-update-
+// location, rider-heartbeat) se mandan por CapacitorHttp en la app nativa, NO por
+// supabase.functions.invoke. Motivo: supabase-js corre dentro del WebView y
+// Android estrangula las peticiones HTTP del WebView cuando la app lleva ~5 min en
+// segundo plano, dejando de subir la señal aunque el repartidor siga ahí.
+// CapacitorHttp sale por la capa nativa y no sufre ese throttling, así que el
+// socio sigue "vivo" para el cron de auto-offline aunque tenga la app de fondo.
 
-import { supabase } from './supabase'
+import { supabase, FUNCTIONS_URL } from './supabase'
+import { isNativePlatform } from './capacitor'
+
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 async function invoke(fnName, body = {}) {
   const t0 = Date.now()
@@ -23,6 +34,61 @@ async function invoke(fnName, body = {}) {
     logDebug(fnName, 'exception', { error: e?.message, body, ms })
     return { ok: false, error: e?.message || 'Excepción', data: null }
   }
+}
+
+// Igual que invoke() pero, en la app NATIVA, sale por CapacitorHttp (capa nativa)
+// para esquivar el throttling del WebView en segundo plano. En web cae al invoke
+// normal de supabase-js (que en foreground funciona perfecto). Si el envío nativo
+// falla por lo que sea, también cae al invoke normal como red de seguridad.
+async function invokeNative(fnName, body = {}) {
+  const t0 = Date.now()
+  try {
+    if (await isNativePlatform()) {
+      let { data: { session } } = await supabase.auth.getSession()
+      // Refrescar el token si falta o está a <60s de caducar: en segundo plano el
+      // autoRefresh del WebView puede no haber disparado, y la edge (verify_jwt)
+      // devolvería 401 justo cuando más falta hace el latido.
+      const expSoonMs = session?.expires_at ? session.expires_at * 1000 - Date.now() : 0
+      if (!session || expSoonMs < 60_000) {
+        try {
+          const r = await supabase.auth.refreshSession()
+          if (r?.data?.session) session = r.data.session
+        } catch (_) {}
+      }
+      const token = session?.access_token
+      if (!token) {
+        // Sin token utilizable: caer a la vía supabase-js, que refresca por su cuenta.
+        logDebug(fnName, 'native_no_session_fallback', { body })
+        return invoke(fnName, body)
+      }
+      const { CapacitorHttp } = await import('@capacitor/core')
+      const res = await CapacitorHttp.post({
+        url: `${FUNCTIONS_URL}/${fnName}`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': ANON_KEY,
+        },
+        data: body,
+      })
+      const ms = Date.now() - t0
+      const ok = res.status >= 200 && res.status < 300
+      if (!ok) {
+        console.warn(`[riderApi] ${fnName} native (${ms}ms) http ${res.status}`)
+        logDebug(fnName, 'native_error', { status: res.status, body, ms })
+        // 401/403 = token rechazado: reintentar por supabase-js, que refresca el
+        // token internamente. Así un beat en background no se pierde por caducidad.
+        if (res.status === 401 || res.status === 403) return invoke(fnName, body)
+        return { ok: false, error: `http_${res.status}`, data: res.data ?? null }
+      }
+      return { ok: true, data: res.data ?? null, error: null }
+    }
+  } catch (e) {
+    console.warn(`[riderApi] ${fnName} native exception, fallback invoke:`, e?.message)
+    logDebug(fnName, 'native_exception', { error: e?.message, body })
+    // cae al invoke normal abajo
+  }
+  return invoke(fnName, body)
 }
 
 // Log best-effort a push_debug_logs (RLS lo permite con ANON insert).
@@ -49,11 +115,19 @@ export function riderOffline() {
 }
 
 // ────────────────────────────────────────────────────────────
-// GPS
+// GPS + LATIDO DE PRESENCIA
 // ────────────────────────────────────────────────────────────
 
+// Actualización de posición (se dispara al moverse el repartidor). Vía nativa.
 export function riderUpdateLocation({ latitud, longitud, accuracy }) {
-  return invoke('rider-update-location', { latitud, longitud, accuracy })
+  return invokeNative('rider-update-location', { latitud, longitud, accuracy })
+}
+
+// Latido cada ~60s mientras el socio está online, aunque NO se mueva. Mantiene
+// vivo socios.last_location_at para que el cron de auto-offline no lo apague.
+// lat/lng son opcionales (última posición conocida si la hay). Vía nativa.
+export function riderHeartbeat({ latitud, longitud } = {}) {
+  return invokeNative('rider-heartbeat', { latitud, longitud })
 }
 
 // ────────────────────────────────────────────────────────────

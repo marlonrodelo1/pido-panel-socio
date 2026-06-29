@@ -17,7 +17,7 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useSocio } from './SocioContext'
-import { riderOnline, riderOffline } from '../lib/riderApi'
+import { riderOnline, riderOffline, riderHeartbeat } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
 
@@ -33,6 +33,7 @@ export function RiderProvider({ children }) {
   const [asignacionesActivas, setAsignacionesActivas] = useState([]) // pedidos en curso del rider
   const channelRef = useRef(null)
   const lastFetchRef = useRef(0)
+  const lastPosRef = useRef(null)   // última posición GPS conocida (para el latido)
 
   // Hidratar isOnline desde socio.en_servicio cuando cargue
   useEffect(() => {
@@ -64,18 +65,22 @@ export function RiderProvider({ children }) {
         setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
         return res
       }
-      if (granted) startTracking({ onUpdate: () => {} })
+      if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } })
       refreshSocio?.()
       return res
     } else {
-      stopTracking()
-      setNeedsLocation(false)
+      // OJO: no paramos el tracking hasta confirmar que la desconexión fue OK.
+      // Si riderOffline() falla por red, revertimos a online y el GPS/latido deben
+      // seguir vivos (si paráramos el tracking antes, quedaría "online + latiendo"
+      // pero sin posición, justo lo que este sistema quiere evitar).
       const res = await riderOffline()
       if (!res.ok) {
         setIsOnline(true)
         setActionError('No se pudo desconectar. Inténtalo de nuevo.')
         return res
       }
+      stopTracking()
+      setNeedsLocation(false)
       refreshSocio?.()
       return res
     }
@@ -88,7 +93,7 @@ export function RiderProvider({ children }) {
     const granted = await requestLocationPermission()
     setNeedsLocation(!granted)
     if (granted) {
-      if (isOnline) { startTracking({ onUpdate: () => {} }); captureAndPush() }
+      if (isOnline) { startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } }); captureAndPush() }
     } else {
       openLocationSettings()
     }
@@ -180,6 +185,25 @@ export function RiderProvider({ children }) {
     })
     return () => { offRecv?.(); offTap?.() }
   }, [socio?.id, refreshAsignaciones])
+
+  // ─── Latido de presencia mientras online ──────────────────
+  // Cada 60s, estando EN SERVICIO, mandamos un latido (rider-heartbeat) aunque el
+  // repartidor no se mueva. Mantiene fresco socios.last_location_at para que el
+  // cron `auto-offline-socios-inactivos` no lo apague mientras la app siga viva.
+  // Si la app se cierra / pierde red / se queda sin batería, los latidos cesan y
+  // el cron lo marca offline pasados los minutos de gracia. Va por CapacitorHttp
+  // (capa nativa) para resistir el throttling del WebView en segundo plano.
+  useEffect(() => {
+    if (!isOnline) return
+    // Latido inmediato al ponerse online + cada 60s.
+    const beat = () => {
+      const p = lastPosRef.current
+      riderHeartbeat(p ? { latitud: p.latitud, longitud: p.longitud } : {})
+    }
+    beat()
+    const id = setInterval(beat, 60_000)
+    return () => clearInterval(id)
+  }, [isOnline])
 
   // ─── Dismiss asignación pendiente (tras aceptar/rechazar/timeout) ──
   const dismissPendiente = () => {
