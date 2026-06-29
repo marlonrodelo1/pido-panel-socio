@@ -4,8 +4,19 @@ import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 import StatCard from '../components/StatCard'
 import { formatTarifa, tarifaCampos, fmtPct, formatFechaCorta } from '../lib/tarifas'
+import { getPlugin } from '../lib/capacitor'
 
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
+
+// Abre un PDF: navegador nativo (Browser) dentro de la APK; en web cae a window.open.
+async function abrirPDF(url) {
+  if (!url) return
+  try {
+    const B = (await getPlugin('Browser'))?.plugin
+    if (B) { await B.open({ url }); return }
+  } catch (_) {}
+  window.open(url, '_blank', 'noopener')
+}
 
 export default function RestauranteDetalle({ establecimiento_id, onBack, hideBack }) {
   const { socio } = useSocio()
@@ -18,6 +29,8 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
   const [detalleEarnings, setDetalleEarnings] = useState([])
   const [historicoFacturas, setHistoricoFacturas] = useState([])
   const [emitiendo, setEmitiendo] = useState(false)
+  const [cargandoPreview, setCargandoPreview] = useState(false)
+  const [preview, setPreview] = useState(null)
   const [msg, setMsg] = useState(null)
   const [togglingDestacado, setTogglingDestacado] = useState(false)
   const [confirmarDesv, setConfirmarDesv] = useState(false)
@@ -164,6 +177,49 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
     }
   }
 
+  // Previsualización: calcula el desglose EXACTO de lo que se va a facturar
+  // (misma fórmula que la edge generar-factura-socio-restaurante) para revisarlo
+  // ANTES de emitir. No registra nada; solo consulta los pedidos pendientes.
+  const abrirPreviewFactura = async () => {
+    setCargandoPreview(true); setMsg(null)
+    try {
+      const { data: peds, error } = await supabase.from('pedidos')
+        .select('id, modo_entrega, origen_pedido, subtotal, coste_envio, propina, entregado_at, created_at')
+        .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
+        .eq('estado', 'entregado').is('factura_socio_id', null)
+        .or('modo_entrega.eq.delivery,and(modo_entrega.eq.recogida,origen_pedido.eq.marketplace_socio)')
+        .order('entregado_at', { ascending: true })
+      if (error) throw error
+      if (!peds || peds.length === 0) {
+        setMsg({ tipo: 'error', txt: 'No hay pedidos pendientes de facturar a este restaurante.' })
+        return
+      }
+      const pct = Number(vinculacion?.comision_pct ?? 10)
+      let comision = 0, envios = 0, propinas = 0
+      for (const p of peds) {
+        const del = p.modo_entrega === 'delivery'
+        comision += +(Number(p.subtotal || 0) * pct / 100).toFixed(2) // redondeo por pedido (igual que la edge)
+        if (del) { envios += Number(p.coste_envio || 0); propinas += Number(p.propina || 0) }
+      }
+      comision = +comision.toFixed(2); envios = +envios.toFixed(2); propinas = +propinas.toFixed(2)
+      const base = +(comision + envios + propinas).toFixed(2)
+      const ivaPct = Number(socio?.iva_pct ?? 21)
+      const ivaImporte = +(base * ivaPct / 100).toFixed(2)
+      const total = +(base + ivaImporte).toFixed(2)
+      const fechas = peds.map(p => new Date(p.entregado_at || p.created_at)).sort((a, b) => +a - +b)
+      setPreview({
+        pedidos_count: peds.length, comision_pct: pct,
+        comision, envios, propinas, base, iva_pct: ivaPct, iva_importe: ivaImporte, total,
+        periodo_inicio: fechas[0]?.toISOString().slice(0, 10),
+        periodo_fin: fechas[fechas.length - 1]?.toISOString().slice(0, 10),
+      })
+    } catch (e) {
+      setMsg({ tipo: 'error', txt: 'No se pudo calcular la factura: ' + e.message })
+    } finally {
+      setCargandoPreview(false)
+    }
+  }
+
   const emitirFactura = async () => {
     setEmitiendo(true); setMsg(null)
     try {
@@ -179,12 +235,13 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
       const data = await r.json()
       if (!r.ok) throw new Error(data.error || `Error ${r.status}`)
       setMsg({ tipo: 'ok', txt: `Factura ${data.numero} emitida correctamente.` })
-      if (data.pdf_url) window.open(data.pdf_url, '_blank', 'noopener')
+      if (data.pdf_url) abrirPDF(data.pdf_url)
       window.setTimeout(() => window.dispatchEvent(new CustomEvent('pidoo:refresh-rest-detalle')), 200)
     } catch (e) {
       setMsg({ tipo: 'error', txt: e.message })
     } finally {
       setEmitiendo(false)
+      setPreview(null)
     }
   }
 
@@ -386,9 +443,9 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
 
       {/* CTA emitir factura */}
       <div style={{ marginBottom: 24 }}>
-        <button onClick={emitirFactura} disabled={!puedeFacturar || emitiendo}
-          style={{ ...ds.glossyBtn, opacity: (!puedeFacturar || emitiendo) ? 0.5 : 1 }}>
-          {emitiendo ? 'Emitiendo…' : `Emitir factura semanal${pedidosPendientesFactura ? ` (${pedidosPendientesFactura} pedidos)` : ''}`}
+        <button onClick={abrirPreviewFactura} disabled={!puedeFacturar || cargandoPreview || emitiendo}
+          style={{ ...ds.glossyBtn, opacity: (!puedeFacturar || cargandoPreview || emitiendo) ? 0.5 : 1 }}>
+          {cargandoPreview ? 'Calculando…' : `Revisar y emitir factura${pedidosPendientesFactura ? ` (${pedidosPendientesFactura} pedidos)` : ''}`}
         </button>
       </div>
 
@@ -495,11 +552,11 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
                   <span style={{ fontWeight: 700, color: colors.text, fontVariantNumeric: 'tabular-nums' }}>{euro(f.total)}</span>
                   <span>
                     {f.pdf_url ? (
-                      <a href={f.pdf_url} target="_blank" rel="noreferrer"
+                      <button onClick={() => abrirPDF(f.pdf_url)}
                         style={{
-                          ...ds.secondaryBtn, height: 30, fontSize: 11,
-                          textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
-                        }}>PDF</a>
+                          ...ds.secondaryBtn, height: 30, fontSize: 11, cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center',
+                        }}>PDF</button>
                     ) : (
                       <span style={{ fontSize: 11, color: colors.textFaint }}>—</span>
                     )}
@@ -544,11 +601,56 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
           </div>
         </div>
       )}
+
+      {preview && (
+        <div onClick={() => !emitiendo && setPreview(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(26,24,21,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background: colors.paper, borderRadius: 16, maxWidth: 440, width: '100%', padding: 24, border: `1px solid ${colors.border}`, boxShadow: colors.shadowLg }}>
+            <h2 style={{ ...ds.h2, marginBottom: 4 }}>Revisar factura</h2>
+            <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 16 }}>
+              {nombre} · {preview.pedidos_count} {preview.pedidos_count === 1 ? 'pedido' : 'pedidos'}
+              {preview.periodo_inicio && preview.periodo_fin && (
+                <> · {new Date(preview.periodo_inicio).toLocaleDateString('es-ES')} – {new Date(preview.periodo_fin).toLocaleDateString('es-ES')}</>
+              )}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: type.sm, marginBottom: 16 }}>
+              <Linea label={`Comisión (${preview.comision_pct}%)`} valor={preview.comision} />
+              <Linea label="Envíos" valor={preview.envios} />
+              <Linea label="Propinas" valor={preview.propinas} />
+              <div style={{ borderTop: `1px solid ${colors.border}`, margin: '2px 0' }} />
+              <Linea label="Base imponible" valor={preview.base} bold />
+              <Linea label={`IVA (${preview.iva_pct}%)`} valor={preview.iva_importe} />
+              <div style={{ borderTop: `1px solid ${colors.borderStrong}`, margin: '2px 0' }} />
+              <Linea label="Total" valor={preview.total} bold big />
+            </div>
+            <p style={{ fontSize: 11, color: colors.textFaint, marginBottom: 16, lineHeight: 1.5 }}>
+              Revisa los importes. Al confirmar se emite la factura y estos pedidos quedan marcados como facturados.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setPreview(null)} disabled={emitiendo} style={ds.secondaryBtn}>Cancelar</button>
+              <button onClick={emitirFactura} disabled={emitiendo}
+                style={{ ...ds.glossyBtn, width: 'auto', padding: '0 20px', opacity: emitiendo ? 0.6 : 1 }}>
+                {emitiendo ? 'Emitiendo…' : 'Confirmar y emitir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─────────────── helpers ───────────────
+function Linea({ label, valor, bold, big }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ color: bold ? colors.text : colors.textDim, fontWeight: bold ? 700 : 500 }}>{label}</span>
+      <span style={{ color: colors.text, fontWeight: bold ? 800 : 600, fontVariantNumeric: 'tabular-nums', fontSize: big ? 18 : 14 }}>{euro(valor)}</span>
+    </div>
+  )
+}
+
 function BackBtn({ onBack }) {
   return (
     <button onClick={onBack} style={{
