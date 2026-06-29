@@ -151,11 +151,11 @@ async function callEdgeAuthed(fnName, body = {}) {
 // ────────────────────────────────────────────────────────────
 
 export function riderOnline({ latitud, longitud, accuracy } = {}) {
-  return invoke('rider-online', { latitud, longitud, accuracy })
+  return callEdgeAuthed('rider-online', { latitud, longitud, accuracy })
 }
 
 export function riderOffline() {
-  return invoke('rider-offline', {})
+  return callEdgeAuthed('rider-offline', {})
 }
 
 // ────────────────────────────────────────────────────────────
@@ -207,5 +207,5 @@ export function riderFailDelivery(pedidoId, motivo) {
 //   - 'entregado' admite extra = { foto_url } opcional
 // El backend actualiza pedido.estado y dispara el push al cliente.
 export function riderEstado(pedidoId, accion, extra = {}) {
-  return invoke('rider-estado', { pedido_id: pedidoId, accion, ...extra })
+  return callEdgeAuthed('rider-estado', { pedido_id: pedidoId, accion, ...extra })
 }

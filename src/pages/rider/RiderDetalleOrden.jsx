@@ -86,11 +86,25 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
   async function transicion(accion, extra = {}, cerrar = false) {
     setBusy(accion)
     try {
-      await riderEstado(pedido.id, accion, extra)
+      const res = await riderEstado(pedido.id, accion, extra)
+      if (res?.ok) {
+        refreshAsignaciones?.()
+        if (cerrar) onBack?.()
+        return
+      }
+      // NO tocó la BD: no cerramos ni avanzamos en falso (si no, el socio cree
+      // que entregó pero el pedido sigue en_camino y se pierde su liquidación).
+      try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
+      if (res?.sessionDead) {
+        alert('Tu sesión ha caducado. Vuelve a iniciar sesión para continuar.')
+        try { await supabase.auth.signOut() } catch (_) {}
+        return
+      }
+      alert('No se pudo actualizar el pedido. Revisa tu conexión e inténtalo de nuevo.')
+    } catch (e) {
+      alert('No se pudo actualizar el pedido. Revisa tu conexión e inténtalo de nuevo.')
     } finally {
       setBusy(null)
-      refreshAsignaciones?.()
-      if (cerrar) onBack?.()
     }
   }
 

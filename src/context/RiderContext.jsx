@@ -62,7 +62,12 @@ export function RiderProvider({ children }) {
       })
       if (!res.ok) {
         setIsOnline(false)
-        setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+        if (res.sessionDead) {
+          setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+          try { await supabase.auth.signOut() } catch (_) {}
+        } else {
+          setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+        }
         return res
       }
       if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } })
@@ -76,7 +81,12 @@ export function RiderProvider({ children }) {
       const res = await riderOffline()
       if (!res.ok) {
         setIsOnline(true)
-        setActionError('No se pudo desconectar. Inténtalo de nuevo.')
+        if (res.sessionDead) {
+          setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+          try { await supabase.auth.signOut() } catch (_) {}
+        } else {
+          setActionError('No se pudo desconectar. Inténtalo de nuevo.')
+        }
         return res
       }
       stopTracking()
