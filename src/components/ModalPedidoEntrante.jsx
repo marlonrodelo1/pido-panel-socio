@@ -110,14 +110,24 @@ export default function ModalPedidoEntrante() {
     setBusy('accept')
     try {
       const res = await riderAcceptOrder(asignacionPendiente.id)
-      if (!res?.ok) {
-        console.error('rider-accept fallo:', res?.error)
-        try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
-        alert('No se pudo aceptar el pedido. Puede que ya lo haya tomado otro repartidor. Inténtalo de nuevo.')
-        setBusy(null)
+      if (res?.ok) { dismissPendiente?.(); return }
+      try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
+      if (res?.sessionDead) {
+        // Token muerto (refresh caducado) → re-login. NO es "otro repartidor".
+        alert('Tu sesión ha caducado. Vuelve a iniciar sesión para seguir recibiendo pedidos.')
+        dismissPendiente?.()
+        try { await supabase.auth.signOut() } catch (_) {}
         return
       }
-      dismissPendiente?.()
+      if (res?.status === 409) {
+        // estado_invalido: ya no está esperando aceptación (lo tomó otro o expiró).
+        alert('Este pedido ya no está disponible. Puede que lo haya tomado otro repartidor o haya expirado.')
+        dismissPendiente?.()
+        return
+      }
+      console.error('rider-accept fallo:', res?.error)
+      alert('No se pudo aceptar el pedido. Revisa tu conexión e inténtalo de nuevo.')
+      setBusy(null)
     } catch (e) {
       console.error('rider-accept error:', e)
       alert('No se pudo aceptar el pedido. Revisa tu conexión e inténtalo de nuevo.')
@@ -128,8 +138,13 @@ export default function ModalPedidoEntrante() {
   async function handleReject() {
     if (busy) return
     setBusy('reject')
-    try { await riderRejectOrder(asignacionPendiente.id, 'rider_rechaza') }
-    finally { dismissPendiente?.() }
+    try {
+      const res = await riderRejectOrder(asignacionPendiente.id, 'rider_rechaza')
+      if (res?.sessionDead) {
+        alert('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+        try { await supabase.auth.signOut() } catch (_) {}
+      }
+    } finally { dismissPendiente?.() }
   }
 
   function handleTimeout() {

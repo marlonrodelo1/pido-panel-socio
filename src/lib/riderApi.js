@@ -102,6 +102,50 @@ function logDebug(fn, level, payload) {
   } catch (_) {}
 }
 
+// Llamada autenticada que devuelve el CÓDIGO HTTP real + bandera `sessionDead`.
+// Si el token es rechazado (401/403), fuerza un refresh y reintenta UNA vez; si
+// vuelve a fallar, la sesión está muerta (refresh token caducado) → sessionDead=true
+// para que el caller fuerce re-login. Se usa en aceptar/rechazar (foreground), donde
+// hay que distinguir "sesión caducada" (401) de "ya lo tomó otro / expiró" (409).
+async function callEdgeAuthed(fnName, body = {}) {
+  async function getToken(forceRefresh) {
+    let { data: { session } } = await supabase.auth.getSession()
+    const expSoonMs = session?.expires_at ? session.expires_at * 1000 - Date.now() : 0
+    if (forceRefresh || !session || expSoonMs < 60_000) {
+      try { const r = await supabase.auth.refreshSession(); if (r?.data?.session) session = r.data.session } catch (_) {}
+    }
+    return session?.access_token || null
+  }
+  const post = (token) => fetch(`${FUNCTIONS_URL}/${fnName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'apikey': ANON_KEY },
+    body: JSON.stringify(body),
+  })
+  try {
+    let token = await getToken(false)
+    if (!token) return { ok: false, status: 401, sessionDead: true, error: 'no_session', data: null }
+    let res = await post(token)
+    if (res.status === 401 || res.status === 403) {
+      token = await getToken(true)
+      if (token) res = await post(token)
+      if (res.status === 401 || res.status === 403) {
+        logDebug(fnName, 'session_dead', { status: res.status })
+        return { ok: false, status: res.status, sessionDead: true, error: `http_${res.status}`, data: null }
+      }
+    }
+    let data = null
+    try { data = await res.json() } catch (_) {}
+    if (!res.ok) {
+      logDebug(fnName, 'http_error', { status: res.status, data })
+      return { ok: false, status: res.status, error: data?.error || `http_${res.status}`, data }
+    }
+    return { ok: true, status: res.status, data, error: null }
+  } catch (e) {
+    logDebug(fnName, 'exception', { error: e?.message })
+    return { ok: false, status: 0, error: e?.message || 'network', data: null }
+  }
+}
+
 // ────────────────────────────────────────────────────────────
 // ONLINE / OFFLINE
 // ────────────────────────────────────────────────────────────
@@ -135,11 +179,11 @@ export function riderHeartbeat({ latitud, longitud } = {}) {
 // ────────────────────────────────────────────────────────────
 
 export function riderAcceptOrder(asignacionId) {
-  return invoke('rider-accept-order', { asignacion_id: asignacionId })
+  return callEdgeAuthed('rider-accept-order', { asignacion_id: asignacionId })
 }
 
 export function riderRejectOrder(asignacionId, motivo = null) {
-  return invoke('rider-reject-order', { asignacion_id: asignacionId, motivo })
+  return callEdgeAuthed('rider-reject-order', { asignacion_id: asignacionId, motivo })
 }
 
 export function riderPickup(pedidoId) {
