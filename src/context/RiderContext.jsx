@@ -50,10 +50,27 @@ export function RiderProvider({ children }) {
     if (!socio) return
     if (!didInitRef.current) {
       didInitRef.current = true
-      setIsOnline(false)
-      if (socio.en_servicio) { riderOffline().catch(() => {}) }
+      let consented = false
+      try { consented = localStorage.getItem('pidoo_bg_loc_consent') === '1' } catch (_) {}
+      if (socio.en_servicio && consented) {
+        // REANUDAR turno: seguía En servicio y ya dio el consentimiento de ubicación
+        // → mantener online y RE-ARRANCAR el tracking (que de verdad comparta, no solo
+        // la UI). Así reabrir la app NO te apaga. El latido (efecto de abajo) revive solo
+        // al pasar isOnline=true.
+        setIsOnline(true)
+        requestLocationPermission().then((granted) => {
+          setNeedsLocation(!granted)
+          if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } })
+        })
+      } else {
+        // Primer login / sin consentimiento previo / estaba offline → empezar offline
+        // (aquí, al pulsar "En servicio", sale el aviso + se piden permisos).
+        setIsOnline(false)
+        if (socio.en_servicio) { riderOffline().catch(() => {}) }
+      }
       return
     }
+    // Cambios externos posteriores (p. ej. cron auto-offline) → reflejar offline.
     if (!socio.en_servicio) setIsOnline(false)
   }, [socio?.id, socio?.en_servicio])
 
