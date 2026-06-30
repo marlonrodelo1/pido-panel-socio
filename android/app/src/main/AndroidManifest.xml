@@ -4,17 +4,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Geolocation: GPS en primer y segundo plano (rider en servicio) -->
+    <!-- Geolocation: SOLO primer plano (rider con la app abierta). ACCESS_FINE/COARSE
+         no requieren declaración especial en Play. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Ubicación en segundo plano: el rider comparte GPS con la app cerrada /
-         pantalla apagada mientras está "En servicio". Requiere foreground service. -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-    <!-- El <service> BackgroundGeolocationService (foregroundServiceType="location")
-         lo aporta el plugin @capacitor-community/background-geolocation vía manifest
-         merge; no hace falta declararlo aquí. -->
+    <!-- Ubicación en SEGUNDO PLANO retirada en v272 (ACCESS_BACKGROUND_LOCATION,
+         FOREGROUND_SERVICE, FOREGROUND_SERVICE_LOCATION): el plugin
+         @capacitor-community/background-geolocation NO está instalado, así que la
+         función no operaba y solo disparaba la declaración estricta de Play (vídeo).
+         Se reintroducirá cuando se implemente el tracking en segundo plano de verdad
+         (con disclosure + declaración Play). -->
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!-- Push notifications + interacción al recibirla -->
