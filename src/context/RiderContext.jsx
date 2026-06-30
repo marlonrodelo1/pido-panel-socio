@@ -20,6 +20,8 @@ import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
+import { isNativePlatform } from '../lib/capacitor'
+import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
 export const useRider = () => useContext(RiderCtx)
@@ -34,11 +36,29 @@ export function RiderProvider({ children }) {
   const channelRef = useRef(null)
   const lastFetchRef = useRef(0)
   const lastPosRef = useRef(null)   // última posición GPS conocida (para el latido)
+  const [showDisclosure, setShowDisclosure] = useState(false)
+  const disclosureResolveRef = useRef(null)
 
   // Hidratar isOnline desde socio.en_servicio cuando cargue
   useEffect(() => {
     if (socio) setIsOnline(!!socio.en_servicio)
   }, [socio?.en_servicio])
+
+  // Disclosure obligatoria de Google Play (ubicación en segundo plano): se muestra
+  // ANTES de pedir el permiso, una sola vez (consentimiento guardado en localStorage).
+  // En web no aplica. Devuelve true si el usuario acepta (o ya consintió antes).
+  const ensureBgConsent = async () => {
+    if (!(await isNativePlatform())) return true
+    try { if (localStorage.getItem('pidoo_bg_loc_consent') === '1') return true } catch (_) {}
+    const ok = await new Promise((resolve) => {
+      disclosureResolveRef.current = resolve
+      setShowDisclosure(true)
+    })
+    setShowDisclosure(false)
+    disclosureResolveRef.current = null
+    if (ok) { try { localStorage.setItem('pidoo_bg_loc_consent', '1') } catch (_) {} }
+    return ok
+  }
 
   // ─── Acción: cambiar online/offline ────────────────────────
   // El estado online lo fija la edge `rider-online` (fuente de verdad). El permiso
@@ -49,6 +69,8 @@ export function RiderProvider({ children }) {
     setActionError(null)
     setIsOnline(next) // optimista
     if (next) {
+      const consent = await ensureBgConsent()
+      if (!consent) { setIsOnline(false); return { ok: false, declined: true } }
       const granted = await requestLocationPermission()
       setNeedsLocation(!granted)
       let pos = null
@@ -237,5 +259,14 @@ export function RiderProvider({ children }) {
     refreshAsignaciones,
   }), [socio, user, isOnline, needsLocation, actionError, asignacionPendiente, asignacionesActivas, refreshAsignaciones])
 
-  return <RiderCtx.Provider value={value}>{children}</RiderCtx.Provider>
+  return (
+    <RiderCtx.Provider value={value}>
+      {children}
+      <LocationDisclosureModal
+        open={showDisclosure}
+        onAccept={() => disclosureResolveRef.current?.(true)}
+        onDecline={() => disclosureResolveRef.current?.(false)}
+      />
+    </RiderCtx.Provider>
+  )
 }
