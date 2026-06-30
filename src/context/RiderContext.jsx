@@ -39,10 +39,23 @@ export function RiderProvider({ children }) {
   const [showDisclosure, setShowDisclosure] = useState(false)
   const disclosureResolveRef = useRef(null)
 
-  // Hidratar isOnline desde socio.en_servicio cuando cargue
+  // Al ARRANCAR la app empezamos SIEMPRE offline: el rider debe pulsar "En servicio"
+  // para compartir su ubicación (eso dispara el aviso de geolocalización + el permiso).
+  // Si en el DB quedó "en servicio" de una sesión anterior, lo sincronizamos a offline
+  // (la app acaba de arrancar sin tracking → no está realmente disponible para pedidos).
+  // Tras el primer arranque, solo reflejamos cambios EXTERNOS hacia offline (p. ej. el
+  // cron auto-offline); nunca auto-encendemos online desde el DB.
+  const didInitRef = useRef(false)
   useEffect(() => {
-    if (socio) setIsOnline(!!socio.en_servicio)
-  }, [socio?.en_servicio])
+    if (!socio) return
+    if (!didInitRef.current) {
+      didInitRef.current = true
+      setIsOnline(false)
+      if (socio.en_servicio) { riderOffline().catch(() => {}) }
+      return
+    }
+    if (!socio.en_servicio) setIsOnline(false)
+  }, [socio?.id, socio?.en_servicio])
 
   // Disclosure obligatoria de Google Play (ubicación en segundo plano): se muestra
   // ANTES de pedir el permiso, una sola vez (consentimiento guardado en localStorage).
