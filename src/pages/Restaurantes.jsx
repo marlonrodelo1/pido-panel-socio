@@ -67,7 +67,21 @@ export default function Restaurantes({ onOpenRestaurante }) {
 
   const load = async () => {
     if (!socio?.id) return
-    setLoading(true); setError(false)
+    const cacheKey = `pidoo_socio_vinc_${socio.id}`
+    // Pintar AL INSTANTE los vinculados de la última vez (caché local): la consulta
+    // en el servidor tarda ~33ms, pero la cadena de arranque (sesión -> socio -> query)
+    // son 2-3 viajes en serie en red móvil (~1-2s). Con caché, la lista aparece ya y
+    // se refresca en segundo plano en vez de mostrar "Cargando…" en blanco.
+    let teniaCache = false
+    try {
+      const cached = localStorage.getItem(cacheKey)
+      if (cached) {
+        const arr = JSON.parse(cached)
+        if (Array.isArray(arr) && arr.length) { setVinculados(arr); teniaCache = true }
+      }
+    } catch (_) {}
+    if (!teniaCache) setLoading(true)
+    setError(false)
     try {
       const queries = Promise.all([
         supabase.from('socio_establecimiento')
@@ -88,10 +102,12 @@ export default function Restaurantes({ onOpenRestaurante }) {
       // Timeout 12s: en red lenta la consulta puede colgarse sin dar error.
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000))
       const [vinc, rest] = await Promise.race([queries, timeout])
-      setVinculados(vinc.data || [])
-      const vinculadosIds = new Set((vinc.data || []).map(v => v.establecimiento?.id))
+      const vincData = vinc.data || []
+      setVinculados(vincData)
+      try { localStorage.setItem(cacheKey, JSON.stringify(vincData)) } catch (_) {}
+      const vinculadosIds = new Set(vincData.map(v => v.establecimiento?.id))
       setBuscador((rest.data || []).filter(r => !vinculadosIds.has(r.id)))
-    } catch (e) { console.error(e); setError(true) }
+    } catch (e) { console.error(e); if (!teniaCache) setError(true) }
     setLoading(false)
   }
 
