@@ -95,7 +95,10 @@ export default function Restaurantes({ onOpenRestaurante }) {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [socio])
+  // Depender solo de socio?.id (no del objeto socio entero): así load() se dispara
+  // al entrar / cambiar de socio, y NO en cada refresco del contexto (auth, realtime,
+  // heartbeat…) que recreaba el objeto socio y recargaba la lista de más (parpadeo).
+  useEffect(() => { load() }, [socio?.id])
 
   useEffect(() => {
     if (!socio?.id) return

@@ -67,14 +67,21 @@ export async function registerSocioPushNative(userId) {
       // SECURITY DEFINER, igual que hace la app cliente. Guardar token.value
       // como fcm_token en iOS mete basura APNs que FCM no puede entregar.
       if (platform === 'ios') {
-        const claim = () => supabase.rpc('claim_orphan_push_tokens', { p_user_type: 'socio' })
-          .then(({ data, error }) => {
-            if (error) console.warn('[pushNative] claim_orphan failed:', error.message)
-            else console.log('[pushNative] claimed orphan tokens:', data)
-          })
-        // El AppDelegate puede tardar en devolver el token FCM: reintento escalonado.
-        setTimeout(claim, 1500)
-        setTimeout(claim, 5000)
+        // El AppDelegate (FirebaseMessaging) guarda el token FCM como huérfano
+        // (user_id=null) cuando iOS lo entrega, lo que puede tardar unos segundos.
+        // Reintentamos el claim en escalera hasta que enganche (devuelve nº de tokens
+        // enlazados > 0) o se agoten los intentos. Antes solo probaba a 1.5s y 5s: a
+        // veces el token aún no existía -> quedaba huérfano y el push no llegaba.
+        let claimed = false
+        const claim = async () => {
+          if (claimed) return
+          try {
+            const { data, error } = await supabase.rpc('claim_orphan_push_tokens', { p_user_type: 'socio' })
+            if (error) { console.warn('[pushNative] claim_orphan failed:', error.message); return }
+            if ((data || 0) > 0) { claimed = true; console.log('[pushNative] claimed orphan tokens:', data) }
+          } catch (e) { console.warn('[pushNative] claim exception:', e?.message) }
+        }
+        for (const ms of [1500, 4000, 8000, 15000, 25000]) setTimeout(claim, ms)
         finish({ ok: true, ios: true })
         return
       }
