@@ -19,6 +19,48 @@ Este documento tiene dos partes:
 
 ---
 
+## 0. BACKEND — VERIFICADO Y CORREGIDO EN PRODUCCIÓN (Supabase `PidooApp`)
+
+> Tras conectar con el proyecto real `rmrbxrabngdmpgpfmjbo`, se verificó el código
+> **realmente desplegado** (no el repo, que estaba desfasado) y se aplicaron los
+> fixes directamente en producción, verificando cada uno. Todo es reversible
+> (backups de cada función en el scratchpad; guards = drop trigger; índices = drop).
+
+### Ya estaba resuelto en producción (el repo mentía)
+- `liquidacion-semanal` v9 ya **no mueve dinero por Stripe** (modelo de saldo acumulado) → el hallazgo de "reset de balance / transferencia fallida" NO aplica.
+- `check-socio-availability-now` v7 ya **no** apaga socios por Shipday (solo lee).
+- `proponer-tarifa-socio` / `responder-tarifa-pendiente` ya validan rangos 0-100 % y contraparte; el proponente no puede auto-aceptar.
+- `create-shipday-order` v45 y `crear_pago_stripe` v29 ya respetan el marketplace propio y bloquean el pago si el socio dueño está offline.
+- Shipday está **muerto**: 0 webhooks en 14 días; la plataforma corre 100 % sobre el dispatcher propio (`pedido_asignaciones` + `rider-*`).
+
+### Corregido AHORA en producción — Base de datos (migraciones)
+- **Guard `pedidos`** (trigger `trg_pedidos_guard_update`): el usuario final no puede modificar importes (`total`, `subtotal`, `coste_envio`, `propina`, `descuento`, `comision_pidoo_pct_override`, `monto_reembolsado`, `stripe_refund_id`) ni reasignar (`socio_id`/`rider_account_id`). Las edge functions (service role) y el superadmin hacen bypass. **Verificado**: cliente bajando `subtotal` → bloqueado; cambio benigno → permitido; service role → permitido. Cierra el exploit de "pagar de menos". (Además `enforce_pedido_total` ya recalculaba `total`.)
+- **Guard `socio_establecimiento`** (trigger `trg_socio_est_guard_update`): el socio no puede cambiar `comision_pct`/tarifas/`estado` directamente; solo vía el flujo de propuestas (service role). **Verificado**: socio subiendo comisión → bloqueado; cambiar `destacado` → permitido.
+- **Índices** añadidos para 8 FKs sin cubrir (tablas activas) + `pedidos(socio_id, created_at)`.
+- **Revocado `EXECUTE` a `anon`** en 7 RPCs de dinero/reporting (`get_por_cobrar_socio`, `get_ingresos_socio_rango`, `calcular_liquidacion_restaurante`, etc.).
+
+### Corregido AHORA en producción — Edge functions (con backup + verificación)
+| Función | Antes→Después | Fix |
+|---|---|---|
+| `reassign-pedido-v2` | v4→v5 | Exige `x-cron-secret` o service-role (antes: sin auth); no re-despacha pedidos terminales. Cron 16 actualizado para mandar el secreto. **Verificado** (con secreto→404, sin→401). |
+| `enviar_push` | v30→v31 | Solo autoriza con la service-role key (antes aceptaba la **anon key pública** → push masivo). |
+| `get-tracking-publico` | v6→v7 | La ubicación en vivo del rider (lat/lng) solo se devuelve con token válido (antes: pública con el código). |
+| `shipday-webhook` | v30→v32 | Fail-closed (exige token) + no permite transición desde estado terminal. Shipday está muerto, sin impacto en flujo vivo. |
+| `rider-accept-order` | v8→v9 | UPDATE atómico condicional (`WHERE estado='esperando_aceptacion'`) → dos riders ya no pueden aceptar el mismo pedido; 409 si otro lo tomó. |
+| `assign-pedido-restaurante` | v2→v3 | Respeta el marketplace propio (403 si se intenta mover a otro socio) + UPDATE condicional (no reasigna pedidos ya en ruta/terminales). |
+| `auto-cancelar-pedidos-no-aceptados` | v1→v2 | Reordenado a claim-condicional→reembolso con `Idempotency-Key`→persistir → sin doble reembolso ni cancelar pedidos recién aceptados. |
+| `generar-balances-socio` | v6→v7 | Ventana anclada a lunes-a-lunes; no revierte balances ya `pagado`; excluye pedidos reembolsados. |
+| `create-shipday-order` (dispatcher) | v45→… | Frescura de ubicación (`last_location_at`) + radio máximo como preferencia con **fallback** (nunca deja un pedido sin asignar). |
+
+### Acciones operativas / pendientes para ti
+- **Rotar la API key de Google Maps** (quedó en el historial de git) y restringirla por bundle/dominio.
+- **Activar "leaked password protection"** en Supabase Auth (Dashboard → Authentication → Policies) — está desactivada.
+- **Shipday**: al estar muerto, se puede **retirar** `shipday-webhook`, `sync-shipday-status`, `create-shipday-order` (renombrar el dispatcher) y las funciones `*shipday*` para reducir superficie. Si se reactivara Shipday, configurar `SHIPDAY_WEBHOOK_TOKEN`.
+- **Rendimiento RLS (diferido)**: los advisors reportan 108 políticas que reevalúan `auth.uid()` por fila y 265 políticas permisivas duplicadas. Es una optimización **mecánica pero masiva** sobre control de acceso; a la escala actual (28 pedidos) no da beneficio medible y reescribir 100+ políticas en vivo es más riesgo que ganancia. Recomendado hacerlo en una **rama de Supabase** con pruebas de regresión de RLS. (Envolver `auth.uid()` en `(select auth.uid())` es semánticamente idéntico; el resto es consolidar políticas duplicadas.)
+- **Tablas `_deprecated_*`**: concentran gran parte de los advisors de rendimiento; si ya no se usan, eliminarlas limpia el ruido.
+
+---
+
 ## 1. CORRECCIONES APLICADAS (código cliente)
 
 ### 1.1 Geolocalización y tracking en segundo plano
