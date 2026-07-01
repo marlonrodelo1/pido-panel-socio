@@ -274,7 +274,6 @@ Deno.serve(async (req) => {
       invitado: true,
       email_enviado: emailRes.sent,
       email_motivo: emailRes.sent ? undefined : emailRes.reason,
-      // action_link solo se incluye si NO se pudo enviar el email (para reenvío/pruebas manuales)
       action_link: emailRes.sent ? undefined : actionLink,
     });
   } catch (err: any) {

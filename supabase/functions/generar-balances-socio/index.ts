@@ -13,7 +13,6 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
-  // Auth: CRON_SECRET o JWT de superadmin
   const cronSecret = Deno.env.get('CRON_SECRET');
   const headerSecret = req.headers.get('X-Cron-Secret');
   const authHeader = req.headers.get('Authorization');
@@ -33,7 +32,10 @@ Deno.serve(async (req) => {
 
   try {
     const hoy = new Date();
-    const finSemana = new Date(hoy); finSemana.setUTCHours(0,0,0,0);
+    // Ventana anclada a la SEMANA ANTERIOR (lunes-a-lunes, UTC), igual que generar_facturas_riders_semanal.
+    const d = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), hoy.getUTCDate()));
+    const daysSinceMon = (d.getUTCDay() + 6) % 7;
+    const finSemana = new Date(d); finSemana.setUTCDate(d.getUTCDate() - daysSinceMon); finSemana.setUTCHours(0,0,0,0);
     const inicioSemana = new Date(finSemana); inicioSemana.setUTCDate(finSemana.getUTCDate() - 7);
     const periodo_inicio = inicioSemana.toISOString().slice(0, 10);
     const periodo_fin = finSemana.toISOString().slice(0, 10);
@@ -48,7 +50,9 @@ Deno.serve(async (req) => {
         .eq('socio_id', socio.id)
         .eq('estado', 'entregado')
         .gte('entregado_at', periodo_inicio + 'T00:00:00Z')
-        .lt('entregado_at', periodo_fin + 'T00:00:00Z');
+        .lt('entregado_at', periodo_fin + 'T00:00:00Z')
+        .is('stripe_refund_id', null)
+        .or('monto_reembolsado.is.null,monto_reembolsado.eq.0');
 
       const pedidoIds = (pedidosSemana || []).map(p => p.id);
       let comisiones_tarjeta = 0, envios_tarjeta = 0, propinas_tarjeta = 0, total_efectivo_recaudado = 0, total_pagar_socio = 0;
@@ -71,14 +75,18 @@ Deno.serve(async (req) => {
         }
       }
 
-      const { data: existente } = await supabase.from('balances_socio').select('id').eq('socio_id', socio.id).eq('periodo_inicio', periodo_inicio).eq('periodo_fin', periodo_fin).maybeSingle();
+      const { data: existente } = await supabase.from('balances_socio').select('id, estado').eq('socio_id', socio.id).eq('periodo_inicio', periodo_inicio).eq('periodo_fin', periodo_fin).maybeSingle();
       if (existente) {
-        await supabase.from('balances_socio').update({
-          comisiones_tarjeta, envios_tarjeta, propinas_tarjeta,
-          total_pagar_socio, total_efectivo_recaudado,
-          estado: 'pendiente',
-        }).eq('id', existente.id);
-        resultados.push({ socio: socio.nombre_comercial, actualizado: true, total_pagar_socio });
+        if (existente.estado !== 'pendiente') {
+          resultados.push({ socio: socio.nombre_comercial, omitido: true, estado: existente.estado });
+        } else {
+          await supabase.from('balances_socio').update({
+            comisiones_tarjeta, envios_tarjeta, propinas_tarjeta,
+            total_pagar_socio, total_efectivo_recaudado,
+            estado: 'pendiente',
+          }).eq('id', existente.id);
+          resultados.push({ socio: socio.nombre_comercial, actualizado: true, total_pagar_socio });
+        }
       } else if (pedidoIds.length > 0) {
         await supabase.from('balances_socio').insert({
           socio_id: socio.id, periodo_inicio, periodo_fin,

@@ -1,7 +1,7 @@
 // list-socios-restaurante v1 — devuelve los socios vinculados ACTIVOS de un
-// establecimiento para que el restaurante elija a cuál asignar (caso multi-socio).
+// establecimiento para que el restaurante elija a cual asignar (caso multi-socio).
 // Usa service role y devuelve SOLO campos curados (sin PII: ni api_key ni GPS ni
-// teléfono), porque RLS de socios no deja al restaurante leer socios privados.
+// telefono), porque RLS de socios no deja al restaurante leer socios privados.
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 

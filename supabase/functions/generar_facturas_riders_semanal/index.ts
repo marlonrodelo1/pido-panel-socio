@@ -19,7 +19,6 @@ function getSemanaAnterior(now: Date): { inicio: Date; fin: Date } {
 }
 
 serve(async (req: Request) => {
-  // Auth: CRON_SECRET o superadmin JWT
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const cronSecret = Deno.env.get('CRON_SECRET')
   const headerSecret = req.headers.get('X-Cron-Secret')

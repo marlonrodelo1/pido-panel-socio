@@ -40,7 +40,6 @@ serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    // Cliente con el JWT del invocante para validar identidad
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) return Response.json({ error: 'no_auth' }, { status: 401, headers: CORS })
 
@@ -56,7 +55,6 @@ serve(async (req: Request) => {
     }
     const userId = userData.user.id
 
-    // Cliente con service role para hacer el chequeo de rol y operaciones admin
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,

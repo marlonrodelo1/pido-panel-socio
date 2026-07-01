@@ -1,13 +1,10 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 // recuperar-pagos-huerfanos v1
-// Cron (cada 5 min): resuelve pedidos atascados en 'pendiente_pago' para que
-// NADIE pague sin recibir su pedido ni su reembolso.
-//   - Con payment_intent y Stripe='succeeded' (pagó pero el confirm nunca llegó,
-//     y a estas alturas es demasiado tarde para servirlo) -> reembolsar + cancelar + avisar.
-//   - Con payment_intent NO pagado, o sin payment_intent (abandonado) -> cancelar (sin dinero).
-// Timeout por defecto 20 min (el confirm normal ocurre en segundos).
-// Auth: header x-cron-secret == CRON_SECRET.
+// Cron (cada 5 min): resuelve pedidos atascados en 'pendiente_pago'.
+// - Con payment_intent y Stripe='succeeded' -> reembolsar + cancelar + avisar.
+// - Sin pago / sin payment_intent -> cancelar (sin dinero).
+// Auth: x-cron-secret == CRON_SECRET.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -20,13 +17,13 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-function json(b: unknown, s = 200) {
+function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
 function stripeAuth() { return btoa(`${STRIPE_SECRET_KEY}:`); }
 
-async function getPaymentIntentStatus(id: string): Promise<string | null> {
+async function getPaymentIntentStatus(id) {
   if (!STRIPE_SECRET_KEY) return null;
   const r = await fetch(`https://api.stripe.com/v1/payment_intents/${id}`, {
     headers: { Authorization: `Basic ${stripeAuth()}` },
@@ -36,7 +33,7 @@ async function getPaymentIntentStatus(id: string): Promise<string | null> {
   return j?.status || null;
 }
 
-async function refundStripe(paymentIntentId: string, amount: number) {
+async function refundStripe(paymentIntentId, amount) {
   const params = new URLSearchParams();
   params.append('payment_intent', paymentIntentId);
   if (amount) params.append('amount', Math.round(amount * 100).toString());
@@ -67,15 +64,15 @@ Deno.serve(async (req) => {
 
     const ahora = new Date().toISOString();
     let cancelados = 0, reembolsados = 0;
-    const errores: any[] = [];
+    const errores = [];
 
     for (const p of huerfanos || []) {
       try {
-        let refundId: string | null = null;
+        let refundId = null;
         let pago = false;
 
         if (p.stripe_payment_id && !p.stripe_refund_id) {
-          let status: string | null = null;
+          let status = null;
           try { status = await getPaymentIntentStatus(p.stripe_payment_id); } catch (e) { console.error('[recuperar] pi', p.id, e); }
           if (status === 'succeeded') {
             pago = true;
@@ -85,7 +82,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        const upd: Record<string, unknown> = {
+        const upd = {
           estado: 'cancelado',
           cancelado_at: ahora,
           motivo_cancelacion: pago
@@ -96,7 +93,6 @@ Deno.serve(async (req) => {
         const { error: updErr } = await admin.from('pedidos').update(upd).eq('id', p.id);
         if (updErr) throw new Error(`update: ${updErr.message}`);
 
-        // Avisar al cliente SOLO si hubo dinero de por medio (reembolso)
         if (refundId && p.usuario_id) {
           await admin.from('notificaciones').insert({
             usuario_id: p.usuario_id,
@@ -109,12 +105,12 @@ Deno.serve(async (req) => {
         cancelados++;
       } catch (e) {
         console.error('[recuperar] pedido', p.id, e);
-        errores.push({ pedido_id: p.id, error: String((e as Error)?.message ?? e) });
+        errores.push({ pedido_id: p.id, error: String(e?.message ?? e) });
       }
     }
 
     return json({ ok: true, timeout_min: TIMEOUT_MIN, encontrados: huerfanos?.length || 0, cancelados, reembolsados, errores });
-  } catch (err: any) {
+  } catch (err) {
     console.error('[recuperar-pagos-huerfanos]', err);
     return json({ error: 'internal_error', message: err?.message || String(err) }, 500);
   }

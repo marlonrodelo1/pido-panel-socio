@@ -1,4 +1,4 @@
-// shipday-webhook v3 —
+// shipday-webhook v30 — Reactivada: traduce eventos Shipday a estado del pedido.
 //
 // Recibe POST de Shipday con eventos del ciclo de vida de la orden.
 // Soporta el formato nuevo (snake_case anidado bajo `payload.order.*`) y el
@@ -8,8 +8,8 @@
 // no tiene shipday_tracking_url, hace GET a Shipday /orders/{orderNumber}
 // con la api_key del socio para obtener el `trackingLink` y guardarlo.
 //
-// Auth: header `token` debe coincidir con env `SHIPDAY_WEBHOOK_TOKEN`. Si no
-// esta configurado, se acepta cualquier request (modo bootstrapping).
+// Auth (fail-closed): exige env SHIPDAY_WEBHOOK_TOKEN configurado y que el
+// header `token` coincida; en caso contrario responde 401.
 
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -109,11 +109,10 @@ serve(async (req) => {
   if (pre) return pre
   if (req.method !== 'POST') return jsonResponse({ error: 'method_not_allowed' }, 405)
 
+  // Auth fail-closed: exige token configurado y que el header `token` coincida.
   const expectedToken = Deno.env.get('SHIPDAY_WEBHOOK_TOKEN')
-  if (expectedToken) {
-    const got = req.headers.get('token') || ''
-    if (got !== expectedToken) return jsonResponse({ error: 'unauthorized' }, 401)
-  }
+  if (!expectedToken) return jsonResponse({ error: 'unauthorized' }, 401)
+  if ((req.headers.get('token') || '') !== expectedToken) return jsonResponse({ error: 'unauthorized' }, 401)
 
   let payload: any = null
   try { payload = await req.json() } catch (_) { return jsonResponse({ error: 'invalid_json' }, 400) }
@@ -127,16 +126,18 @@ serve(async (req) => {
 
   // Localiza pedido por codigo + carga shipday_tracking_url y socio_id
   let pedidoId: string | null = null
+  let pedidoEstado: string | null = null
   let pedidoTrackingUrl: string | null = null
   let pedidoSocioId: string | null = null
   if (orderNumber) {
     const { data: ped } = await sb
       .from('pedidos')
-      .select('id, shipday_tracking_url, socio_id')
+      .select('id, estado, shipday_tracking_url, socio_id')
       .eq('codigo', orderNumber)
       .maybeSingle()
     if (ped) {
       pedidoId = ped.id
+      pedidoEstado = ped.estado
       pedidoTrackingUrl = ped.shipday_tracking_url
       pedidoSocioId = ped.socio_id
     }
@@ -161,6 +162,12 @@ serve(async (req) => {
   const mapping = event ? EVENT_MAP[event] : null
   if (!mapping) {
     return jsonResponse({ ok: true, warning: 'event_not_mapped', event })
+  }
+
+  // No reabrir pedidos en estado terminal: si ya esta entregado/cancelado no
+  // aplicamos una transicion a un estado distinto.
+  if (mapping.estado && (pedidoEstado === 'entregado' || pedidoEstado === 'cancelado') && mapping.estado !== pedidoEstado) {
+    return jsonResponse({ ok: true, warning: 'estado_terminal', estado: pedidoEstado, event })
   }
 
   const updates: Record<string, unknown> = { shipday_status: mapping.shipday }

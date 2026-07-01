@@ -1,8 +1,8 @@
 // assign-pedido-restaurante v1 — el RESTAURANTE (dueño del establecimiento)
 // asigna un pedido delivery a UNO de sus socios vinculados (caso multi-socio).
-// Elige el rider más cercano ONLINE de ese socio. Mismo flujo que el dispatcher:
+// Elige el rider mas cercano ONLINE de ese socio. Mismo flujo que el dispatcher:
 // pedido_asignaciones (con socio_id) + pedidos.socio_id + push al socio.
-// verify_jwt=true: además validamos que el caller es dueño del establecimiento.
+// verify_jwt=true: ademas validamos que el caller es dueno del establecimiento.
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -32,17 +32,23 @@ serve(async (req: Request) => {
     const sb = createClient(url, service)
 
     const { data: pedido } = await sb.from('pedidos')
-      .select('id, codigo, estado, modo_entrega, establecimiento_id, intento_asignacion, establecimientos(id, nombre, latitud, longitud, user_id)')
+      .select('id, codigo, estado, modo_entrega, origen_pedido, socio_id, establecimiento_id, intento_asignacion, establecimientos(id, nombre, latitud, longitud, user_id)')
       .eq('id', pedido_id).maybeSingle()
     if (!pedido) return Response.json({ error: 'pedido_no_encontrado' }, { status: 404, headers: CORS })
     if (pedido.modo_entrega !== 'delivery') return Response.json({ error: 'pedido_no_delivery' }, { status: 400, headers: CORS })
     if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') return Response.json({ error: `pedido_${pedido.estado}` }, { status: 400, headers: CORS })
     const est: any = (pedido as any).establecimientos
 
-    // Ownership: dueño del establecimiento o admin/superadmin
+    // Ownership: dueno del establecimiento o admin/superadmin
     const { data: rolRow } = await sb.from('usuarios').select('rol').eq('id', user.id).maybeSingle()
     const isAdmin = rolRow?.rol === 'admin' || rolRow?.rol === 'superadmin'
     if (est?.user_id !== user.id && !isAdmin) return Response.json({ error: 'forbidden' }, { status: 403, headers: CORS })
+
+    // Marketplace propio: un pedido originado en el marketplace de un socio SOLO puede
+    // (re)asignarse a ese mismo socio dueño; no puede moverse al marketplace de otro socio.
+    if ((pedido as any).origen_pedido === 'marketplace_socio' && (pedido as any).socio_id && socio_id !== (pedido as any).socio_id) {
+      return Response.json({ error: 'marketplace_propio', mensaje: 'Este pedido pertenece al marketplace de otro socio y no puede reasignarse.' }, { status: 403, headers: CORS })
+    }
 
     // El socio debe estar vinculado y activo a este establecimiento
     const { data: vinc } = await sb.from('socio_establecimiento')
@@ -87,14 +93,16 @@ serve(async (req: Request) => {
     }).select('id').single()
     if (aErr) return Response.json({ error: 'asignacion_insert_failed', detail: aErr.message }, { status: 500, headers: CORS })
 
-    await sb.from('pedidos').update({
+    // UPDATE condicional del pedido: no pisar un pedido ya recogido/en_camino/entregado/cancelado.
+    const { data: pedUpd } = await sb.from('pedidos').update({
       shipday_status: 'created',
       shipday_tracking_url: `https://socio.pidoo.es/seguir/${pedido.codigo}`,
       rider_account_id: elegido.rider.id,
       socio_id: elegido.socio.id,
       intento_asignacion: intento,
       assigned_at: ts,
-    }).eq('id', pedido_id)
+    }).eq('id', pedido_id).not('estado', 'in', '(recogido,en_camino,entregado,cancelado)').select('id')
+    if (!pedUpd || pedUpd.length === 0) return Response.json({ error: 'pedido_estado_no_asignable', estado: pedido.estado }, { status: 409, headers: CORS })
 
     try {
       await fetch(`${url}/functions/v1/enviar_push`, {
