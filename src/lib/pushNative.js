@@ -12,7 +12,7 @@
 //
 // Web: webPush.js (existente) maneja VAPID. Este módulo solo cubre nativo.
 
-import { getPlugin, isNativePlatform } from './capacitor'
+import { getPlugin, isNativePlatform, getPlatform } from './capacitor'
 import { supabase } from './supabase'
 
 let registered = false
@@ -58,6 +58,28 @@ export async function registerSocioPushNative(userId) {
 
     Push.addListener('registration', async (token) => {
       registered = true
+      const platform = await getPlatform()
+
+      // iOS: el evento 'registration' del plugin devuelve el token APNs (hex),
+      // NO un token FCM. El token FCM real lo obtiene el AppDelegate nativo
+      // (FirebaseMessaging) y lo guarda como huérfano (user_id=null,
+      // user_type='socio'). Aquí solo lo enlazamos al usuario con la RPC
+      // SECURITY DEFINER, igual que hace la app cliente. Guardar token.value
+      // como fcm_token en iOS mete basura APNs que FCM no puede entregar.
+      if (platform === 'ios') {
+        const claim = () => supabase.rpc('claim_orphan_push_tokens', { p_user_type: 'socio' })
+          .then(({ data, error }) => {
+            if (error) console.warn('[pushNative] claim_orphan failed:', error.message)
+            else console.log('[pushNative] claimed orphan tokens:', data)
+          })
+        // El AppDelegate puede tardar en devolver el token FCM: reintento escalonado.
+        setTimeout(claim, 1500)
+        setTimeout(claim, 5000)
+        finish({ ok: true, ios: true })
+        return
+      }
+
+      // Android: token.value ES el token FCM directamente.
       const fcmToken = token?.value || token
       console.log('[pushNative] FCM token:', fcmToken?.slice(0, 20) + '…')
       try {
