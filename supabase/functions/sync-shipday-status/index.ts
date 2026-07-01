@@ -1,6 +1,6 @@
-import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS' }
-serve((req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  return new Response(JSON.stringify({ error: 'gone', message: 'Shipday integration removed - use propio dispatcher' }), { status: 410, headers: { ...CORS, 'Content-Type': 'application/json' } })
-})
+// sync-shipday-status — RETIRADA. Integración Shipday desmantelada; la plataforma usa su
+// dispatcher propio (pedido_asignaciones + rider-*) desde jun-2026.
+Deno.serve(() => new Response(
+  JSON.stringify({ error: 'funcion_retirada', mensaje: 'Shipday retirado; la plataforma usa su dispatcher propio.' }),
+  { status: 410, headers: { 'Content-Type': 'application/json' } },
+))
