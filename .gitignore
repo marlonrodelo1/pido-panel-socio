@@ -17,3 +17,4 @@ android/keystore.properties
 *.keystore
 ios/App/build/
 ios/App/Pods/
+ios/App/App/GoogleService-Info.plist
