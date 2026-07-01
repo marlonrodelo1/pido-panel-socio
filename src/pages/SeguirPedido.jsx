@@ -86,6 +86,12 @@ export default function SeguirPedido({ codigo }) {
         setData(j)
         setError(null)
         setLoading(false)
+        // Dejar de sondear cuando el pedido llega a un estado final: no tiene sentido
+        // seguir haciendo fetch cada 15s de un pedido ya entregado/cancelado.
+        const est = j?.pedido?.estado || j?.estado
+        if (est === 'entregado' || est === 'cancelado') {
+          if (intervalId) clearInterval(intervalId)
+        }
       } catch (e) {
         if (cancel) return
         setError('No se pudo cargar el pedido')
@@ -94,8 +100,8 @@ export default function SeguirPedido({ codigo }) {
     }
 
     load()
-    const id = setInterval(load, 15000)
-    return () => { cancel = true; clearInterval(id) }
+    const intervalId = setInterval(load, 15000)
+    return () => { cancel = true; clearInterval(intervalId) }
   }, [codigo])
 
   // Init Google Maps con marker del restaurante

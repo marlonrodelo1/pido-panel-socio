@@ -82,13 +82,19 @@ cat .env
 Debe contener (copiado del Windows):
 
 ```
-VITE_SUPABASE_URL=https://rmrbxrabngdmpgpfmjbo.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJtcmJ4cmFibmdkbXBncGZtamJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwMzAyNTksImV4cCI6MjA4OTYwNjI1OX0.Aj2VoA6XWcokJDJdhBwfNXnLCUEOlQfTdB0std1SNWE
+VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key del proyecto>
 VITE_APP_NAME=socios
-VITE_GOOGLE_MAPS_API_KEY=AIzaSyBS19f7Y7iNSPYP3mdfdETEymVX2jCJkc0
+VITE_GOOGLE_MAPS_API_KEY=<clave de Google Maps>
 ```
 
-Si **no existe** o está vacío: créalo con el contenido de arriba.
+> ⚠️ No pegar claves reales en este documento (queda en el repositorio y su
+> historial). La clave de Google Maps que estaba aquí ha sido **retirada** y debe
+> **rotarse** en la consola de Google Cloud y restringirse por bundle id/dominio,
+> ya que quedó expuesta en el historial de git. Toma los valores reales del panel
+> de tu proveedor de hosting (variables de entorno del build), no de este archivo.
+
+Si **no existe** o está vacío: créalo con los valores reales (fuera del repo).
 
 ### 2. Build limpio
 

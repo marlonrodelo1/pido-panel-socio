@@ -26,6 +26,13 @@ export async function registerSocioPushNative(userId) {
   const Push = (await getPlugin('PushNotifications'))?.plugin
   if (!Push) return { ok: false, reason: 'no_plugin' }
 
+  // Limpiar listeners previos ANTES de registrar. Sin esto, tras un ciclo
+  // logout→login (mismo dispositivo, otro usuario) quedaban vivos los listeners del
+  // usuario anterior con su userId capturado en el closure; al rotar FCM el token,
+  // ambos listeners insertaban la fila → el token del dispositivo quedaba asociado
+  // al usuario equivocado y sus pedidos sonaban en el teléfono de otro.
+  try { await Push.removeAllListeners() } catch (_) {}
+
   try {
     const perm = await Push.checkPermissions()
     let granted = perm.receive === 'granted'
@@ -148,6 +155,12 @@ export async function registerSocioPushNative(userId) {
  * Borra el token FCM del usuario al cerrar sesión.
  */
 export async function unregisterSocioPushNative(userId) {
+  // Quitar los listeners del usuario que sale, para que un refresh de token posterior
+  // no re-asocie el dispositivo a su userId (closure) tras que entre otro usuario.
+  try {
+    const Push = (await getPlugin('PushNotifications'))?.plugin
+    if (Push) await Push.removeAllListeners()
+  } catch (_) {}
   try {
     await supabase
       .from('push_subscriptions')

@@ -32,28 +32,36 @@ export default function ModalPedidoEntrante() {
       audioRef.current.play().catch(() => { /* user gesture pendiente */ })
     } catch (_) {}
 
-    // Vibración rítmica
-    try {
-      if (navigator.vibrate) navigator.vibrate([300, 200, 300, 200, 600])
-    } catch (_) {}
+    // Vibración rítmica repetida mientras el modal esté abierto (cada 3s) para que
+    // el rider lo note aunque el móvil esté en el bolsillo.
+    const vibe = () => { try { if (navigator.vibrate) navigator.vibrate([300, 200, 300, 200, 600]) } catch (_) {} }
+    vibe()
+    const vibeId = setInterval(vibe, 3000)
 
-    // Countdown
+    // Countdown (solo decrementa; el efecto de abajo dispara el timeout en 0 para no
+    // ejecutar efectos dentro del updater de setState, que React puede llamar 2 veces).
     intervalRef.current = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) {
-          handleTimeout()
-          return 0
-        }
-        return s - 1
-      })
+      setSecondsLeft((s) => (s <= 0 ? 0 : s - 1))
     }, 1000)
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
+      clearInterval(vibeId)
+      try { navigator.vibrate?.(0) } catch (_) {}
       try { audioRef.current?.pause() } catch (_) {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asignacionPendiente?.id])
+
+  // Timeout del countdown: cerramos la asignación en el backend (rechazo por
+  // "timeout") para que se reasigne de inmediato en vez de esperar al cron.
+  useEffect(() => {
+    if (!asignacionPendiente) return
+    if (secondsLeft > 0) return
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    handleTimeout()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secondsLeft, asignacionPendiente?.id])
 
   // El objeto asignacionPendiente.pedidos viene PARCIAL. Cargamos el pedido
   // completo para poder pintar el mini-mapa y calcular la ganancia del socio.
@@ -148,6 +156,10 @@ export default function ModalPedidoEntrante() {
   }
 
   function handleTimeout() {
+    // Cerrar la asignación en el backend para que se reasigne ya (no esperar al cron).
+    // Best-effort: aunque falle, cerramos el modal localmente.
+    const id = asignacionPendiente?.id
+    if (id) { try { riderRejectOrder(id, 'timeout') } catch (_) {} }
     dismissPendiente?.()
   }
 

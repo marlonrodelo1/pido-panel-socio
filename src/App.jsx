@@ -1,37 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { SocioProvider, useSocio } from './context/SocioContext'
 import { supabase } from './lib/supabase'
 import { getPlugin } from './lib/capacitor'
 import { RiderProvider, useRider } from './context/RiderContext'
-import Login from './pages/Login'
-import Landing from './pages/Landing'
-import Onboarding from './pages/Onboarding'
-import Dashboard from './pages/Dashboard'
-import Restaurantes from './pages/Restaurantes'
-import RestauranteDetalle from './pages/RestauranteDetalle'
-import Pedidos from './pages/Pedidos'
-import Ganancias from './pages/Ganancias'
-import Configuracion from './pages/Configuracion'
-import MiSuscripcion from './pages/MiSuscripcion'
-import ResetPassword from './pages/ResetPassword'
-import MiMarketplace from './pages/MiMarketplace'
-import EliminarCuenta from './pages/EliminarCuenta'
-import Soporte from './pages/Soporte'
+// Páginas cargadas de forma diferida (code-splitting): así el arranque solo descarga
+// y parsea la pantalla que se muestra, no las 3 "mundos" (admin web + rider nativo +
+// tracking público) de golpe. Reduce drásticamente el tiempo hasta el primer render.
+const Login = lazy(() => import('./pages/Login'))
+const Landing = lazy(() => import('./pages/Landing'))
+const Onboarding = lazy(() => import('./pages/Onboarding'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Restaurantes = lazy(() => import('./pages/Restaurantes'))
+const RestauranteDetalle = lazy(() => import('./pages/RestauranteDetalle'))
+const Pedidos = lazy(() => import('./pages/Pedidos'))
+const Ganancias = lazy(() => import('./pages/Ganancias'))
+const Configuracion = lazy(() => import('./pages/Configuracion'))
+const MiSuscripcion = lazy(() => import('./pages/MiSuscripcion'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const MiMarketplace = lazy(() => import('./pages/MiMarketplace'))
+const EliminarCuenta = lazy(() => import('./pages/EliminarCuenta'))
+const Soporte = lazy(() => import('./pages/Soporte'))
+const SeguirPedido = lazy(() => import('./pages/SeguirPedido'))
+const RiderEsperando = lazy(() => import('./pages/rider/RiderEsperando'))
+const RiderPedidos = lazy(() => import('./pages/rider/RiderPedidos'))
+const RiderDetalleOrden = lazy(() => import('./pages/rider/RiderDetalleOrden'))
+const RiderChat = lazy(() => import('./pages/rider/RiderChat'))
+const RiderCompletadas = lazy(() => import('./pages/rider/RiderCompletadas'))
 import HeaderNav from './components/HeaderNav'
 import BottomNav from './components/BottomNav'
-import SeguirPedido from './pages/SeguirPedido'
 import HeaderRider from './components/HeaderRider'
 import BottomNavRider from './components/BottomNavRider'
 import DrawerRider from './components/DrawerRider'
 import { ChevronLeft } from 'lucide-react'
 import ModalPedidoEntrante from './components/ModalPedidoEntrante'
 import OnlineToggleFloat from './components/OnlineToggleFloat'
-import RiderEsperando from './pages/rider/RiderEsperando'
-import RiderPedidos from './pages/rider/RiderPedidos'
-import RiderDetalleOrden from './pages/rider/RiderDetalleOrden'
-import RiderChat from './pages/rider/RiderChat'
-import RiderCompletadas from './pages/rider/RiderCompletadas'
 import { colors } from './lib/uiStyles'
+
+// Fallback ligero mientras carga un chunk de página.
+function PageFallback() {
+  return (
+    <div style={{ minHeight: '40vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: colors.textMute }}>
+      Cargando…
+    </div>
+  )
+}
 
 // Detección síncrona: Capacitor expone window.Capacitor en runtime nativo.
 // En web (Vite dev o nginx) no existe → false sin flash.
@@ -76,7 +88,7 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
 
       <main className="socio-main">
         <div className="socio-content">
-          {page}
+          <Suspense fallback={<PageFallback />}>{page}</Suspense>
         </div>
       </main>
 
@@ -190,7 +202,7 @@ function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, on
           maxWidth: 720, margin: '0 auto',
           padding: '16px 14px calc(env(safe-area-inset-bottom, 0px) + 92px)',
         }}>
-          {page}
+          <Suspense fallback={<PageFallback />}>{page}</Suspense>
         </div>
       </main>
     </div>
@@ -278,7 +290,9 @@ function ShellRider() {
           position: 'fixed', inset: 0, background: colors.cream,
           overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
         }}>
-          <RiderDetalleOrden pedido={openDetail} onBack={() => setOpenDetail(null)} />
+          <Suspense fallback={<PageFallback />}>
+            <RiderDetalleOrden pedido={openDetail} onBack={() => setOpenDetail(null)} />
+          </Suspense>
         </div>
         <OnlineToggleFloat />
         <ModalPedidoEntrante />
@@ -300,10 +314,12 @@ function ShellRider() {
         overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
         paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)',
       }}>
-        {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} />}
-        {tab === 'pedidos'     && <RiderPedidos onOpenPedido={setOpenDetail} />}
-        {tab === 'chat'        && <RiderChat />}
-        {tab === 'completadas' && <RiderCompletadas />}
+        <Suspense fallback={<PageFallback />}>
+          {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} />}
+          {tab === 'pedidos'     && <RiderPedidos onOpenPedido={setOpenDetail} />}
+          {tab === 'chat'        && <RiderChat />}
+          {tab === 'completadas' && <RiderCompletadas />}
+        </Suspense>
       </main>
 
       <BottomNavRider
@@ -415,11 +431,11 @@ function Shell() {
   }
   if (!session) {
     // En APK nativa, ir directo a Login (sin landing comercial)
-    if (isNative) return <Login onBack={null} />
-    if (vistaPublica === 'login') return <Login onBack={irALanding} />
-    return <Landing onLogin={irALogin} />
+    if (isNative) return <Suspense fallback={<PageFallback />}><Login onBack={null} /></Suspense>
+    if (vistaPublica === 'login') return <Suspense fallback={<PageFallback />}><Login onBack={irALanding} /></Suspense>
+    return <Suspense fallback={<PageFallback />}><Landing onLogin={irALogin} /></Suspense>
   }
-  if (!socio) return <Onboarding />
+  if (!socio) return <Suspense fallback={<PageFallback />}><Onboarding /></Suspense>
 
   // ─── App nativa: shell de rider ───
   if (isNative) {
@@ -446,11 +462,11 @@ export default function App() {
   // Tracking publico /seguir/<codigo> sin auth ni providers
   if (typeof window !== 'undefined') {
     if (window.location.pathname.startsWith('/reset-password')) {
-      return <ResetPassword />
+      return <Suspense fallback={<PageFallback />}><ResetPassword /></Suspense>
     }
     const m = window.location.pathname.match(/^\/seguir\/([^/]+)/)
     if (m) {
-      return <SeguirPedido codigo={decodeURIComponent(m[1])} />
+      return <Suspense fallback={<PageFallback />}><SeguirPedido codigo={decodeURIComponent(m[1])} /></Suspense>
     }
   }
   return (

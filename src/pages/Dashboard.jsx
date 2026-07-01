@@ -58,6 +58,7 @@ export default function Dashboard({ setSection, openRestaurante }) {
 
   useEffect(() => {
     if (!socio?.id) return
+    let cancel = false
     ;(async () => {
       setLoading(true)
       try {
@@ -65,9 +66,12 @@ export default function Dashboard({ setSection, openRestaurante }) {
         const semana = startOfWeek()
         const mes = startOfMonth()
         const fin = endOfToday()
+        const finIso = fin.toISOString()
 
-        // Conteos de pedidos + restaurantes (fuentes que SÍ existen)
-        const [ph, ps, pm, rest] = await Promise.all([
+        // Conteos + ingresos + por cobrar en UN solo Promise.all: los dos bloques no
+        // dependen entre sí, así que no hay motivo para esperar al primero (era 2 RTT
+        // donde cabe 1). RPCs seguras: derivan el socio de auth.uid().
+        const [ph, ps, pm, rest, rih, ris, rim, rpcCobrar, rpr] = await Promise.all([
           supabase.from('pedidos').select('id', { count: 'exact', head: true })
             .eq('socio_id', socio.id).gte('created_at', hoy.toISOString()),
           supabase.from('pedidos').select('id', { count: 'exact', head: true })
@@ -76,19 +80,13 @@ export default function Dashboard({ setSection, openRestaurante }) {
             .eq('socio_id', socio.id).gte('created_at', mes.toISOString()),
           supabase.from('socio_establecimiento').select('id', { count: 'exact', head: true })
             .eq('socio_id', socio.id).eq('estado', 'activa'),
-        ])
-
-        // Ingresos por rango + por cobrar. RPCs seguras: derivan el socio de
-        // auth.uid() (no aceptan socio_id). Ingreso = envío+propina de los
-        // pedidos delivery entregados del socio.
-        const finIso = fin.toISOString()
-        const [rih, ris, rim, rpcCobrar, rpr] = await Promise.all([
           supabase.rpc('get_ingresos_socio_rango', { p_desde: hoy.toISOString(), p_hasta: finIso }),
           supabase.rpc('get_ingresos_socio_rango', { p_desde: semana.toISOString(), p_hasta: finIso }),
           supabase.rpc('get_ingresos_socio_rango', { p_desde: mes.toISOString(), p_hasta: finIso }),
           supabase.rpc('get_por_cobrar_socio'),
           supabase.rpc('get_socio_por_cobrar_restaurantes'),
         ])
+        if (cancel) return
         const ingresosHoy = rih.error ? null : (rih.data ?? 0)
         const ingresosSemana = ris.error ? null : (ris.data ?? 0)
         const ingresosMes = rim.error ? null : (rim.data ?? 0)
@@ -110,9 +108,10 @@ export default function Dashboard({ setSection, openRestaurante }) {
         })
         setTopRestaurantes(pcRows.slice(0, 5))
       } catch (e) { console.error(e) }
-      setLoading(false)
+      if (!cancel) setLoading(false)
     })()
-  }, [socio])
+    return () => { cancel = true }
+  }, [socio?.id])
 
   const fmtIngreso = (v) => (loading ? '…' : v == null ? '—' : euro(v))
 

@@ -32,8 +32,9 @@ import { riderUpdateLocation } from './riderApi'
 // ─── Config ───
 const ACTIVE_INTERVAL_MS = 15_000   // 15s en foreground (fallback polling)
 const IDLE_INTERVAL_MS   = 60_000   // 60s en background (fallback polling)
-const POS_OPTS = { enableHighAccuracy: true, timeout: 6_000, maximumAge: 30_000 }
+const POS_OPTS = { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
 const DISTANCE_FILTER_M = 30        // metros mínimos entre actualizaciones (watcher nativo)
+const MIN_PUSH_INTERVAL_MS = 10_000 // mínimo entre POSTs de ubicación (evita spamear la edge en movimiento)
 
 const BG_NOTIF_TITLE = 'Pidoo en servicio'
 const BG_NOTIF_MESSAGE = 'Compartiendo tu ubicación para asignarte pedidos.'
@@ -44,11 +45,20 @@ const BackgroundGeolocation = registerPlugin('BackgroundGeolocation')
 
 // ─── Estado del módulo ───
 let onUpdateCb = null          // callback opcional al recibir nueva posición
+let onErrorCb = null           // callback opcional al fallar el watcher (permiso/GPS)
 let watcherId = null           // id del watcher nativo activo (background-geolocation)
 let usingNativeWatcher = false // true si el watcher nativo está corriendo
 
+// Token de generación: se incrementa en cada stopTracking(). Cualquier arranque de
+// watcher/polling en vuelo (addWatcher es async) comprueba su token al resolver; si
+// ya no es el vigente, significa que hubo un stop mientras arrancaba → aborta y
+// limpia. Evita el watcher huérfano (tracking activo estando offline/deslogueado).
+let startToken = 0
+let lastPushAt = 0             // timestamp del último POST de ubicación (throttle)
+
 // Estado del fallback polling
 let timer = null
+let pollingActive = false      // señal de vida explícita del loop de polling
 let intervalMs = ACTIVE_INTERVAL_MS
 
 // ──────────────────────────────────────────────────────────────
@@ -158,17 +168,24 @@ export async function captureAndPush() {
 export function startTracking(opts = {}) {
   if (usingNativeWatcher || timer) return  // ya activo
   onUpdateCb = opts.onUpdate || null
+  onErrorCb = opts.onError || null
+  const myToken = startToken
 
   // Intentar watcher nativo (no bloqueante). Si falla, fallback a polling.
-  startNativeWatcher().then((ok) => {
+  startNativeWatcher(myToken).then((ok) => {
+    // Si hubo un stopTracking() mientras arrancaba, el token cambió → no montar nada.
+    if (myToken !== startToken) return
     if (!ok) startPolling()
   })
 }
 
 /**
  * Detiene el tracking (nativo y/o polling) y limpia callbacks.
+ * Incrementa el token de generación para invalidar cualquier arranque en vuelo.
  */
 export function stopTracking() {
+  startToken++              // invalida watchers/polling que estén arrancando
+  pollingActive = false
   // Parar watcher nativo
   if (watcherId) {
     const id = watcherId
@@ -182,6 +199,7 @@ export function stopTracking() {
   // Parar polling
   stopPolling()
   onUpdateCb = null
+  onErrorCb = null
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -192,7 +210,7 @@ export function stopTracking() {
  * Arranca el watcher nativo con foreground service.
  * Devuelve true si se montó, false si no está disponible (→ usar polling).
  */
-async function startNativeWatcher() {
+async function startNativeWatcher(myToken) {
   // Solo en plataforma nativa
   if (!(await isNativePlatform())) return false
 
@@ -209,8 +227,12 @@ async function startNativeWatcher() {
       (location, error) => {
         if (error) {
           if (error.code === 'NOT_AUTHORIZED') {
+            // Permiso denegado o ubicación del sistema desactivada: el watcher está
+            // "muerto" aunque su id exista. Avisamos a RiderContext (banner) en vez
+            // de abrir Ajustes automáticamente (que abría la app de Ajustes "sola").
             console.warn('[riderGeo] background location NOT_AUTHORIZED')
-            try { BackgroundGeolocation.openSettings() } catch (_) {}
+            usingNativeWatcher = false
+            if (typeof onErrorCb === 'function') onErrorCb({ code: 'NOT_AUTHORIZED' })
           } else {
             console.warn('[riderGeo] watcher error:', error?.message || error)
           }
@@ -221,14 +243,26 @@ async function startNativeWatcher() {
           latitud: location.latitude,
           longitud: location.longitude,
           accuracy: location.accuracy,
+          // Timestamp del fix (ms). Permite a la edge descartar updates fuera de orden
+          // y a la lógica de asignación medir la frescura real de la posición.
+          timestamp: location.time || null,
         }
-        // Persistir en la edge (best-effort, no await en el callback).
-        try {
-          riderUpdateLocation(pos)
-        } catch (_) {}
+        // Throttle: no posteamos más de 1 vez cada MIN_PUSH_INTERVAL_MS aunque el
+        // distanceFilter dispare callbacks cada 2-3s en moto. Siempre gana el último fix.
+        const now = Date.now()
+        if (now - lastPushAt >= MIN_PUSH_INTERVAL_MS) {
+          lastPushAt = now
+          try { riderUpdateLocation(pos) } catch (_) {}
+        }
         if (typeof onUpdateCb === 'function') onUpdateCb(pos)
       },
     )
+    // Si hubo stopTracking() mientras addWatcher estaba en vuelo, el token cambió:
+    // removemos el watcher recién creado de inmediato para no dejarlo huérfano.
+    if (myToken !== startToken) {
+      try { BackgroundGeolocation.removeWatcher({ id }).catch(() => {}) } catch (_) {}
+      return true // "montado" desde el punto de vista del caller, pero ya limpiado
+    }
     watcherId = id
     usingNativeWatcher = true
     console.log('[riderGeo] native background watcher iniciado:', id)
@@ -244,7 +278,8 @@ async function startNativeWatcher() {
 // ──────────────────────────────────────────────────────────────
 
 function startPolling() {
-  if (timer) return
+  if (timer || pollingActive) return
+  pollingActive = true
   intervalMs = ACTIVE_INTERVAL_MS
   // Captura inmediata + arranca el loop.
   captureAndPush()
@@ -254,6 +289,7 @@ function startPolling() {
 }
 
 function stopPolling() {
+  pollingActive = false
   if (timer) {
     clearTimeout(timer)
     timer = null
@@ -264,9 +300,10 @@ function scheduleNext() {
   if (timer) clearTimeout(timer)
   timer = setTimeout(async () => {
     timer = null
+    if (!pollingActive) return   // se llamó stopTracking mientras esperábamos
     await captureAndPush()
     // Si seguimos activos (no se llamó stop), reagenda.
-    if (onUpdateCb !== null) {
+    if (pollingActive) {
       scheduleNext()
     }
   }, intervalMs)

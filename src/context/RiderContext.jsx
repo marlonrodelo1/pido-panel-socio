@@ -20,7 +20,7 @@ import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
-import { isNativePlatform } from '../lib/capacitor'
+import { isNativePlatform, getPlugin } from '../lib/capacitor'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
@@ -36,8 +36,17 @@ export function RiderProvider({ children }) {
   const channelRef = useRef(null)
   const lastFetchRef = useRef(0)
   const lastPosRef = useRef(null)   // última posición GPS conocida (para el latido)
+  const togglingRef = useRef(false) // mutex: hay un setOnline en vuelo (evita toggles cruzados)
+  const dismissedIdsRef = useRef(new Set()) // asignaciones ya descartadas localmente (no re-mostrar)
   const [showDisclosure, setShowDisclosure] = useState(false)
   const disclosureResolveRef = useRef(null)
+
+  // Handler de fallo del watcher nativo (permiso denegado / GPS del sistema off).
+  // El watcher entrega el error de forma asíncrona; aquí encendemos el banner para
+  // que el rider sepa que está "en línea pero ciego" y pueda reactivar la ubicación.
+  const handleWatcherError = useCallback((err) => {
+    if (err?.code === 'NOT_AUTHORIZED') setNeedsLocation(true)
+  }, [])
 
   // Al ARRANCAR la app empezamos SIEMPRE offline: el rider debe pulsar "En servicio"
   // para compartir su ubicación (eso dispara el aviso de geolocalización + el permiso).
@@ -60,7 +69,7 @@ export function RiderProvider({ children }) {
         setIsOnline(true)
         requestLocationPermission().then((granted) => {
           setNeedsLocation(!granted)
-          if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } })
+          if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError })
         })
       } else {
         // Primer login / sin consentimiento previo / estaba offline → empezar offline
@@ -71,8 +80,16 @@ export function RiderProvider({ children }) {
       return
     }
     // Cambios externos posteriores (p. ej. cron auto-offline) → reflejar offline.
-    if (!socio.en_servicio) setIsOnline(false)
-  }, [socio?.id, socio?.en_servicio])
+    // Importante: además de la UI, hay que PARAR el tracking nativo; si no, el
+    // foreground service y los POST de ubicación siguen corriendo con el rider
+    // ya offline en DB (batería + privacidad).
+    if (!socio.en_servicio) {
+      setIsOnline(false)
+      setNeedsLocation(false)
+      stopTracking()
+      lastPosRef.current = null
+    }
+  }, [socio?.id, socio?.en_servicio, handleWatcherError])
 
   // Disclosure obligatoria de Google Play (ubicación en segundo plano): se muestra
   // ANTES de pedir el permiso, una sola vez (consentimiento guardado en localStorage).
@@ -96,55 +113,73 @@ export function RiderProvider({ children }) {
   // pone en_servicio aunque no haya coordenadas y avisamos con `needsLocation`
   // (banner en RiderEsperando). Solo revertimos si la edge falla de verdad (red).
   const setOnline = async (next) => {
+    // Mutex: si ya hay un cambio de estado en vuelo, ignoramos el segundo tap
+    // (posiblemente desde otro toggle en otra pantalla). Evita que un online y un
+    // offline concurrentes dejen la UI, la DB y el watcher desincronizados.
+    if (togglingRef.current) return { ok: false, busy: true }
+    togglingRef.current = true
     setActionError(null)
-    setIsOnline(next) // optimista
-    if (next) {
-      const consent = await ensureBgConsent()
-      if (!consent) { setIsOnline(false); return { ok: false, declined: true } }
-      const granted = await requestLocationPermission()
-      setNeedsLocation(!granted)
-      let pos = null
-      if (granted) {
-        try { pos = await getCurrentPosition() } catch (_) {}
-      }
-      const res = await riderOnline({
-        latitud: pos?.latitud,
-        longitud: pos?.longitud,
-        accuracy: pos?.accuracy,
-      })
-      if (!res.ok) {
-        setIsOnline(false)
-        if (res.sessionDead) {
-          setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
-          try { await supabase.auth.signOut() } catch (_) {}
-        } else {
-          setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+    try {
+      if (next) {
+        // El consentimiento y el permiso se piden ANTES de marcar la UI como online,
+        // para no mostrar "En línea" mientras el modal de disclosure sigue abierto.
+        const consent = await ensureBgConsent()
+        if (!consent) { setIsOnline(false); return { ok: false, declined: true } }
+        const granted = await requestLocationPermission()
+        setNeedsLocation(!granted)
+        let pos = null
+        if (granted) {
+          try { pos = await getCurrentPosition() } catch (_) {}
+          if (pos) lastPosRef.current = pos
         }
+        setIsOnline(true) // optimista, ya con consentimiento y permiso resueltos
+        const res = await riderOnline({
+          latitud: pos?.latitud,
+          longitud: pos?.longitud,
+          accuracy: pos?.accuracy,
+        })
+        if (!res.ok) {
+          setIsOnline(false)
+          if (res.sessionDead) {
+            setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+            try { await supabase.auth.signOut() } catch (_) {}
+          } else {
+            setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+          }
+          return res
+        }
+        if (granted) startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
+        refreshSocio?.()
+        return res
+      } else {
+        setIsOnline(false) // optimista
+        // OJO: no paramos el tracking hasta confirmar que la desconexión fue OK.
+        // Si riderOffline() falla por red, revertimos a online y el GPS/latido deben
+        // seguir vivos (si paráramos el tracking antes, quedaría "online + latiendo"
+        // pero sin posición, justo lo que este sistema quiere evitar).
+        const res = await riderOffline()
+        if (!res.ok) {
+          setIsOnline(true)
+          if (res.sessionDead) {
+            // Sesión muerta: la app se va a cerrar. Paramos el tracking igualmente
+            // para no dejar el foreground service + GPS huérfanos tras el signOut.
+            stopTracking()
+            lastPosRef.current = null
+            setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+            try { await supabase.auth.signOut() } catch (_) {}
+          } else {
+            setActionError('No se pudo desconectar. Inténtalo de nuevo.')
+          }
+          return res
+        }
+        stopTracking()
+        lastPosRef.current = null
+        setNeedsLocation(false)
+        refreshSocio?.()
         return res
       }
-      if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } })
-      refreshSocio?.()
-      return res
-    } else {
-      // OJO: no paramos el tracking hasta confirmar que la desconexión fue OK.
-      // Si riderOffline() falla por red, revertimos a online y el GPS/latido deben
-      // seguir vivos (si paráramos el tracking antes, quedaría "online + latiendo"
-      // pero sin posición, justo lo que este sistema quiere evitar).
-      const res = await riderOffline()
-      if (!res.ok) {
-        setIsOnline(true)
-        if (res.sessionDead) {
-          setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
-          try { await supabase.auth.signOut() } catch (_) {}
-        } else {
-          setActionError('No se pudo desconectar. Inténtalo de nuevo.')
-        }
-        return res
-      }
-      stopTracking()
-      setNeedsLocation(false)
-      refreshSocio?.()
-      return res
+    } finally {
+      togglingRef.current = false
     }
   }
 
@@ -155,7 +190,7 @@ export function RiderProvider({ children }) {
     const granted = await requestLocationPermission()
     setNeedsLocation(!granted)
     if (granted) {
-      if (isOnline) { startTracking({ onUpdate: (pos) => { lastPosRef.current = pos } }); captureAndPush() }
+      if (isOnline) { startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError }); captureAndPush() }
     } else {
       openLocationSettings()
     }
@@ -191,8 +226,12 @@ export function RiderProvider({ children }) {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    // Funcional: no pisar una pendiente ya mostrada (evita leer estado stale).
-    if (pendiente) setAsignacionPendiente((prev) => prev || pendiente)
+    // Funcional: no pisar una pendiente ya mostrada (evita leer estado stale) y no
+    // re-mostrar una que el rider ya descartó localmente (rechazo/timeout) mientras
+    // el backend aún no la resuelve → evita el "modal zombi" que reaparecía en bucle.
+    if (pendiente && !dismissedIdsRef.current.has(pendiente.id)) {
+      setAsignacionPendiente((prev) => prev || pendiente)
+    }
   }, [socio?.id])
 
   useEffect(() => {
@@ -215,14 +254,16 @@ export function RiderProvider({ children }) {
         filter: `socio_id=eq.${socio.id}`,
       }, async (payload) => {
         const newRow = payload.new
-        if (newRow?.estado === 'esperando_aceptacion') {
+        if (newRow?.estado === 'esperando_aceptacion' && !dismissedIdsRef.current.has(newRow.id)) {
           // Enriquecer con datos del pedido
           const { data: pedido } = await supabase
             .from('pedidos')
             .select('codigo, total, modo_entrega, direccion_entrega, establecimientos(nombre, direccion)')
             .eq('id', newRow.pedido_id)
             .maybeSingle()
-          setAsignacionPendiente({ ...newRow, pedidos: pedido })
+          // No pisar una pendiente ya mostrada: si llegan dos pedidos casi a la vez,
+          // el segundo no debe reemplazar (y reiniciar el countdown de) el primero.
+          setAsignacionPendiente((prev) => prev || { ...newRow, pedidos: pedido })
         }
       })
       .on('postgres_changes', {
@@ -230,10 +271,56 @@ export function RiderProvider({ children }) {
         schema: 'public',
         table: 'pedido_asignaciones',
         filter: `socio_id=eq.${socio.id}`,
-      }, () => { refreshAsignaciones() })
-      .subscribe()
+      }, (payload) => {
+        // Si la asignación que el rider tiene abierta deja de estar "esperando
+        // aceptación" (la tomó otro, expiró o se reasignó), cerramos el modal.
+        const row = payload.new
+        if (row?.estado && row.estado !== 'esperando_aceptacion') {
+          setAsignacionPendiente((prev) => (prev && prev.id === row.id ? null : prev))
+        }
+        refreshAsignaciones()
+      })
+      .subscribe((status) => {
+        // Recuperación: si el canal se cae (WebView congelado en background, pérdida
+        // de red), supabase-js no siempre re-une solo. Al reconectar, refrescamos por
+        // si perdimos algún INSERT mientras el socket estuvo muerto.
+        if (status === 'SUBSCRIBED') {
+          refreshAsignaciones()
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('[RiderContext] realtime status:', status)
+        }
+      })
     channelRef.current = ch
     return () => { supabase.removeChannel(ch); channelRef.current = null }
+  }, [socio?.id, refreshAsignaciones])
+
+  // ─── Recuperar realtime al volver del segundo plano ────────
+  // El WebView de Android congela el websocket tras minutos en background; al volver,
+  // reconectamos el socket y refrescamos las asignaciones para no perder pedidos.
+  useEffect(() => {
+    if (!socio?.id) return
+    let removed = false
+    let appHandle = null
+    const onResume = () => {
+      try { supabase.realtime.connect() } catch (_) {}
+      refreshAsignaciones()
+    }
+    // Web / PWA
+    const onVisibility = () => { if (typeof document !== 'undefined' && !document.hidden) onResume() }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+    // Nativo (Capacitor App)
+    ;(async () => {
+      const App = (await getPlugin('App'))?.plugin
+      if (!App || removed) return
+      appHandle = await App.addListener('appStateChange', (state) => {
+        if (state?.isActive) onResume()
+      })
+    })()
+    return () => {
+      removed = true
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
+      try { appHandle?.remove?.() } catch (_) {}
+    }
   }, [socio?.id, refreshAsignaciones])
 
   // ─── Listeners push: fallback cuando realtime no llega ─────
@@ -258,7 +345,27 @@ export function RiderProvider({ children }) {
   useEffect(() => {
     if (!isOnline) return
     // Latido inmediato al ponerse online + cada 60s.
-    const beat = () => {
+    const beat = async () => {
+      // Comprobación de sesión: si el refresh token está muerto (caducado/revocado),
+      // el latido fallaría con 401 y el cron acabaría marcando al socio offline en
+      // silencio, dejándolo sin pedidos con la UI diciendo "En línea". Lo detectamos
+      // aquí y forzamos re-login en vez de "morir callado".
+      try {
+        let { data: { session } } = await supabase.auth.getSession()
+        const expSoonMs = session?.expires_at ? session.expires_at * 1000 - Date.now() : 0
+        if (!session || expSoonMs < 60_000) {
+          const r = await supabase.auth.refreshSession()
+          session = r?.data?.session || null
+        }
+        if (!session) {
+          setIsOnline(false)
+          stopTracking()
+          lastPosRef.current = null
+          setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión para seguir recibiendo pedidos.')
+          try { await supabase.auth.signOut() } catch (_) {}
+          return
+        }
+      } catch (_) { /* sin red: no forzamos logout, reintentamos al siguiente latido */ }
       const p = lastPosRef.current
       riderHeartbeat(p ? { latitud: p.latitud, longitud: p.longitud } : {})
     }
@@ -269,10 +376,26 @@ export function RiderProvider({ children }) {
 
   // ─── Dismiss asignación pendiente (tras aceptar/rechazar/timeout) ──
   const dismissPendiente = () => {
-    setAsignacionPendiente(null)
+    setAsignacionPendiente((prev) => {
+      // Recordamos el id descartado para que refreshAsignaciones / el INSERT realtime
+      // no lo vuelvan a mostrar mientras el backend aún no lo resuelve (modal zombi).
+      if (prev?.id) {
+        dismissedIdsRef.current.add(prev.id)
+        // Limpieza defensiva: no dejar crecer el set indefinidamente.
+        if (dismissedIdsRef.current.size > 50) {
+          dismissedIdsRef.current = new Set(Array.from(dismissedIdsRef.current).slice(-25))
+        }
+      }
+      return null
+    })
     // refrescar para mover a activas si aceptó
     setTimeout(refreshAsignaciones, 500)
   }
+
+  // Cleanup global: al desmontar el provider (logout, cambio de árbol) paramos el
+  // tracking nativo. Es estado de módulo en riderGeo, así que sin esto el foreground
+  // service y el GPS seguirían vivos tras cerrar sesión.
+  useEffect(() => () => { stopTracking() }, [])
 
   const value = useMemo(() => ({
     socio,

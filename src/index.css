@@ -1,4 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
+/* Fuente: se precarga en index.html con <link> (no @import bloqueante) y solo los
+   pesos que se usan (400/600/700/800, sin itálicas). Ver <head> de index.html. */
 
 :root {
   /* === Bases (cream world) === */

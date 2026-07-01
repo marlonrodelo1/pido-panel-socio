@@ -85,7 +85,12 @@ export default function Login({ onBack }) {
     setError(null); setAuthError?.(null); setLoading(true)
     try {
       await loginGoogle()
-      // Web: signInWithOAuth redirige (la página se recarga). Nativo: abre browser.
+      // Web: signInWithOAuth redirige (la página se recarga → este componente muere).
+      // Nativo: loginGoogle abre el navegador externo y resuelve YA; el login real
+      // vuelve por el deep link (appUrlOpen) y re-renderiza la app. Reseteamos loading
+      // para que, si el usuario cierra el navegador sin completar, no quede el botón
+      // en "Procesando…" para siempre.
+      setLoading(false)
     } catch (e) {
       setError('No se pudo conectar con Google: ' + (e.message || ''))
       setLoading(false)

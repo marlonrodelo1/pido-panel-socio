@@ -1,8 +1,10 @@
-import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { registerSocioPush, unregisterSocioPush } from '../lib/webPush'
 import { isNativePlatform } from '../lib/capacitor'
 import { registerSocioPushNative, unregisterSocioPushNative } from '../lib/pushNative'
+import { stopTracking } from '../lib/riderGeo'
+import { riderOffline } from '../lib/riderApi'
 
 const SocioContext = createContext(null)
 
@@ -19,6 +21,7 @@ export function SocioProvider({ children }) {
 
   const realtimeChannelRef = useRef(null)
   const pushRegisteredRef = useRef(false)
+  const userIdRef = useRef(null)   // último user.id conocido (para detectar cambio real de usuario)
 
   const fetchSocio = useCallback(async (uid) => {
     if (!uid) { setSocio(null); return }
@@ -27,8 +30,13 @@ export function SocioProvider({ children }) {
       .select('*')
       .eq('user_id', uid)
       .maybeSingle()
-    if (error && error.code !== 'PGRST116') {
+    if (error) {
+      // Error de red / 5xx (NO "fila inexistente": maybeSingle devuelve data=null sin
+      // error cuando no hay socio). Un fallo transitorio NO debe borrar el socio ya
+      // cargado, porque App.jsx interpretaría !socio como "no dado de alta" y mandaría
+      // a un socio veterano a la pantalla de Onboarding (con riesgo de sobrescribir).
       console.error('[SocioContext] error fetch socio', error)
+      return
     }
     setSocio(data || null)
   }, [])
@@ -45,19 +53,32 @@ export function SocioProvider({ children }) {
       if (!mounted) return
       setSession(data.session)
       setUser(data.session?.user || null)
+      userIdRef.current = data.session?.user?.id || null
       if (data.session?.user) await fetchSocio(data.session.user.id)
       setLoading(false)
     })()
 
     const { data: listener } = supabase.auth.onAuthStateChange((evt, newSession) => {
+      const prevUserId = userIdRef.current
+      const newUserId = newSession?.user?.id || null
       setSession(newSession)
       setUser(newSession?.user || null)
+      userIdRef.current = newUserId
       if (newSession?.user) {
-        // En SIGNED_IN nuevo, mantenemos loading=true mientras buscamos
-        // el registro de socio en BD. Asi App.jsx no muestra <Onboarding/>
-        // momentaneamente entre que llega la session y carga el socio.
-        if (evt === 'SIGNED_IN') setLoading(true)
-        fetchSocio(newSession.user.id).finally(() => setLoading(false))
+        // supabase-js re-emite SIGNED_IN/TOKEN_REFRESHED al recuperar el foco de la
+        // app/pestaña. Solo mostramos "Cargando…" (loading=true, que desmonta toda la
+        // UI) cuando cambia el USUARIO; si es el mismo usuario que ya vuelve, no
+        // desmontamos ni bloqueamos — solo refrescamos el socio en segundo plano.
+        const isNewUser = newUserId !== prevUserId
+        if (isNewUser) setLoading(true)
+        // Solo (re)cargamos el socio cuando cambia el usuario o es un login/arranque
+        // real. En TOKEN_REFRESHED (cada ~hora y al recuperar el foco) NO refetcheamos:
+        // el socio no cambia y su refetch reemplazaba el objeto → disparaba las queries
+        // de Dashboard/Pedidos que dependen de él. Para cambios explícitos existe
+        // refreshSocio() (se llama tras online/offline y tras editar el perfil).
+        if (isNewUser || evt === 'SIGNED_IN' || evt === 'INITIAL_SESSION') {
+          fetchSocio(newSession.user.id).finally(() => { if (isNewUser) setLoading(false) })
+        }
         if (evt === 'SIGNED_IN' || evt === 'INITIAL_SESSION' || evt === 'TOKEN_REFRESHED') {
           maybeRegisterPush(newSession.user.id)
         }
@@ -75,12 +96,18 @@ export function SocioProvider({ children }) {
   // Registrar push una vez por sesión. En nativo usa FCM, en web usa VAPID.
   async function maybeRegisterPush(uid) {
     if (pushRegisteredRef.current) return
+    // Marcamos "en curso" para evitar registros concurrentes, pero solo lo dejamos
+    // fijado si el registro tiene ÉXITO (o el permiso fue denegado, caso terminal).
+    // Antes se marcaba siempre: un fallo transitorio (timeout de 5s, red lenta en el
+    // primer arranque) dejaba al rider sin push toda la sesión (fallback crítico si
+    // el realtime se cae). Ahora un fallo recuperable permite reintentar.
     pushRegisteredRef.current = true
+    const markFailed = () => { pushRegisteredRef.current = false }
     const native = await isNativePlatform()
     if (native) {
       const res = await registerSocioPushNative(uid)
-      if (!res.ok && res.reason !== 'denied') {
-        console.warn('[SocioContext] FCM nativo no registrado:', res.reason)
+      if (!res.ok) {
+        if (res.reason !== 'denied') { console.warn('[SocioContext] FCM nativo no registrado:', res.reason); markFailed() }
       }
       return
     }
@@ -88,8 +115,10 @@ export function SocioProvider({ children }) {
     if (!res.ok) {
       if (res.reason === 'no-vapid') {
         setPushToast({ type: 'info', message: 'Para notificaciones configura VAPID key' })
-      } else if (res.reason !== 'denied' && res.reason !== 'unsupported') {
-        console.warn('[SocioContext] web push no registrado:', res.reason)
+      } else if (res.reason === 'denied' || res.reason === 'unsupported') {
+        // terminal: no reintentar
+      } else {
+        console.warn('[SocioContext] web push no registrado:', res.reason); markFailed()
       }
     }
   }
@@ -142,7 +171,7 @@ export function SocioProvider({ children }) {
     setPedidosNuevosSocio([])
   }, [])
 
-  const updateSocio = async (cambios) => {
+  const updateSocio = useCallback(async (cambios) => {
     if (!socio?.id) return
     const { data, error } = await supabase
       .from('socios')
@@ -153,9 +182,15 @@ export function SocioProvider({ children }) {
     if (error) throw error
     setSocio(data)
     return data
-  }
+  }, [socio?.id])
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
+    // Parar el GPS/foreground service ANTES de cerrar sesión: es estado de módulo en
+    // riderGeo, así que sin esto la notificación "Pidoo en servicio" y el tracking
+    // seguirían vivos tras el logout. Y marcar offline en DB (best-effort) para no
+    // dejar al socio "en servicio" hasta que lo apague el cron.
+    try { stopTracking() } catch (_) {}
+    try { await riderOffline() } catch (_) {}
     try {
       if (user?.id) {
         const native = await isNativePlatform()
@@ -164,19 +199,26 @@ export function SocioProvider({ children }) {
       }
     } catch (_) {}
     pushRegisteredRef.current = false
+    userIdRef.current = null
     await supabase.auth.signOut()
     setSocio(null)
     setPedidosNuevosSocio([])
-  }
+  }, [user?.id])
+
+  // Memoizamos el value: sin esto, cada INSERT de realtime / cada toast / cada
+  // refresh de token creaba un objeto nuevo y re-renderizaba TODOS los consumidores
+  // (Shell entero, header, páginas) — jank perceptible en gama baja.
+  const value = useMemo(() => ({
+    session, user, socio, loading,
+    authError, setAuthError,
+    refreshSocio, updateSocio, logout,
+    pedidosNuevosSocio, dismissNuevo, dismissAllNuevos,
+    pushToast, setPushToast,
+  }), [session, user, socio, loading, authError, refreshSocio, updateSocio, logout,
+    pedidosNuevosSocio, dismissNuevo, dismissAllNuevos, pushToast])
 
   return (
-    <SocioContext.Provider value={{
-      session, user, socio, loading,
-      authError, setAuthError,
-      refreshSocio, updateSocio, logout,
-      pedidosNuevosSocio, dismissNuevo, dismissAllNuevos,
-      pushToast, setPushToast,
-    }}>
+    <SocioContext.Provider value={value}>
       {children}
     </SocioContext.Provider>
   )

@@ -71,20 +71,32 @@ export default function Pedidos() {
 
   useEffect(() => {
     if (!socio?.id) return
+    let cancel = false
     ;(async () => {
       setLoading(true)
+      const desde = rangoToDesde(rango)
+
       const { data: riderAccs } = await supabase
         .from('rider_accounts')
         .select('id')
         .eq('socio_id', socio.id)
+      if (cancel) return
       const riderAccIds = (riderAccs || []).map((r) => r.id)
 
       let pedidoIds = []
       if (riderAccIds.length > 0) {
-        const { data: asigs } = await supabase
+        // Acotamos por rango de fecha (y con límite): sin esto se traían TODOS los
+        // pedido_id históricos del socio y se metían como lista de UUIDs en la URL del
+        // `.or(...)`, que con miles de pedidos disparaba la longitud/plan de la query.
+        let aq = supabase
           .from('pedido_asignaciones')
-          .select('pedido_id')
+          .select('pedido_id, created_at')
           .in('rider_account_id', riderAccIds)
+          .order('created_at', { ascending: false })
+          .limit(500)
+        if (desde) aq = aq.gte('created_at', desde)
+        const { data: asigs } = await aq
+        if (cancel) return
         pedidoIds = Array.from(new Set((asigs || []).map((a) => a.pedido_id)))
       }
 
@@ -104,11 +116,18 @@ export default function Pedidos() {
         q = q.eq('socio_id', socio.id)
       }
 
-      const desde = rangoToDesde(rango)
       if (desde) q = q.gte('created_at', desde)
       if (estado !== 'todos') q = q.eq('estado', estado)
       if (pago !== 'todos') q = q.eq('metodo_pago', pago)
-      const { data } = await q
+      const { data, error } = await q
+      if (cancel) return
+      if (error) {
+        // No tragar el error como "sin pedidos": lo registramos y no borramos la lista
+        // previa (evita mostrar "Sin pedidos" cuando en realidad la query falló).
+        console.error('[Pedidos] error cargando pedidos', error)
+        setLoading(false)
+        return
+      }
 
       // Sin tabla rider_earnings → no hay desglose de comisión; se deja en null
       // para mostrar "—" en la columna Comisión (no inventamos cifras).
@@ -119,7 +138,8 @@ export default function Pedidos() {
       setPedidos(pedidosNorm)
       setLoading(false)
     })()
-  }, [socio, rango, estado, pago])
+    return () => { cancel = true }
+  }, [socio?.id, rango, estado, pago])
 
   const resumen = useMemo(() => {
     const total = pedidos.reduce((a, p) => a + Number(p.total || 0), 0)
