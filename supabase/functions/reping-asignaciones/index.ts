@@ -5,6 +5,8 @@
 // Solo asignaciones con estado='esperando_aceptacion' creadas hace mas de 10s
 // y menos de 180s (timeout total). Despues de eso reassign-pedido-v2 las pasa
 // al siguiente rider.
+//
+// v5 (2 jul 2026): limite de 100 filas en la query de asignaciones (antes sin limite).
 
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -24,6 +26,7 @@ async function repingPass() {
     .eq('estado', 'esperando_aceptacion')
     .gte('created_at', desde)
     .lte('created_at', hasta)
+    .limit(100)
 
   if (!asigs?.length) return 0
 

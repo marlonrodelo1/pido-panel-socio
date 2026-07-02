@@ -1,11 +1,15 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// proponer-tarifa-socio v4 — BIDIRECCIONAL (modelo 19-jun: por defecto propone el SOCIO).
+// proponer-tarifa-socio v6 (2 jul 2026) — BIDIRECCIONAL (modelo 19-jun: por defecto propone el SOCIO).
 // Incluye comision_pct (% del pedido que cobra el socio; default 10, editable).
+// v6: techos de tarifa (max 50 EUR base/maxima, 10 EUR/km, 50 km radio) -> 400 tarifa_fuera_de_rango.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+
+const MAX_TARIFA_EUR = 50;    // techo de tarifa_base y tarifa_maxima (tambien tope del radio en km)
+const MAX_PRECIO_KM_EUR = 10; // techo de tarifa_precio_km
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +41,10 @@ Deno.serve(async (req) => {
     if ([tb, trb, tpk].some((v) => !Number.isFinite(v) || v < 0) || (tm !== null && (!Number.isFinite(tm) || tm < 0))) {
       return json({ error: 'tarifas deben ser numeros >= 0' }, 400);
     }
+    if (tb > MAX_TARIFA_EUR) return json({ error: 'tarifa_fuera_de_rango', max: MAX_TARIFA_EUR }, 400);
+    if (tm !== null && tm > MAX_TARIFA_EUR) return json({ error: 'tarifa_fuera_de_rango', max: MAX_TARIFA_EUR }, 400);
+    if (trb > MAX_TARIFA_EUR) return json({ error: 'tarifa_fuera_de_rango', max: MAX_TARIFA_EUR }, 400);
+    if (tpk > MAX_PRECIO_KM_EUR) return json({ error: 'tarifa_fuera_de_rango', max: MAX_PRECIO_KM_EUR }, 400);
     const cp = body.comision_pct == null ? 10 : Number(body.comision_pct);
     if (!Number.isFinite(cp) || cp < 0 || cp > 100) {
       return json({ error: 'comision_pct debe estar entre 0 y 100' }, 400);

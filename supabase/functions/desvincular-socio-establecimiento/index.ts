@@ -1,6 +1,9 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// desvincular-socio-establecimiento v3
+// desvincular-socio-establecimiento v5 (2 jul 2026)
+// v5: antes de borrar la fila, guarda snapshot de la tarifa pactada en
+// socio_establecimiento_tarifa_log (evento='desvinculacion', best-effort: si el log
+// falla NO bloquea la desvinculacion).
 // El SOCIO (o un superadmin) cancela la vinculación con un restaurante.
 // ANTES de borrar la vinculación, LIBERA los pedidos activos no entregados de ese
 // socio en ese establecimiento (para que no queden huérfanos) y avisa al restaurante
@@ -38,13 +41,13 @@ Deno.serve(async (req) => {
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return json({ error: 'sesion invalida' }, 401);
 
-    const { socio_establecimiento_id } = await req.json();
+    const { socio_establecimiento_id, motivo } = await req.json();
     if (!socio_establecimiento_id) return json({ error: 'socio_establecimiento_id requerido' }, 400);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
     const { data: vinc } = await admin.from('socio_establecimiento')
-      .select('id, socio_id, establecimiento_id, socios(user_id, nombre, nombre_comercial)')
+      .select('id, socio_id, establecimiento_id, estado, comision_pct, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, tarifa_aceptada_en, exclusivo, es_captador, motivo_rechazo, socios(user_id, nombre, nombre_comercial)')
       .eq('id', socio_establecimiento_id).maybeSingle();
     if (!vinc) return json({ error: 'vinculacion no encontrada' }, 404);
 
@@ -97,6 +100,32 @@ Deno.serve(async (req) => {
     } catch (e) {
       console.error('[desvincular] liberacion pedidos', e);
     }
+
+    // ── 1b. Snapshot histórico de la tarifa pactada (best-effort, NO bloquea) ──
+    try {
+      const { error: logErr } = await admin.from('socio_establecimiento_tarifa_log').insert({
+        socio_id: vinc.socio_id,
+        establecimiento_id: vinc.establecimiento_id,
+        evento: 'desvinculacion',
+        origen: socioUserId === user.id ? 'socio' : 'admin',
+        tarifa_anterior: {
+          estado: vinc.estado ?? null,
+          comision_pct: vinc.comision_pct ?? null,
+          tarifa_base: vinc.tarifa_base ?? null,
+          tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? null,
+          tarifa_precio_km: vinc.tarifa_precio_km ?? null,
+          tarifa_maxima: vinc.tarifa_maxima ?? null,
+          tarifa_aceptada_en: vinc.tarifa_aceptada_en ?? null,
+          exclusivo: vinc.exclusivo ?? null,
+          es_captador: vinc.es_captador ?? null,
+          motivo: vinc.motivo_rechazo ?? null,
+        },
+        tarifa_nueva: null,
+        motivo: motivo || null,
+        created_by: user.id,
+      });
+      if (logErr) console.error('[desvincular] snapshot tarifa_log', logErr);
+    } catch (e) { console.error('[desvincular] snapshot tarifa_log', e); }
 
     // ── 2. Borrar la vinculación ──────────────────────────────────────────────
     const { error: delErr } = await admin.from('socio_establecimiento').delete().eq('id', socio_establecimiento_id);

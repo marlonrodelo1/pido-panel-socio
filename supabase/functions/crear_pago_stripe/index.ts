@@ -1,4 +1,4 @@
-// crear_pago_stripe v28 — SIN split por pedido (modelo de liquidacion semanal unica)
+// crear_pago_stripe v30 — SIN split por pedido (modelo de liquidacion semanal unica)
 //
 // MODELO (19 jun 2026):
 //   - El cliente paga el TOTAL = subtotal + envio + propina al PaymentIntent, a la cuenta de Pidoo.
@@ -13,6 +13,9 @@
 //   - Permite el pago si EXISTE >=1 socio vinculado activo y en_servicio (no solo el primero).
 //   - Si el pedido viene del marketplace de un socio (origen_pedido='marketplace_socio'
 //     + socio_id), comprueba SOLO ese socio (misma regla 1 del dispatcher).
+// v30 (2 jul): Idempotency-Key en la creacion del PaymentIntent (pi-<pedido_id>-<centimos>).
+//   Doble-tap / 2 dispositivos / reintento de red -> Stripe devuelve el MISMO PaymentIntent,
+//   no crea uno nuevo. Si el importe cambia legitimamente, la clave cambia y se crea otro.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -58,13 +61,15 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
 }
 
-async function callStripeAPI(method: string, endpoint: string, data: unknown): Promise<any> {
+async function callStripeAPI(method: string, endpoint: string, data: unknown, idempotencyKey?: string): Promise<any> {
   const secretKey = Deno.env.get('STRIPE_SECRET_KEY')
   if (!secretKey) throw new Error('STRIPE_SECRET_KEY not configured')
   const basicAuth = btoa(`${secretKey}:`)
+  const headers: Record<string, string> = { 'Authorization': `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded' }
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
   const response = await fetch(`https://api.stripe.com/v1${endpoint}`, {
     method,
-    headers: { 'Authorization': `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers,
     body: data instanceof FormData ? data : new URLSearchParams(data as Record<string, string>).toString(),
   })
   const result = await response.json()
@@ -194,7 +199,9 @@ serve(async (req: Request) => {
     // Sin split por pedido: el cobro va integro a la cuenta de Pidoo.
     // El 10% comision + 90% restaurante + envio/propina al socio se liquidan los lunes.
 
-    const result = await callStripeAPI('POST', '/payment_intents', params.toString())
+    // v30: idempotencia — mismo pedido + mismo importe => mismo PaymentIntent.
+    const idemKey = `pi-${pedido.id}-${Math.round(totalDB * 100)}`
+    const result = await callStripeAPI('POST', '/payment_intents', params.toString(), idemKey)
     if (!result.client_secret || !result.id) throw new Error('Invalid Stripe response')
 
     return Response.json(

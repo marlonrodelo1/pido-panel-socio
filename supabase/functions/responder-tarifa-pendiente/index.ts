@@ -1,7 +1,10 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// responder-tarifa-pendiente v4 — responde el CONTRARIO al que propuso.
+// responder-tarifa-pendiente v6 (2 jul 2026) — responde el CONTRARIO al que propuso.
 // Aplica tambien comision_pct al aceptar.
+// v6: eliminado fallback inseguro cuando tarifa_pendiente_origen es null (permitia al
+// proponente auto-aceptar su propia tarifa); ahora 409 origen_propuesta_inconsistente.
+// Superadmin sigue pudiendo responder siempre.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -45,12 +48,14 @@ Deno.serve(async (req) => {
     const origen = vinc.tarifa_pendiente_origen as ('socio' | 'restaurante' | null);
     const esRestaurante = est?.user_id === user.id;
     const esSocio = socioUserId === user.id;
+    if (!isSuperadmin && origen !== 'socio' && origen !== 'restaurante') {
+      return json({ error: 'origen_propuesta_inconsistente' }, 409);
+    }
     const debeResponderRestaurante = origen === 'socio';
     const debeResponderSocio = origen === 'restaurante';
     const autorizado = isSuperadmin
       || (debeResponderRestaurante && esRestaurante)
-      || (debeResponderSocio && esSocio)
-      || (!origen && (esRestaurante || esSocio));
+      || (debeResponderSocio && esSocio);
     if (!autorizado) {
       return json({ error: 'esta propuesta la debe responder la otra parte' }, 403);
     }

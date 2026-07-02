@@ -1,10 +1,12 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// recuperar-pagos-huerfanos v1
+// recuperar-pagos-huerfanos v2
 // Cron (cada 5 min): resuelve pedidos atascados en 'pendiente_pago'.
 // - Con payment_intent y Stripe='succeeded' -> reembolsar + cancelar + avisar.
 // - Sin pago / sin payment_intent -> cancelar (sin dinero).
 // Auth: x-cron-secret == CRON_SECRET.
+// v2 (2 jul 2026): Idempotency-Key en el refund Stripe (refund-<pedido_id>) —
+//   dos pasadas del cron sobre el mismo pedido ya no pueden duplicar el reembolso.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -33,13 +35,15 @@ async function getPaymentIntentStatus(id) {
   return j?.status || null;
 }
 
-async function refundStripe(paymentIntentId, amount) {
+async function refundStripe(paymentIntentId, amount, idemKey) {
   const params = new URLSearchParams();
   params.append('payment_intent', paymentIntentId);
   if (amount) params.append('amount', Math.round(amount * 100).toString());
+  const headers = { Authorization: `Basic ${stripeAuth()}`, 'Content-Type': 'application/x-www-form-urlencoded' };
+  if (idemKey) headers['Idempotency-Key'] = idemKey;
   const r = await fetch('https://api.stripe.com/v1/refunds', {
     method: 'POST',
-    headers: { Authorization: `Basic ${stripeAuth()}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers,
     body: params.toString(),
   });
   const j = await r.json();
@@ -76,7 +80,7 @@ Deno.serve(async (req) => {
           try { status = await getPaymentIntentStatus(p.stripe_payment_id); } catch (e) { console.error('[recuperar] pi', p.id, e); }
           if (status === 'succeeded') {
             pago = true;
-            const refund = await refundStripe(p.stripe_payment_id, Number(p.total) || 0);
+            const refund = await refundStripe(p.stripe_payment_id, Number(p.total) || 0, `refund-${p.id}`);
             refundId = refund?.id || null;
             reembolsados++;
           }

@@ -1,5 +1,7 @@
 // ModalPedidoEntrante — Overlay full-screen cuando llega una asignación pendiente.
-// Countdown 180s, sonido + vibración, botones Aceptar / Rechazar.
+// Countdown 90s (ALINEADO con el cron reassign-timeout-pedidos-v2, que reasigna a los 90s
+// de assigned_at — un countdown más largo enseñaba al rider pedidos ya reasignados),
+// sonido + vibración, botones Aceptar / Rechazar.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bike, MapPin, Clock, Phone } from 'lucide-react'
 import { useRider } from '../context/RiderContext'
@@ -8,7 +10,8 @@ import { supabase } from '../lib/supabase'
 import { colors } from '../lib/uiStyles'
 import { calcGanancia } from '../lib/ganancia'
 
-const COUNTDOWN_SECONDS = 180
+// 90s = ventana real del cron de reasignación (jobid 16: assigned_at < now() - 90s).
+const COUNTDOWN_SECONDS = 90
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
 export default function ModalPedidoEntrante() {

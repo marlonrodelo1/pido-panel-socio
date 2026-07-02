@@ -1,5 +1,11 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
+// aprobar-vinculacion-socio v8 (2 jul 2026)
+// v8: UPDATE condicional por estado (guard anti doble-aprobacion/doble-rechazo desde
+// 2 dispositivos): aceptar/rechazar solo sobre estado pendiente ('pendiente'|'solicitada'
+// legacy), desvincular sobre 'activa'|'pendiente'|'solicitada'. Si 0 filas -> 409
+// ya_procesada sin log de auditoria ni notificacion duplicada.
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -65,8 +71,20 @@ Deno.serve(async (req) => {
     }
     if ((accion === 'rechazar' || accion === 'desvincular') && motivo) update.motivo_rechazo = motivo;
 
-    const { error } = await admin.from('socio_establecimiento').update(update).eq('id', vinculacion_id);
+    // Guard de concurrencia: solo procesa si la fila sigue en un estado procesable.
+    // 'solicitada' es el valor legacy de pendiente (el frontend trata ambos como pendientes).
+    const estadosPermitidos = accion === 'desvincular'
+      ? ['activa', 'pendiente', 'solicitada']
+      : ['pendiente', 'solicitada'];
+    const { data: updRows, error } = await admin.from('socio_establecimiento')
+      .update(update)
+      .eq('id', vinculacion_id)
+      .in('estado', estadosPermitidos)
+      .select('id');
     if (error) throw error;
+    if (!updRows || updRows.length === 0) {
+      return json({ error: 'ya_procesada' }, 409);
+    }
 
     if (accion === 'aceptar' && vinc.tarifa_pendiente) {
       await admin.from('socio_establecimiento_tarifa_log').insert({
