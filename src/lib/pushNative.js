@@ -16,6 +16,30 @@ import { getPlugin, isNativePlatform, getPlatform } from './capacitor'
 import { supabase } from './supabase'
 
 let registered = false
+let claimLadderRunning = false
+
+// iOS: el AppDelegate (FirebaseMessaging) guarda el token FCM como huérfano
+// (user_id=null, user_type='socio') por su cuenta, y el evento 'registration'
+// del plugin puede NO llegar nunca al JS (el AppDelegate intercepta APNs).
+// Esta escalera de claims corre SIEMPRE tras el login, sin depender del listener.
+// Bug real (2 jul): el token del rider quedó huérfano y ningún push le llegaba
+// porque el claim solo vivía dentro del listener que jamás se disparó.
+function startIosClaimLadder() {
+  if (claimLadderRunning) return
+  claimLadderRunning = true
+  let claimed = false
+  const claim = async () => {
+    if (claimed) return
+    try {
+      const { data, error } = await supabase.rpc('claim_orphan_push_tokens', { p_user_type: 'socio' })
+      if (error) { console.warn('[pushNative] claim_orphan failed:', error.message); return }
+      if ((data || 0) > 0) { claimed = true; console.log('[pushNative] claimed orphan tokens:', data) }
+    } catch (e) { console.warn('[pushNative] claim exception:', e?.message) }
+  }
+  claim()
+  for (const ms of [2000, 6000, 12000, 25000, 45000]) setTimeout(claim, ms)
+  setTimeout(() => { claimLadderRunning = false }, 60000)
+}
 
 /**
  * Registra el token FCM en push_subscriptions. Idempotente por user_id+token.
@@ -59,6 +83,12 @@ export async function registerSocioPushNative(userId) {
     })
   } catch (_) { /* iOS no soporta channels, ignorar */ }
 
+  // iOS: arrancar la escalera de claims YA (no esperar al evento 'registration',
+  // que puede no dispararse). El AppDelegate guardará el huérfano en paralelo.
+  try {
+    if ((await getPlatform()) === 'ios') startIosClaimLadder()
+  } catch (_) {}
+
   return await new Promise((resolve) => {
     let resolved = false
     const finish = (val) => { if (!resolved) { resolved = true; resolve(val) } }
@@ -74,21 +104,10 @@ export async function registerSocioPushNative(userId) {
       // SECURITY DEFINER, igual que hace la app cliente. Guardar token.value
       // como fcm_token en iOS mete basura APNs que FCM no puede entregar.
       if (platform === 'ios') {
-        // El AppDelegate (FirebaseMessaging) guarda el token FCM como huérfano
-        // (user_id=null) cuando iOS lo entrega, lo que puede tardar unos segundos.
-        // Reintentamos el claim en escalera hasta que enganche (devuelve nº de tokens
-        // enlazados > 0) o se agoten los intentos. Antes solo probaba a 1.5s y 5s: a
-        // veces el token aún no existía -> quedaba huérfano y el push no llegaba.
-        let claimed = false
-        const claim = async () => {
-          if (claimed) return
-          try {
-            const { data, error } = await supabase.rpc('claim_orphan_push_tokens', { p_user_type: 'socio' })
-            if (error) { console.warn('[pushNative] claim_orphan failed:', error.message); return }
-            if ((data || 0) > 0) { claimed = true; console.log('[pushNative] claimed orphan tokens:', data) }
-          } catch (e) { console.warn('[pushNative] claim exception:', e?.message) }
-        }
-        for (const ms of [1500, 4000, 8000, 15000, 25000]) setTimeout(claim, ms)
+        // El token FCM real lo guarda el AppDelegate como huérfano; aquí solo
+        // reforzamos el claim (la escalera principal ya corre desde el registro,
+        // sin depender de este listener).
+        startIosClaimLadder()
         finish({ ok: true, ios: true })
         return
       }

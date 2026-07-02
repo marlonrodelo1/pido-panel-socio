@@ -24,8 +24,20 @@ export default function ModalPedidoEntrante() {
 
   useEffect(() => {
     if (!asignacionPendiente) return
-    setSecondsLeft(COUNTDOWN_SECONDS)
+    // El reloj real corre en el SERVIDOR desde asignacion.created_at (el cron
+    // reasigna a los 90s de la asignación, no de cuando el rider la VE). Si la app
+    // estaba en segundo plano y el rider abre tarde, hay que descontar lo ya
+    // transcurrido — antes el modal arrancaba en 90s completos y dejaba "aceptar"
+    // pedidos ya reasignados (409 "ya no está disponible").
+    const creadaMs = asignacionPendiente.created_at ? new Date(asignacionPendiente.created_at).getTime() : Date.now()
+    const transcurrido = Number.isFinite(creadaMs) ? Math.max(0, Math.floor((Date.now() - creadaMs) / 1000)) : 0
+    const restante = Math.max(0, COUNTDOWN_SECONDS - transcurrido)
+    setSecondsLeft(restante)
     setBusy(null)
+
+    // Si ya expiró en servidor, no arrancamos sonido/vibración: el efecto del
+    // timeout (secondsLeft=0) cerrará la asignación inmediatamente.
+    if (restante <= 0) return
 
     // Sonido loop
     try {
