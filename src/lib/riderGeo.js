@@ -17,13 +17,16 @@
 //   - stopTracking(): void
 //   - captureAndPush(): Promise<pos|null> (uso externo opcional)
 //
-// NOTA Android: tras ~5 min en background, Android throttlea las peticiones HTTP
-// hechas desde el WebView. `rider-update-location` se invoca desde el WebView
-// (supabase-js). Si se observan huecos de ubicación con la app cerrada mucho
-// tiempo, migrar el POST a CapacitorHttp (nativo).
+// KEEPALIVE EN BACKGROUND (julio 2026): con la app minimizada el SO congela los
+// timers de JS del WebView, así que el latido setInterval de RiderContext muere y
+// el cron `auto-offline` (12 min sin señal) apagaba al socio QUIETO con la app de
+// fondo. El único código que sí se ejecuta en background es el callback del
+// watcher nativo (evento nativo→JS, no timer). Por eso el watcher va con
+// distanceFilter:0 (el SO entrega fixes aunque no te muevas) y es el propio
+// callback quien decide cuándo postear: al moverse ≥30m (máx 1 cada 10s, como
+// antes) o, sin movimiento, al menos 1 vez por minuto como latido de presencia.
+// `rider-update-location` estampa last_location_at, así que ese POST ES el latido.
 // Ref: https://github.com/capacitor-community/background-geolocation/issues/14
-// TODO: exponer también la captura de ubicación nativa al hilo del watcher para
-// evitar el throttling del WebView a los 5 min.
 
 import { registerPlugin } from '@capacitor/core'
 import { getPlugin, isNativePlatform } from './capacitor'
@@ -33,8 +36,14 @@ import { riderUpdateLocation } from './riderApi'
 const ACTIVE_INTERVAL_MS = 15_000   // 15s en foreground (fallback polling)
 const IDLE_INTERVAL_MS   = 60_000   // 60s en background (fallback polling)
 const POS_OPTS = { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 }
-const DISTANCE_FILTER_M = 30        // metros mínimos entre actualizaciones (watcher nativo)
+// distanceFilter del watcher NATIVO a 0: el SO entrega fixes continuamente aunque
+// el rider esté quieto. Es lo que mantiene vivo el callback JS en background (los
+// timers del WebView se congelan al minimizar). El filtrado real de "cuándo
+// postear" se hace en JS con las dos constantes de abajo.
+const NATIVE_DISTANCE_FILTER_M = 0
+const MOVE_THRESHOLD_M = 30         // metros mínimos para postear por movimiento (antes distanceFilter)
 const MIN_PUSH_INTERVAL_MS = 10_000 // mínimo entre POSTs de ubicación (evita spamear la edge en movimiento)
+const KEEPALIVE_INTERVAL_MS = 60_000 // sin movimiento, postear igualmente cada 60s (latido de presencia)
 
 const BG_NOTIF_TITLE = 'Pidoo en servicio'
 const BG_NOTIF_MESSAGE = 'Compartiendo tu ubicación para asignarte pedidos.'
@@ -55,6 +64,19 @@ let usingNativeWatcher = false // true si el watcher nativo está corriendo
 // limpia. Evita el watcher huérfano (tracking activo estando offline/deslogueado).
 let startToken = 0
 let lastPushAt = 0             // timestamp del último POST de ubicación (throttle)
+let lastPushedPos = null       // última posición POSTEADA (para el umbral de movimiento en JS)
+
+// Distancia Haversine en metros entre dos posiciones {latitud, longitud}.
+function distanceMeters(a, b) {
+  const R = 6371000
+  const toRad = (d) => (d * Math.PI) / 180
+  const dLat = toRad(b.latitud - a.latitud)
+  const dLng = toRad(b.longitud - a.longitud)
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.latitud)) * Math.cos(toRad(b.latitud)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(s))
+}
 
 // Estado del fallback polling
 let timer = null
@@ -169,6 +191,10 @@ export function startTracking(opts = {}) {
   if (usingNativeWatcher || timer) return  // ya activo
   onUpdateCb = opts.onUpdate || null
   onErrorCb = opts.onError || null
+  // Sesión de tracking nueva: postear el primer fix de inmediato (sin arrastrar
+  // throttle/posición de la sesión anterior).
+  lastPushAt = 0
+  lastPushedPos = null
   const myToken = startToken
 
   // Intentar watcher nativo (no bloqueante). Si falla, fallback a polling.
@@ -222,7 +248,7 @@ async function startNativeWatcher(myToken) {
         backgroundTitle: BG_NOTIF_TITLE,
         requestPermissions: true,
         stale: false,
-        distanceFilter: DISTANCE_FILTER_M,
+        distanceFilter: NATIVE_DISTANCE_FILTER_M,
       },
       (location, error) => {
         if (error) {
@@ -247,11 +273,27 @@ async function startNativeWatcher(myToken) {
           // y a la lógica de asignación medir la frescura real de la posición.
           timestamp: location.time || null,
         }
-        // Throttle: no posteamos más de 1 vez cada MIN_PUSH_INTERVAL_MS aunque el
-        // distanceFilter dispare callbacks cada 2-3s en moto. Siempre gana el último fix.
+        // Con distanceFilter:0 el SO dispara este callback cada pocos segundos,
+        // haya o no movimiento. Decidimos aquí cuándo postear:
+        //   - MOVIMIENTO: se movió ≥MOVE_THRESHOLD_M desde el último POST, con un
+        //     mínimo de MIN_PUSH_INTERVAL_MS entre POSTs (mismo comportamiento de
+        //     siempre; el umbral de 30m que antes hacía el distanceFilter nativo).
+        //   - KEEPALIVE: sin movimiento, posteamos igualmente cada
+        //     KEEPALIVE_INTERVAL_MS. `rider-update-location` estampa
+        //     last_location_at, así que este POST es el latido que evita que el
+        //     cron auto-offline apague a un socio quieto con la app minimizada
+        //     (los timers JS del WebView se congelan en background; este callback
+        //     es evento nativo→JS y sí sigue ejecutándose).
         const now = Date.now()
-        if (now - lastPushAt >= MIN_PUSH_INTERVAL_MS) {
+        const sinceLastPush = now - lastPushAt
+        const movedEnough =
+          !lastPushedPos || distanceMeters(lastPushedPos, pos) >= MOVE_THRESHOLD_M
+        const shouldPush =
+          (movedEnough && sinceLastPush >= MIN_PUSH_INTERVAL_MS) ||
+          sinceLastPush >= KEEPALIVE_INTERVAL_MS
+        if (shouldPush) {
           lastPushAt = now
+          lastPushedPos = pos
           try { riderUpdateLocation(pos) } catch (_) {}
         }
         if (typeof onUpdateCb === 'function') onUpdateCb(pos)

@@ -335,13 +335,16 @@ export function RiderProvider({ children }) {
     return () => { offRecv?.(); offTap?.() }
   }, [socio?.id, refreshAsignaciones])
 
-  // ─── Latido de presencia mientras online ──────────────────
+  // ─── Latido de presencia mientras online (SOLO foreground/web) ─────
   // Cada 60s, estando EN SERVICIO, mandamos un latido (rider-heartbeat) aunque el
   // repartidor no se mueva. Mantiene fresco socios.last_location_at para que el
   // cron `auto-offline-socios-inactivos` no lo apague mientras la app siga viva.
-  // Si la app se cierra / pierde red / se queda sin batería, los latidos cesan y
-  // el cron lo marca offline pasados los minutos de gracia. Va por CapacitorHttp
-  // (capa nativa) para resistir el throttling del WebView en segundo plano.
+  // OJO: este setInterval SOLO late con la app en primer plano (o en web) — al
+  // minimizar, el SO congela los timers JS del WebView (CapacitorHttp hace nativa
+  // la petición, pero no el timer que la dispara). En background el latido real
+  // es el keepalive del watcher nativo de riderGeo.js (callback nativo→JS con
+  // distanceFilter:0, postea rider-update-location ≥1 vez/min aunque esté quieto).
+  // Este latido de foreground se mantiene porque además detecta sesión muerta.
   useEffect(() => {
     if (!isOnline) return
     // Latido inmediato al ponerse online + cada 60s.
