@@ -52,14 +52,9 @@ export async function getPlatform() {
 let _deviceId = null
 export async function getDeviceId() {
   if (_deviceId) return _deviceId
-  try {
-    if (await isNativePlatform()) {
-      const mod = await import('@capacitor/device')
-      const info = await mod.Device.getId()
-      const id = info?.identifier || info?.uuid || null
-      if (id) { _deviceId = String(id); return _deviceId }
-    }
-  } catch (_) { /* sin plugin Device → fallback a UUID local */ }
+  // Id estable por instalación, persistido en localStorage. Suficiente para "un solo
+  // dispositivo activo por socio" (no requiere plugin nativo; en iOS el identifierForVendor
+  // también se resetea al reinstalar, así que un UUID persistido es equivalente).
   try {
     let id = localStorage.getItem('pidoo_device_id')
     if (!id) {
