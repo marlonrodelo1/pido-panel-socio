@@ -12,7 +12,7 @@
 //
 // Web: webPush.js (existente) maneja VAPID. Este módulo solo cubre nativo.
 
-import { getPlugin, isNativePlatform, getPlatform } from './capacitor'
+import { getPlugin, isNativePlatform, getPlatform, getDeviceId } from './capacitor'
 import { supabase } from './supabase'
 
 let registered = false
@@ -120,6 +120,7 @@ export async function registerSocioPushNative(userId) {
         // La tabla no tiene unique constraint (solo PK id) → no se puede usar
         // onConflict. Hacemos delete del token previo + insert idempotente.
         const endpoint = 'fcm:' + fcmToken
+        const deviceId = await getDeviceId()
         const row = {
           user_id: userId,
           user_type: 'socio',
@@ -127,6 +128,7 @@ export async function registerSocioPushNative(userId) {
           fcm_token: fcmToken,
           p256dh: '',
           auth: '',
+          device_id: deviceId,
         }
         await supabase
           .from('push_subscriptions')

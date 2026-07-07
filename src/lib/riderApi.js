@@ -12,7 +12,7 @@
 // socio sigue "vivo" para el cron de auto-offline aunque tenga la app de fondo.
 
 import { supabase, FUNCTIONS_URL } from './supabase'
-import { isNativePlatform } from './capacitor'
+import { isNativePlatform, getDeviceId } from './capacitor'
 
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
@@ -150,12 +150,14 @@ async function callEdgeAuthed(fnName, body = {}) {
 // ONLINE / OFFLINE
 // ────────────────────────────────────────────────────────────
 
-export function riderOnline({ latitud, longitud, accuracy } = {}) {
-  return callEdgeAuthed('rider-online', { latitud, longitud, accuracy })
+export async function riderOnline({ latitud, longitud, accuracy } = {}) {
+  const device_id = await getDeviceId()
+  return callEdgeAuthed('rider-online', { latitud, longitud, accuracy, device_id })
 }
 
-export function riderOffline() {
-  return callEdgeAuthed('rider-offline', {})
+export async function riderOffline() {
+  const device_id = await getDeviceId()
+  return callEdgeAuthed('rider-offline', { device_id })
 }
 
 // ────────────────────────────────────────────────────────────
@@ -170,16 +172,18 @@ export function riderUpdateLocation({ latitud, longitud, accuracy }) {
 // Latido cada ~60s mientras el socio está online, aunque NO se mueva. Mantiene
 // vivo socios.last_location_at para que el cron de auto-offline no lo apague.
 // lat/lng son opcionales (última posición conocida si la hay). Vía nativa.
-export function riderHeartbeat({ latitud, longitud } = {}) {
-  return invokeNative('rider-heartbeat', { latitud, longitud })
+export async function riderHeartbeat({ latitud, longitud } = {}) {
+  const device_id = await getDeviceId()
+  return invokeNative('rider-heartbeat', { latitud, longitud, device_id })
 }
 
 // ────────────────────────────────────────────────────────────
 // ASIGNACIONES
 // ────────────────────────────────────────────────────────────
 
-export function riderAcceptOrder(asignacionId) {
-  return callEdgeAuthed('rider-accept-order', { asignacion_id: asignacionId })
+export async function riderAcceptOrder(asignacionId) {
+  const device_id = await getDeviceId()
+  return callEdgeAuthed('rider-accept-order', { asignacion_id: asignacionId, device_id })
 }
 
 export function riderRejectOrder(asignacionId, motivo = null) {
@@ -206,6 +210,7 @@ export function riderFailDelivery(pedidoId, motivo) {
 //   - 'fallido' admite extra = { motivo }
 //   - 'entregado' admite extra = { foto_url } opcional
 // El backend actualiza pedido.estado y dispara el push al cliente.
-export function riderEstado(pedidoId, accion, extra = {}) {
-  return callEdgeAuthed('rider-estado', { pedido_id: pedidoId, accion, ...extra })
+export async function riderEstado(pedidoId, accion, extra = {}) {
+  const device_id = await getDeviceId()
+  return callEdgeAuthed('rider-estado', { pedido_id: pedidoId, accion, device_id, ...extra })
 }

@@ -21,6 +21,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Exención de optimización de batería: que el SO no mate el proceso en segundo plano
+         mientras el socio está EN SERVICIO (Parte B). Se pide vía ajustes, no prompt directo. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -72,5 +75,12 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Servicio que detecta el cierre de la app (onTaskRemoved) -> offline instantáneo.
+             stopWithTask=false es lo que garantiza que se llame a onTaskRemoved. -->
+        <service
+            android:name=".OfflineBeaconService"
+            android:exported="false"
+            android:stopWithTask="false" />
     </application>
 </manifest>

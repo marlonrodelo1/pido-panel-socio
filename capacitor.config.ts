@@ -35,6 +35,13 @@ const config: CapacitorConfig = {
       iconColor: '#C5562C',
       sound: 'default',
     },
+    // OTA (Capgo): actualiza la capa web sin pasar por la tienda. autoUpdate descarga la
+    // version nueva en segundo plano y la aplica al reabrir la app. resetWhenUpdate limpia
+    // estado viejo al aplicar. El vinculo con la cuenta Capgo lo hace `npx @capgo/cli init`.
+    CapacitorUpdater: {
+      autoUpdate: true,
+      resetWhenUpdate: true,
+    },
   },
   android: {
     allowMixedContent: false,

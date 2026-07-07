@@ -6,6 +6,11 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ConfigErrorScreen from './components/ConfigErrorScreen.jsx'
 import { SUPABASE_CONFIG_OK } from './lib/supabase'
 import { setupStatusBar, hideSplash } from './lib/capacitor'
+import { initLiveUpdates } from './lib/liveUpdates'
+
+// OTA (Capgo): confirma que este bundle arrancó bien (si no, Capgo revierte al anterior) y
+// deja que autoUpdate traiga las siguientes versiones sin pasar por la tienda. No-op en web.
+initLiveUpdates()
 
 // Setup StatusBar nativo (no-op en web). overlay=true para safe-area.
 setupStatusBar().catch(() => {})

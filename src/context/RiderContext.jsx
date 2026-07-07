@@ -20,7 +20,8 @@ import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
-import { isNativePlatform, getPlugin } from '../lib/capacitor'
+import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption } from '../lib/offlineBeacon'
+import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
@@ -40,6 +41,8 @@ export function RiderProvider({ children }) {
   const dismissedIdsRef = useRef(new Set()) // asignaciones ya descartadas localmente (no re-mostrar)
   const [showDisclosure, setShowDisclosure] = useState(false)
   const disclosureResolveRef = useRef(null)
+  const deviceIdRef = useRef(null)     // id de este dispositivo (single-device)
+  const supersededRef = useRef(false)  // ya se detecto que otro dispositivo tomo la cuenta
 
   // Handler de fallo del watcher nativo (permiso denegado / GPS del sistema off).
   // El watcher entrega el error de forma asíncrona; aquí encendemos el banner para
@@ -67,6 +70,7 @@ export function RiderProvider({ children }) {
         // la UI). Así reabrir la app NO te apaga. El latido (efecto de abajo) revive solo
         // al pasar isOnline=true.
         setIsOnline(true)
+        armOfflineBeacon() // Parte B: re-armar el beacon de cierre al reanudar turno
         requestLocationPermission().then((granted) => {
           setNeedsLocation(!granted)
           if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError })
@@ -87,6 +91,7 @@ export function RiderProvider({ children }) {
       setIsOnline(false)
       setNeedsLocation(false)
       stopTracking()
+      disarmOfflineBeacon()
       lastPosRef.current = null
     }
   }, [socio?.id, socio?.en_servicio, handleWatcherError])
@@ -149,6 +154,10 @@ export function RiderProvider({ children }) {
           return res
         }
         if (granted) startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
+        // Parte B: armar el beacon de cierre (offline instantáneo al cerrar la app) y pedir
+        // la exención de batería una sola vez (para que el SO no mate el proceso de fondo).
+        armOfflineBeacon()
+        try { if (localStorage.getItem('pidoo_batt_asked') !== '1') { localStorage.setItem('pidoo_batt_asked', '1'); requestBatteryExemption() } } catch (_) {}
         refreshSocio?.()
         return res
       } else {
@@ -164,6 +173,7 @@ export function RiderProvider({ children }) {
             // Sesión muerta: la app se va a cerrar. Paramos el tracking igualmente
             // para no dejar el foreground service + GPS huérfanos tras el signOut.
             stopTracking()
+            disarmOfflineBeacon()
             lastPosRef.current = null
             setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
             try { await supabase.auth.signOut() } catch (_) {}
@@ -173,6 +183,7 @@ export function RiderProvider({ children }) {
           return res
         }
         stopTracking()
+        disarmOfflineBeacon() // Parte B: desconexión manual -> desarmar beacon
         lastPosRef.current = null
         setNeedsLocation(false)
         refreshSocio?.()
@@ -198,6 +209,42 @@ export function RiderProvider({ children }) {
   }
 
   const clearActionError = () => setActionError(null)
+
+  // ─── Single-device: cerrar sesion si otro dispositivo toma la cuenta ──
+  useEffect(() => { getDeviceId().then((id) => { deviceIdRef.current = id }).catch(() => {}) }, [])
+
+  const handleSuperseded = useCallback(async () => {
+    if (supersededRef.current) return
+    supersededRef.current = true
+    setIsOnline(false)
+    stopTracking()
+    disarmOfflineBeacon()
+    lastPosRef.current = null
+    setActionError('Se inició sesión en otro dispositivo. Este teléfono se ha desconectado.')
+    // Logout LOCAL a propósito: NO usamos logout() del SocioContext porque llama a
+    // riderOffline() (flip-earía el en_servicio COMPARTIDO con el dispositivo nuevo) y a
+    // unregisterSocioPushNative (borra el token por user_id → borraría el del dispositivo
+    // nuevo, mismo login). El trigger ya dejó solo el token del dispositivo activo, así que
+    // aquí basta con cerrar la sesión de ESTE dispositivo.
+    try { await supabase.auth.signOut() } catch (_) {}
+  }, [])
+
+  // Realtime sobre la fila del socio: si active_device_id pasa a ser OTRO dispositivo,
+  // esta sesion fue superada → logout inmediato.
+  useEffect(() => {
+    if (!socio?.id) return
+    const ch = supabase
+      .channel(`socio-device-${socio.id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'socios', filter: `id=eq.${socio.id}`,
+      }, (payload) => {
+        const active = payload.new?.active_device_id
+        const mine = deviceIdRef.current
+        if (active && mine && active !== mine) handleSuperseded()
+      })
+      .subscribe()
+    return () => { try { supabase.removeChannel(ch) } catch (_) {} }
+  }, [socio?.id, handleSuperseded])
 
   // ─── Cargar asignaciones activas del rider ─────────────────
   const refreshAsignaciones = useCallback(async () => {
@@ -363,14 +410,21 @@ export function RiderProvider({ children }) {
         if (!session) {
           setIsOnline(false)
           stopTracking()
+          disarmOfflineBeacon()
           lastPosRef.current = null
           setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión para seguir recibiendo pedidos.')
           try { await supabase.auth.signOut() } catch (_) {}
           return
         }
       } catch (_) { /* sin red: no forzamos logout, reintentamos al siguiente latido */ }
+      // Parte B: mantener fresco el token del beacon de cierre mientras la app esté viva.
+      refreshOfflineBeaconToken()
       const p = lastPosRef.current
-      riderHeartbeat(p ? { latitud: p.latitud, longitud: p.longitud } : {})
+      const hb = await riderHeartbeat(p ? { latitud: p.latitud, longitud: p.longitud } : {})
+      // Single-device: 409 = sesion superada por otro dispositivo → logout.
+      if (hb && hb.ok === false && (hb.data?.error === 'sesion_superada' || hb.error === 'http_409')) {
+        handleSuperseded()
+      }
     }
     beat()
     const id = setInterval(beat, 60_000)
@@ -398,7 +452,7 @@ export function RiderProvider({ children }) {
   // Cleanup global: al desmontar el provider (logout, cambio de árbol) paramos el
   // tracking nativo. Es estado de módulo en riderGeo, así que sin esto el foreground
   // service y el GPS seguirían vivos tras cerrar sesión.
-  useEffect(() => () => { stopTracking() }, [])
+  useEffect(() => () => { stopTracking(); disarmOfflineBeacon() }, [])
 
   const value = useMemo(() => ({
     socio,

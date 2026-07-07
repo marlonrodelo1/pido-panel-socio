@@ -45,6 +45,35 @@ export async function getPlatform() {
 }
 
 /**
+ * Identificador estable del dispositivo, para "un solo dispositivo activo por
+ * socio". En nativo usa @capacitor/device (Device.getId()); en web (o si el plugin
+ * no está) cae a un UUID persistido en localStorage. Cacheado en memoria.
+ */
+let _deviceId = null
+export async function getDeviceId() {
+  if (_deviceId) return _deviceId
+  try {
+    if (await isNativePlatform()) {
+      const mod = await import('@capacitor/device')
+      const info = await mod.Device.getId()
+      const id = info?.identifier || info?.uuid || null
+      if (id) { _deviceId = String(id); return _deviceId }
+    }
+  } catch (_) { /* sin plugin Device → fallback a UUID local */ }
+  try {
+    let id = localStorage.getItem('pidoo_device_id')
+    if (!id) {
+      id = (globalThis.crypto?.randomUUID?.() || ('dev-' + Math.random().toString(36).slice(2) + '-' + Date.now().toString(36)))
+      localStorage.setItem('pidoo_device_id', id)
+    }
+    _deviceId = id
+    return _deviceId
+  } catch (_) {
+    return null
+  }
+}
+
+/**
  * Lazy import de un plugin específico. Cachea para no reimportar.
  * Devuelve null si Capacitor no está disponible o el plugin no se importa.
  */
