@@ -1,5 +1,8 @@
-// crear_reembolso_stripe v12 — verify_jwt + superadmin check.
-// Antes era public sin auth: cualquiera podía emitir reembolsos.
+// crear_reembolso_stripe v16 — Idempotency-Key 'refund-<pedido_id>' en el POST a Stripe
+// (cierra el doble-clic simultáneo del superadmin / solape con crons: Stripe devuelve
+// el MISMO refund en vez de emitir dos). Misma key que usan auto-cancelar / rescatar /
+// recuperar / reconciliar.
+// v12: verify_jwt + superadmin check. Antes era public sin auth: cualquiera podía emitir reembolsos.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -17,7 +20,7 @@ interface StripeRefundResponse {
   error?: { message: string }
 }
 
-async function crearReembolsoStripe(paymentIntentId: string, amount?: number): Promise<StripeRefundResponse> {
+async function crearReembolsoStripe(paymentIntentId: string, amount?: number, idemKey?: string): Promise<StripeRefundResponse> {
   const secretKey = Deno.env.get('STRIPE_SECRET_KEY')
   if (!secretKey) throw new Error('STRIPE_SECRET_KEY not configured')
 
@@ -26,9 +29,12 @@ async function crearReembolsoStripe(paymentIntentId: string, amount?: number): P
   params.append('payment_intent', paymentIntentId)
   if (amount) params.append('amount', Math.round(amount * 100).toString())
 
+  const headers: Record<string, string> = { Authorization: `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded' }
+  if (idemKey) headers['Idempotency-Key'] = idemKey
+
   const response = await fetch('https://api.stripe.com/v1/refunds', {
     method: 'POST',
-    headers: { Authorization: `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers,
     body: params.toString(),
   })
   const result = await response.json()
@@ -86,7 +92,7 @@ serve(async (req: Request) => {
       return Response.json({ error: 'Pedido sin payment_id' }, { status: 400, headers: CORS })
     }
 
-    const refund = await crearReembolsoStripe(pedido.stripe_payment_id, pedido.total)
+    const refund = await crearReembolsoStripe(pedido.stripe_payment_id, pedido.total, `refund-${pedido_id}`)
     if (!refund.id) throw new Error('No refund ID returned from Stripe')
 
     const { error: updateError } = await supabaseAdmin
