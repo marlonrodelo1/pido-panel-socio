@@ -122,6 +122,11 @@ export function RiderProvider({ children }) {
   // gesto del usuario en la app (cualquier toque).
   useEffect(() => { installPedidoSoundUnlock() }, [])
 
+  // true mientras rider-online (el RECLAMO del dispositivo) está en vuelo. El latido
+  // no debe correr en ese hueco: llegaría con el candado del dispositivo anterior y
+  // provocaría un 409 sesion_superada espurio (logout). Regresión del 10-jul.
+  const claimPendingRef = useRef(false)
+
   const setOnline = async (next) => {
     // Mutex: si ya hay un cambio de estado en vuelo, ignoramos el segundo tap
     // (posiblemente desde otro toggle en otra pantalla). Evita que un online y un
@@ -138,21 +143,18 @@ export function RiderProvider({ children }) {
       if (!consent) { setIsOnline(false); togglingRef.current = false; return { ok: false, declined: true } }
       const granted = await requestLocationPermission()
       setNeedsLocation(!granted)
-      // UI INSTANTÁNEA: pintamos "En línea" YA, sin esperar al primer fix de GPS
-      // (que tarda 1-3s) ni al ida-y-vuelta de la edge. Todo eso corre en segundo plano.
+      // UI INSTANTÁNEA: pintamos "En línea" YA. GPS y edge corren en segundo plano.
+      // claimPendingRef silencia el latido hasta que rider-online reclame el dispositivo.
+      claimPendingRef.current = true
       setIsOnline(true)
       ;(async () => {
         try {
-          let pos = null
-          if (granted) {
-            try { pos = await getCurrentPosition() } catch (_) {}
-            if (pos) lastPosRef.current = pos
-          }
-          const res = await riderOnline({
-            latitud: pos?.latitud,
-            longitud: pos?.longitud,
-            accuracy: pos?.accuracy,
-          })
+          // 1) RECLAMAR PRIMERO, sin esperar al GPS: la edge acepta sin coordenadas y
+          //    estampa last_location_at (cuenta como señal fresca para el dispatcher).
+          //    Si esperásemos al primer fix (1-3s), el latido inmediato correría con el
+          //    candado del dispositivo anterior → 409 sesion_superada → logout espurio.
+          const res = await riderOnline({})
+          claimPendingRef.current = false
           if (!res.ok) {
             // La edge falló de verdad (red/sesión) → revertimos el online optimista.
             setIsOnline(false)
@@ -164,12 +166,18 @@ export function RiderProvider({ children }) {
             }
             return
           }
-          if (granted) startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
+          // 2) GPS después: primer fix + tracking continuo + push inmediato de posición.
+          if (granted) {
+            try { const pos = await getCurrentPosition(); if (pos) lastPosRef.current = pos } catch (_) {}
+            startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
+            captureAndPush()
+          }
           // Parte B: armar el beacon de cierre + pedir exención de batería una sola vez.
           armOfflineBeacon()
           try { if (localStorage.getItem('pidoo_batt_asked') !== '1') { localStorage.setItem('pidoo_batt_asked', '1'); requestBatteryExemption() } } catch (_) {}
           refreshSocio?.()
         } finally {
+          claimPendingRef.current = false
           // El mutex se mantiene durante todo el trabajo de fondo (evita que un tap de
           // offline entre a medias) y se libera aquí al terminar.
           togglingRef.current = false
@@ -412,6 +420,9 @@ export function RiderProvider({ children }) {
     if (!isOnline) return
     // Latido inmediato al ponerse online + cada 60s.
     const beat = async () => {
+      // No latir mientras el reclamo del dispositivo (rider-online) está en vuelo:
+      // el candado aún puede ser del dispositivo anterior → 409 espurio → logout.
+      if (claimPendingRef.current) return
       // Comprobación de sesión: si el refresh token está muerto (caducado/revocado),
       // el latido fallaría con 401 y el cron acabaría marcando al socio offline en
       // silencio, dejándolo sin pedidos con la UI diciendo "En línea". Lo detectamos
