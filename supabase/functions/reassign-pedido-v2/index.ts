@@ -1,13 +1,15 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 
-// reassign-pedido-v2 — reasigna un pedido cuya asignacion expiro (llamada por el
-// cron reassign-timeout-pedidos-v2). Endurecida: exige x-cron-secret o la service
-// role key, y no re-despacha pedidos ya resueltos. Helpers _shared inlineados para
-// un despliegue autonomo de un solo fichero.
+// reassign-pedido-v2 — reasigna un pedido cuya asignacion expiro (llamada por el cron
+// dispatcher-cada-minuto a los 150s, o por rider-reject-order al rechazar).
+// v8 (10-jul-2026): la TERMINACION la decide ahora el dispatcher (create-shipday-order v51,
+//   round-robin de 2 vueltas). Esta funcion solo: marca la asignacion expirada como 'timeout'
+//   y vuelve a llamar al dispatcher, que decide si asigna al siguiente rider o, si ya se
+//   agotaron las 2 vueltas, marca no_rider (con sus avisos a superadmin/restaurante/cliente).
+//   Se quito el tope fijo de 3 intentos (MAX_INTENTOS) y el bloque de avisos duplicado.
+// Auth: exige x-cron-secret o la service role key en Bearer. No re-despacha pedidos ya resueltos.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const MAX_INTENTOS = 3
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,8 +27,6 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return jsonResponse({ error: 'method_not_allowed' }, 405)
 
-  // Autorizacion: invocada server-side (cron / proxy). Se acepta el cron-secret o
-  // la service role key en el Authorization. Sin uno de los dos => 401.
   const cronSecret = req.headers.get('x-cron-secret') || ''
   const expected = Deno.env.get('CRON_SECRET') || ''
   const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
@@ -39,7 +39,7 @@ serve(async (req) => {
   if (!body.pedido_id) return jsonResponse({ error: 'pedido_id_required' }, 400)
   const sb = adminClient()
   const { data: pedido } = await sb.from('pedidos')
-    .select('id, intento_asignacion, establecimiento_id, estado')
+    .select('id, codigo, estado, shipday_status')
     .eq('id', body.pedido_id).maybeSingle()
   if (!pedido) return jsonResponse({ error: 'pedido_not_found' }, 404)
 
@@ -47,21 +47,18 @@ serve(async (req) => {
   if (['entregado', 'cancelado', 'recogido', 'en_camino'].includes(pedido.estado)) {
     return jsonResponse({ ok: false, reason: 'estado_no_reasignable', estado: pedido.estado })
   }
-
-  if ((pedido.intento_asignacion || 0) >= MAX_INTENTOS) {
-    await sb.from('pedidos').update({ shipday_status: 'no_rider' }).eq('id', pedido.id)
-    try {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-      await fetch(`${supabaseUrl}/functions/v1/enviar_push`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
-        body: JSON.stringify({ user_type: 'superadmin', title: 'Pedido sin rider', body: `${pedido.id} agoto los ${MAX_INTENTOS} intentos`, data: { tipo: 'no_rider', pedido_id: pedido.id } }),
-      })
-    } catch (_) {}
-    return jsonResponse({ ok: false, reason: 'max_intentos' })
+  // Si la asignacion ya fue aceptada (o el pedido ya no espera rider), no hay nada que reasignar.
+  if (pedido.shipday_status !== 'created') {
+    return jsonResponse({ ok: false, reason: 'ya_resuelto', shipday_status: pedido.shipday_status })
   }
+
+  // Marca la asignacion expirada como timeout (cuenta como una oferta gastada para el
+  // round-robin) y deja paso a una nueva asignacion.
   await sb.from('pedido_asignaciones').update({ estado: 'timeout', resolved_at: new Date().toISOString() })
     .eq('pedido_id', pedido.id).eq('estado', 'esperando_aceptacion')
+
+  // El dispatcher (via dispatch-order) elige el siguiente rider de la vuelta o, si ya se
+  // agotaron las 2 vueltas, marca no_rider con sus avisos.
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!
   const r = await fetch(`${supabaseUrl}/functions/v1/dispatch-order`, {
     method: 'POST',

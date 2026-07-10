@@ -254,27 +254,46 @@ export default function Restaurantes({ onOpenRestaurante }) {
     if (!modalAlta) return
     const m = modalAlta
     setModalAlta(s => ({ ...s, loading: true, error: null }))
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const r = await fetch(`${FUNCTIONS_URL}/socio-crear-restaurante`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({
-          nombre: m.nombre.trim(),
-          email: m.email.trim(),
-          telefono: m.telefono.trim() || null,
-          direccion: m.direccion.trim(),
-          latitud: m.latitud,
-          longitud: m.longitud,
-        }),
-      })
-      const data = await r.json().catch(() => ({}))
-      if (!r.ok || !data?.ok) throw new Error(data?.message || data?.error || `Error (${r.status})`)
-      setModalAlta(s => s ? ({ ...s, loading: false, success: { email: m.email.trim(), email_enviado: !!data.email_enviado } }) : null)
-      await load()
-    } catch (e) {
-      setModalAlta(s => s ? ({ ...s, loading: false, error: e.message }) : null)
+    const payload = {
+      nombre: m.nombre.trim(),
+      email: m.email.trim(),
+      telefono: m.telefono.trim() || null,
+      direccion: m.direccion.trim(),
+      latitud: m.latitud,
+      longitud: m.longitud,
     }
+    // Reintento automático en fallos transitorios (red / 5xx / arranque en frío de la
+    // edge). Es seguro porque socio-crear-restaurante v2 es idempotente: un reintento
+    // sobre un alta ya creada devuelve ok (ya_existia). Los errores 4xx (validación,
+    // límite, email en uso) son deterministas → se muestran sin reintentar.
+    const MAX = 3
+    let ultimoError = null
+    for (let intento = 1; intento <= MAX; intento++) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const r = await fetch(`${FUNCTIONS_URL}/socio-crear-restaurante`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+          body: JSON.stringify(payload),
+        })
+        const data = await r.json().catch(() => ({}))
+        if (r.ok && data?.ok) {
+          setModalAlta(s => s ? ({ ...s, loading: false, success: { email: m.email.trim(), email_enviado: !!data.email_enviado } }) : null)
+          await load()
+          return
+        }
+        if (r.status >= 400 && r.status < 500) {
+          // Error determinista: no reintentar
+          setModalAlta(s => s ? ({ ...s, loading: false, error: data?.message || data?.error || `Error (${r.status})` }) : null)
+          return
+        }
+        ultimoError = new Error(data?.message || data?.error || `Error (${r.status})`)
+      } catch (e) {
+        ultimoError = e // error de red → reintentar
+      }
+      if (intento < MAX) await new Promise(res => setTimeout(res, 700 * intento))
+    }
+    setModalAlta(s => s ? ({ ...s, loading: false, error: ultimoError?.message || 'No se pudo crear el restaurante. Inténtalo de nuevo.' }) : null)
   }
 
   // Categorías disponibles (derivadas del tipo de los restaurantes buscables).

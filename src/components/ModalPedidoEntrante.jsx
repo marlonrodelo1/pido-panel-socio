@@ -1,7 +1,9 @@
 // ModalPedidoEntrante — Overlay full-screen cuando llega una asignación pendiente.
-// Countdown 90s (ALINEADO con el cron reassign-timeout-pedidos-v2, que reasigna a los 90s
+// Countdown 150s / 2:30 (ALINEADO con el cron de reasignación, que reasigna a los 150s
 // de assigned_at — un countdown más largo enseñaba al rider pedidos ya reasignados),
 // sonido + vibración, botones Aceptar / Rechazar.
+// v51 (jul-2026): round-robin de 2 vueltas. Banner "responsable" (1ª asignación a R1) y
+// "última vuelta" (2ª vuelta) leídos de asignacion.es_responsable / asignacion.vuelta.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bike, MapPin, Clock, Phone } from 'lucide-react'
 import { useRider } from '../context/RiderContext'
@@ -10,8 +12,8 @@ import { supabase } from '../lib/supabase'
 import { colors } from '../lib/uiStyles'
 import { calcGanancia } from '../lib/ganancia'
 
-// 90s = ventana real del cron de reasignación (jobid 16: assigned_at < now() - 90s).
-const COUNTDOWN_SECONDS = 90
+// 150s (2:30) = ventana real del cron de reasignación (assigned_at < now() - 150s).
+const COUNTDOWN_SECONDS = 150
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
 export default function ModalPedidoEntrante() {
@@ -124,6 +126,11 @@ export default function ModalPedidoEntrante() {
   const ganancia = calcGanancia(pedido)
   const isDelivery = pedido.modo_entrega === 'delivery'
 
+  // v51 round-robin: vuelta (1|2) y si este socio es el responsable (R1) del pedido.
+  const vuelta = asignacionPendiente.vuelta || 1
+  const esResponsable = !!asignacionPendiente.es_responsable
+  const esUltimaVuelta = vuelta >= 2
+
   const mins = Math.floor(secondsLeft / 60)
   const secs = secondsLeft % 60
   const timeStr = `${mins}:${String(secs).padStart(2, '0')}`
@@ -207,6 +214,37 @@ export default function ModalPedidoEntrante() {
         animation: 'slideUp 0.25s ease',
       }}>
         <style>{`@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
+
+        {/* v51/v52: 3 avisos segun round-robin. Prioridad: ultima vuelta + responsable >
+            ultima vuelta > responsable (primera asignacion). */}
+        {esUltimaVuelta && esResponsable ? (
+          <div style={{
+            borderRadius: 12, padding: '11px 13px',
+            background: colors.warningSoft, color: colors.warning,
+            fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+            border: `1px solid ${colors.warning}`,
+          }}>
+            Última vuelta y eres el responsable. Si no lo aceptas, el pedido se cancela y TÚ asumes el coste de la comida.
+          </div>
+        ) : esUltimaVuelta ? (
+          <div style={{
+            borderRadius: 12, padding: '11px 13px',
+            background: colors.warningSoft, color: colors.warning,
+            fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+            border: `1px solid ${colors.warning}`,
+          }}>
+            Última vuelta. Si nadie lo acepta, el pedido se cancelará.
+          </div>
+        ) : esResponsable ? (
+          <div style={{
+            borderRadius: 12, padding: '11px 13px',
+            background: colors.infoSoft, color: colors.info,
+            fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+            border: `1px solid ${colors.info}`,
+          }}>
+            Eres el primer asignado: eres el responsable de este pedido.
+          </div>
+        ) : null}
 
         {/* MINI-MAPA: recogida (terracotta) + entrega (verde). Oculto si falta key/coords. */}
         {mapaUrl && (

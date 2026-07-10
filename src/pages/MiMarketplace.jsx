@@ -3,6 +3,14 @@ import { useSocio } from '../context/SocioContext'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type } from '../lib/uiStyles'
 import { getPlugin, isNativePlatform } from '../lib/capacitor'
+import StatCard from '../components/StatCard'
+
+// Helpers de fecha — mismos que Dashboard.jsx / Ganancias.jsx
+function startOfDay() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
+function startOfWeek() { const d = startOfDay(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return d }
+function startOfMonth() { const d = startOfDay(); d.setDate(1); return d }
+function endOfToday() { const d = startOfDay(); d.setDate(d.getDate() + 1); return d }
+function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
 
 export default function MiMarketplace() {
   const { socio, updateSocio, refreshSocio } = useSocio()
@@ -16,7 +24,6 @@ export default function MiMarketplace() {
     descripcion: socio?.descripcion || '',
     logo_url: socio?.logo_url || '',
     banner_url: socio?.banner_url || '',
-    color_primario: socio?.color_primario || '#C5562C',
     instagram: socio?.redes?.instagram || '',
     tiktok: socio?.redes?.tiktok || '',
     web: socio?.redes?.web || '',
@@ -30,6 +37,12 @@ export default function MiMarketplace() {
   const [slugStatus, setSlugStatus] = useState('idle') // idle|short|checking|ok|taken|invalid
   const [creandoTienda, setCreandoTienda] = useState(false)
 
+  // Ganancias SOLO del marketplace propio del socio (origen_pedido='marketplace_socio').
+  const [gmHoy, setGmHoy] = useState(null)
+  const [gmSemana, setGmSemana] = useState(null)
+  const [gmMes, setGmMes] = useState(null)
+  const [gmLoading, setGmLoading] = useState(true)
+
   useEffect(() => {
     if (!socio) return
     setForm({
@@ -37,7 +50,6 @@ export default function MiMarketplace() {
       descripcion: socio.descripcion || '',
       logo_url: socio.logo_url || '',
       banner_url: socio.banner_url || '',
-      color_primario: socio.color_primario || '#C5562C',
       instagram: socio.redes?.instagram || '',
       tiktok: socio.redes?.tiktok || '',
       web: socio.redes?.web || '',
@@ -101,6 +113,31 @@ export default function MiMarketplace() {
   }
 
   useEffect(() => { loadRestaurantes() }, [socio?.id])
+
+  // Carga las ganancias generadas SOLO por el marketplace del socio (Hoy/Semana/Mes).
+  // get_ganancias_marketplace_socio_rango deriva el socio de auth.uid() y filtra
+  // origen_pedido='marketplace_socio'. Sera 0 hasta el primer pedido real que entre
+  // por pidoo.es/s/<slug>.
+  useEffect(() => {
+    if (!socio?.id) return
+    let cancel = false
+    ;(async () => {
+      setGmLoading(true)
+      try {
+        const finIso = endOfToday().toISOString()
+        const rango = (desde) => supabase.rpc('get_ganancias_marketplace_socio_rango', { p_desde: desde.toISOString(), p_hasta: finIso })
+        const [rHoy, rSem, rMes] = await Promise.all([rango(startOfDay()), rango(startOfWeek()), rango(startOfMonth())])
+        if (cancel) return
+        const pick = (r) => { if (r.error) return null; const row = Array.isArray(r.data) ? r.data[0] : r.data; return row || { total: 0, pedidos_count: 0 } }
+        setGmHoy(pick(rHoy)); setGmSemana(pick(rSem)); setGmMes(pick(rMes))
+      } catch (e) {
+        console.error(e)
+        if (!cancel) { setGmHoy(null); setGmSemana(null); setGmMes(null) }
+      }
+      if (!cancel) setGmLoading(false)
+    })()
+    return () => { cancel = true }
+  }, [socio?.id])
 
   const toggleDestacado = async (link) => {
     const siguiente = !link.destacado
@@ -224,7 +261,6 @@ export default function MiMarketplace() {
         descripcion: form.descripcion,
         logo_url: form.logo_url || null,
         banner_url: form.banner_url || null,
-        color_primario: form.color_primario,
         radio_marketplace_km: radioFinal,
         redes: {
           instagram: form.instagram || null,
@@ -332,6 +368,32 @@ export default function MiMarketplace() {
 
       {socio?.slug && (<>
       <div style={{ ...ds.card, marginBottom: 16 }}>
+        <h2 style={ds.h2}>Ganado por tu marketplace</h2>
+        <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: -6, marginBottom: 14, lineHeight: 1.5 }}>
+          Solo las ventas que entran por tu tienda pública (pidoo.es/s/{socio.slug}). No incluye lo que ganas repartiendo pedidos de otros canales.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12 }}>
+          <StatCard
+            label="Hoy"
+            value={gmLoading ? '…' : gmHoy == null ? '—' : euro(gmHoy.total)}
+            sub={gmHoy == null ? 'sin datos' : `${gmHoy.pedidos_count} pedido${gmHoy.pedidos_count !== 1 ? 's' : ''}`}
+          />
+          <StatCard
+            label="Esta semana"
+            value={gmLoading ? '…' : gmSemana == null ? '—' : euro(gmSemana.total)}
+            sub={gmSemana == null ? 'sin datos' : `${gmSemana.pedidos_count} pedido${gmSemana.pedidos_count !== 1 ? 's' : ''}`}
+            tone="sage"
+          />
+          <StatCard
+            label="Este mes"
+            value={gmLoading ? '…' : gmMes == null ? '—' : euro(gmMes.total)}
+            sub={gmMes == null ? 'sin datos' : `${gmMes.pedidos_count} pedido${gmMes.pedidos_count !== 1 ? 's' : ''}`}
+            tone="terracotta"
+          />
+        </div>
+      </div>
+
+      <div style={{ ...ds.card, marginBottom: 16 }}>
         <h2 style={ds.h2}>Branding</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
           <div>
@@ -347,11 +409,6 @@ export default function MiMarketplace() {
             <div style={{ fontSize: 11, color: colors.textMute, marginTop: 4 }}>
               Distancia máxima desde el cliente para mostrar tus restaurantes en {socio?.slug ? `pidoo.es/s/${socio.slug}` : 'tu marketplace'}.
             </div>
-          </div>
-          <div>
-            <label style={ds.label}>Color primario</label>
-            <input type="color" value={form.color_primario} onChange={e => setForm({ ...form, color_primario: e.target.value })}
-              style={{ ...ds.input, padding: 4, cursor: 'pointer' }} />
           </div>
           <div>
             <label style={ds.label}>Logo</label>
