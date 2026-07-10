@@ -14,7 +14,7 @@ android {
         applicationId "com.pidoo.socio"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 285
+        versionCode 286
         versionName "2.7.8"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

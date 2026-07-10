@@ -124,43 +124,56 @@ export function RiderProvider({ children }) {
     if (togglingRef.current) return { ok: false, busy: true }
     togglingRef.current = true
     setActionError(null)
-    try {
-      if (next) {
-        // El consentimiento y el permiso se piden ANTES de marcar la UI como online,
-        // para no mostrar "En línea" mientras el modal de disclosure sigue abierto.
-        const consent = await ensureBgConsent()
-        if (!consent) { setIsOnline(false); return { ok: false, declined: true } }
-        const granted = await requestLocationPermission()
-        setNeedsLocation(!granted)
-        let pos = null
-        if (granted) {
-          try { pos = await getCurrentPosition() } catch (_) {}
-          if (pos) lastPosRef.current = pos
-        }
-        setIsOnline(true) // optimista, ya con consentimiento y permiso resueltos
-        const res = await riderOnline({
-          latitud: pos?.latitud,
-          longitud: pos?.longitud,
-          accuracy: pos?.accuracy,
-        })
-        if (!res.ok) {
-          setIsOnline(false)
-          if (res.sessionDead) {
-            setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
-            try { await supabase.auth.signOut() } catch (_) {}
-          } else {
-            setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+    if (next) {
+      // === IR ONLINE (OPTIMISTA) ===
+      // El consentimiento y el permiso se piden ANTES de marcar la UI como online,
+      // para no mostrar "En línea" mientras el modal de disclosure sigue abierto.
+      // Son instantáneos si ya se concedieron.
+      const consent = await ensureBgConsent()
+      if (!consent) { setIsOnline(false); togglingRef.current = false; return { ok: false, declined: true } }
+      const granted = await requestLocationPermission()
+      setNeedsLocation(!granted)
+      // UI INSTANTÁNEA: pintamos "En línea" YA, sin esperar al primer fix de GPS
+      // (que tarda 1-3s) ni al ida-y-vuelta de la edge. Todo eso corre en segundo plano.
+      setIsOnline(true)
+      ;(async () => {
+        try {
+          let pos = null
+          if (granted) {
+            try { pos = await getCurrentPosition() } catch (_) {}
+            if (pos) lastPosRef.current = pos
           }
-          return res
+          const res = await riderOnline({
+            latitud: pos?.latitud,
+            longitud: pos?.longitud,
+            accuracy: pos?.accuracy,
+          })
+          if (!res.ok) {
+            // La edge falló de verdad (red/sesión) → revertimos el online optimista.
+            setIsOnline(false)
+            if (res.sessionDead) {
+              setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+              try { await supabase.auth.signOut() } catch (_) {}
+            } else {
+              setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+            }
+            return
+          }
+          if (granted) startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
+          // Parte B: armar el beacon de cierre + pedir exención de batería una sola vez.
+          armOfflineBeacon()
+          try { if (localStorage.getItem('pidoo_batt_asked') !== '1') { localStorage.setItem('pidoo_batt_asked', '1'); requestBatteryExemption() } } catch (_) {}
+          refreshSocio?.()
+        } finally {
+          // El mutex se mantiene durante todo el trabajo de fondo (evita que un tap de
+          // offline entre a medias) y se libera aquí al terminar.
+          togglingRef.current = false
         }
-        if (granted) startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
-        // Parte B: armar el beacon de cierre (offline instantáneo al cerrar la app) y pedir
-        // la exención de batería una sola vez (para que el SO no mate el proceso de fondo).
-        armOfflineBeacon()
-        try { if (localStorage.getItem('pidoo_batt_asked') !== '1') { localStorage.setItem('pidoo_batt_asked', '1'); requestBatteryExemption() } } catch (_) {}
-        refreshSocio?.()
-        return res
-      } else {
+      })()
+      return { ok: true, optimistic: true }
+    } else {
+      // === IR OFFLINE === (se espera; es rápido, solo la edge)
+      try {
         setIsOnline(false) // optimista
         // OJO: no paramos el tracking hasta confirmar que la desconexión fue OK.
         // Si riderOffline() falla por red, revertimos a online y el GPS/latido deben
@@ -170,8 +183,6 @@ export function RiderProvider({ children }) {
         if (!res.ok) {
           setIsOnline(true)
           if (res.sessionDead) {
-            // Sesión muerta: la app se va a cerrar. Paramos el tracking igualmente
-            // para no dejar el foreground service + GPS huérfanos tras el signOut.
             stopTracking()
             disarmOfflineBeacon()
             lastPosRef.current = null
@@ -188,9 +199,9 @@ export function RiderProvider({ children }) {
         setNeedsLocation(false)
         refreshSocio?.()
         return res
+      } finally {
+        togglingRef.current = false
       }
-    } finally {
-      togglingRef.current = false
     }
   }
 

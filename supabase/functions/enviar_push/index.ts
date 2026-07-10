@@ -1,10 +1,21 @@
-// enviar_push v29 — multi-proyecto FCM.
+// enviar_push v33 — multi-proyecto FCM.
 //  - cliente: proyecto por defecto (pidoo-push, via env FIREBASE_*).
 //  - socio y restaurante: proyecto pidoo-socio, credencial leida de la tabla
 //    fcm_proyectos (user_type='socio', RLS solo service role). Ambas apps
 //    (com.pidoo.socio y com.pidoo.restaurante) estan en el proyecto pidoo-socio.
 //    Si no hay credencial, cae al default.
 // Mantiene el payload reforzado (android/apns/webpush) de v25/v27.
+// v32 (4 jul 2026):
+//  - Soporta target 'superadmin' (user_type: 'superadmin' o target_type: 'superadmin'):
+//    resuelve los user_id con rol superadmin/admin en usuarios y envia SOLO a sus tokens.
+//    Antes ese payload caia en la rama catch-all y se difundia a TODA la plataforma
+//    (clientes incluidos) — bug critico detectado en auditoria del 4 jul.
+//  - La rama final sin target valido ahora devuelve 400 (nunca mas broadcast accidental).
+// v33 (10 jul 2026):
+//  - SONIDO DE PEDIDO EN BACKGROUND para el SOCIO: sus notificaciones usan el canal
+//    Android 'pedidos_sonido' (creado por la app con res/raw/pedido_rider.mp3) + apns
+//    sound 'pedido_rider.caf'. Cliente y restaurante siguen en 'pedidos'/'default' (no
+//    tienen ese canal). El sonido/canal se decide POR suscripcion segun user_type.
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -63,7 +74,7 @@ function stringifyData(data: any): Record<string, string> {
   return out
 }
 
-async function sendFCM(fcmToken: string, title: string, body: string, data: Record<string, string>, creds: Creds): Promise<{ ok: boolean; status: number; error?: string; unregistered?: boolean }> {
+async function sendFCM(fcmToken: string, title: string, body: string, data: Record<string, string>, creds: Creds, channelId: string, androidSound: string, apnsSound: string): Promise<{ ok: boolean; status: number; error?: string; unregistered?: boolean }> {
   const accessToken = await getAccessToken(creds)
   const message = {
     token: fcmToken,
@@ -72,14 +83,14 @@ async function sendFCM(fcmToken: string, title: string, body: string, data: Reco
     android: {
       priority: 'high',
       notification: {
-        sound: 'default', channel_id: 'pedidos', default_sound: true, default_vibrate_timings: false,
+        sound: androidSound, channel_id: channelId, default_sound: androidSound === 'default', default_vibrate_timings: false,
         vibrate_timings: ['0s', '0.5s', '0.2s', '0.5s', '0.2s', '0.5s', '0.2s', '0.5s'],
         notification_priority: 'PRIORITY_MAX', visibility: 'PUBLIC',
       },
     },
     apns: {
       headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
-      payload: { aps: { alert: { title, body }, sound: 'default', badge: 1, 'content-available': 1, 'mutable-content': 1, 'interruption-level': 'time-sensitive' } },
+      payload: { aps: { alert: { title, body }, sound: apnsSound, badge: 1, 'content-available': 1, 'mutable-content': 1, 'interruption-level': 'time-sensitive' } },
     },
     webpush: {
       notification: { title, body, icon: '/favicon.png', requireInteraction: true, vibrate: [500, 200, 500, 200, 500] },
@@ -123,31 +134,55 @@ serve(async (req) => {
     } catch (_) {}
 
     const reqBody = await req.json()
-    const { target_type, target_id, title, body, data, user_ids } = reqBody
+    const { target_type, target_id, title, body, data, user_ids, user_type } = reqBody
     const safeData = stringifyData(data)
-    await dbgLog(supabase, 'received', { user_ids, target_type, target_id, title })
+    await dbgLog(supabase, 'received', { user_ids, target_type, target_id, user_type, title })
     if (target_type === 'cliente' && target_id) {
       try { await supabase.rpc('claim_orphan_push_tokens_for', { p_user_id: target_id, p_user_type: 'cliente' }) } catch (_) {}
     }
+
+    // v32: target 'superadmin' — tokens de los usuarios con rol admin/superadmin, sea cual
+    // sea el user_type con el que se registro el dispositivo.
+    let adminIds: string[] | null = null
+    if (user_type === 'superadmin' || target_type === 'superadmin') {
+      const { data: admins } = await supabase.from('usuarios').select('id').in('rol', ['superadmin', 'admin'])
+      adminIds = (admins || []).map((a: any) => a.id)
+      if (adminIds.length === 0) {
+        await dbgLog(supabase, 'superadmin_sin_usuarios', { title })
+        return new Response(JSON.stringify({ sent: 0, total: 0, warning: 'sin_usuarios_superadmin' }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+      }
+    }
+
     let query = supabase.from('push_subscriptions').select('*').not('fcm_token', 'is', null).neq('fcm_token', 'DEBUG').like('endpoint', 'fcm:%')
-    if (Array.isArray(user_ids) && user_ids.length > 0) query = query.in('user_id', user_ids)
+    if (adminIds) query = query.in('user_id', adminIds)
+    else if (Array.isArray(user_ids) && user_ids.length > 0) query = query.in('user_id', user_ids)
     else if (target_type === 'cliente' && target_id) query = query.eq('user_id', target_id).eq('user_type', 'cliente')
     else if (target_type === 'restaurante' && target_id) query = query.eq('establecimiento_id', target_id).eq('user_type', 'restaurante')
     else if (target_type === 'socio' && target_id) query = query.eq('user_id', target_id).eq('user_type', 'socio')
     else if (target_type === 'cliente') query = query.eq('user_type', 'cliente').not('user_id', 'is', null)
     else if (target_type === 'restaurante') query = query.eq('user_type', 'restaurante').not('establecimiento_id', 'is', null)
-    else query = query.in('user_type', ['cliente', 'restaurante', 'socio']).or('user_id.not.is.null,establecimiento_id.not.is.null')
+    else {
+      // v32: sin target valido NO se difunde a toda la plataforma (bug 'Pedido sin rider').
+      await dbgLog(supabase, 'target_invalido', { user_ids, target_type, target_id, user_type, title })
+      return new Response(JSON.stringify({ error: 'target_invalido' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
     const { data: subs, error: subsErr } = await query
     if (subsErr) return new Response(JSON.stringify({ error: subsErr.message }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } })
-    if (!subs || subs.length === 0) { await dbgLog(supabase, 'no_subs', { user_ids, target_type, target_id }); return new Response(JSON.stringify({ sent: 0, total: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } }) }
+    if (!subs || subs.length === 0) { await dbgLog(supabase, 'no_subs', { user_ids, target_type, target_id, user_type }); return new Response(JSON.stringify({ sent: 0, total: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } }) }
     const uniq = new Map<string, any>()
     for (const s of subs) { if (s.fcm_token && !uniq.has(s.fcm_token)) uniq.set(s.fcm_token, s) }
     const uniqueSubs = Array.from(uniq.values())
     const results = await Promise.all(
       uniqueSubs.map(async (sub) => {
         const creds = ((sub.user_type === 'socio' || sub.user_type === 'restaurante') && socioCreds) ? socioCreds : DEFAULT_CREDS
+        // v33: el SOCIO recibe el sonido de pedido (canal 'pedidos_sonido' + res/raw/pedido_rider).
+        // Cliente/restaurante siguen en 'pedidos'/'default' (no tienen ese canal).
+        const esSocio = sub.user_type === 'socio'
+        const channelId = esSocio ? 'pedidos_sonido' : 'pedidos'
+        const androidSound = esSocio ? 'pedido_rider' : 'default'
+        const apnsSound = esSocio ? 'pedido_rider.caf' : 'default'
         try {
-          const r = await sendFCM(sub.fcm_token, title, body, safeData, creds)
+          const r = await sendFCM(sub.fcm_token, title, body, safeData, creds, channelId, androidSound, apnsSound)
           if (r.ok) await dbgLog(supabase, 'fcm_ok', { token: sub.fcm_token.slice(0, 16), proj: creds.project_id })
           else await dbgLog(supabase, 'fcm_fail', { token: sub.fcm_token.slice(0, 16), proj: creds.project_id, status: r.status, error: (r.error || '').slice(0, 600) })
           return { id: sub.id, ok: r.ok, unregistered: r.unregistered }

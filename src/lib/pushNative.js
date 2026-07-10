@@ -69,17 +69,27 @@ export async function registerSocioPushNative(userId) {
     return { ok: false, reason: 'perm_error', error: e?.message }
   }
 
-  // Crear canal Android "pedidos" con prioridad MAX (vibra + sonido sistema)
+  // Canal Android "pedidos_sonido" con prioridad MAX y el SONIDO DE PEDIDO
+  // (res/raw/pedido_rider.mp3) — el mismo chime que suena en la app abierta. En Android
+  // O+ el sonido lo fija el CANAL (no el payload), y los canales son inmutables, por eso
+  // es un id nuevo. enviar_push enruta los pushes del socio a este canal.
+  // Mantenemos también el canal viejo "pedidos" por compatibilidad.
   try {
     await Push.createChannel?.({
-      id: 'pedidos',
+      id: 'pedidos_sonido',
       name: 'Pedidos entrantes',
-      description: 'Notificaciones de nuevos pedidos asignados',
+      description: 'Nuevos pedidos asignados (con sonido de pedido)',
       importance: 5, // MAX
       visibility: 1, // PUBLIC
       vibration: true,
       lights: true,
-      sound: 'default',
+      sound: 'pedido_rider', // res/raw/pedido_rider.mp3 (sin extensión)
+    })
+    await Push.createChannel?.({
+      id: 'pedidos',
+      name: 'Pedidos (antiguo)',
+      description: 'Canal antiguo de pedidos',
+      importance: 5, visibility: 1, vibration: true, lights: true, sound: 'default',
     })
   } catch (_) { /* iOS no soporta channels, ignorar */ }
 
