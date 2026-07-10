@@ -196,9 +196,9 @@ serve(async (req) => {
         const esSocio = sub.user_type === 'socio'
         const channelId = esSocio ? 'pedidos_sonido' : 'pedidos'
         const androidSound = esSocio ? 'pedido_rider' : 'default'
-        // v34: en iOS un sound inexistente NO suena nada; hasta que pedido_rider.caf
-        // este en el bundle de la app iOS, usamos 'default' (suena seguro).
-        const apnsSound = 'default' // TODO: 'pedido_rider.caf' cuando el .caf este en el build iOS
+        // v36: el bundle iOS ya lleva pedido_rider.caf (build 28+, confirmado con el
+        // 2.7.8 (29) instalado) -> chime custom tambien en iPhone.
+        const apnsSound = esSocio ? 'pedido_rider.caf' : 'default'
         try {
           const r = await sendFCM(sub.fcm_token, title, body, safeData, creds, channelId, androidSound, apnsSound)
           if (r.ok) await dbgLog(supabase, 'fcm_ok', { token: sub.fcm_token.slice(0, 16), proj: creds.project_id })
