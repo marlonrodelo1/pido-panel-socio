@@ -29,6 +29,7 @@ export default function Ganancias() {
   const [mes, setMes] = useState(null)
   const [porCobrar, setPorCobrar] = useState({ total: null, pedidos: 0 })
   const [porRestaurante, setPorRestaurante] = useState([])
+  const [cargos, setCargos] = useState([])
 
   useEffect(() => {
     if (!socio?.id) return
@@ -41,12 +42,15 @@ export default function Ganancias() {
           supabase.rpc('get_ganancias_socio_rango', { p_desde: desde.toISOString(), p_hasta: finIso })
 
         // Las RPC derivan el socio de auth.uid() — no se pasa socio_id.
-        const [rHoy, rSem, rMes, rCobrar, rPorRest] = await Promise.all([
+        const [rHoy, rSem, rMes, rCobrar, rPorRest, rCargos] = await Promise.all([
           rango(startOfDay()),
           rango(startOfWeek()),
           rango(startOfMonth()),
           supabase.rpc('get_por_cobrar_socio'),
           supabase.rpc('get_socio_por_cobrar_restaurantes'),
+          supabase.from('cargos_socio')
+            .select('id, monto, concepto, estado, created_at, establecimientos(nombre), pedidos(codigo)')
+            .eq('estado', 'pendiente').order('created_at', { ascending: false }),
         ])
 
         if (cancel) return
@@ -66,6 +70,7 @@ export default function Ganancias() {
           pedidos: pcRow?.pedidos ?? 0,
         })
         setPorRestaurante(rPorRest.data || [])
+        setCargos(rCargos.error ? [] : (rCargos.data || []))
       } catch (e) {
         console.error(e)
         if (!cancel) { setHoy(null); setSemana(null); setMes(null) }
@@ -207,6 +212,39 @@ export default function Ganancias() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Mis cargos: compensaciones por pedidos que no se entregaron (2 vueltas sin aceptar) */}
+      {cargos.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{
+            fontSize: type.xxs, fontWeight: 700, color: colors.textMute,
+            letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10,
+          }}>
+            Cargos por pedidos no entregados
+          </div>
+          <div style={{ ...ds.card, padding: 16 }}>
+            <div style={{ fontSize: type.xs, color: colors.textFaint, lineHeight: 1.5, marginBottom: 8 }}>
+              Si un pedido se cancela porque nadie lo aceptó y tú eras el primer repartidor asignado, asumes el 80% del subtotal (compensación al restaurante). Se descuenta de lo que te pagan.
+            </div>
+            {cargos.map((c) => (
+              <div key={c.id} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                padding: '10px 0', borderTop: `1px solid ${colors.border}`,
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: type.sm, color: colors.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {c.establecimientos?.nombre || 'Restaurante'}
+                  </div>
+                  <div style={{ fontSize: type.xxs, color: colors.textMute, marginTop: 2 }}>{c.pedidos?.codigo || ''}</div>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: colors.danger, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                  −{euro(c.monto)}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
