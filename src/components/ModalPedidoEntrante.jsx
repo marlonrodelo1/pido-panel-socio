@@ -11,6 +11,7 @@ import { riderAcceptOrder, riderRejectOrder } from '../lib/riderApi'
 import { supabase } from '../lib/supabase'
 import { colors } from '../lib/uiStyles'
 import { calcGanancia } from '../lib/ganancia'
+import { getPedidoAudio } from '../lib/pedidoSound'
 
 // 150s (2:30) = ventana real del cron de reasignación (assigned_at < now() - 150s).
 const COUNTDOWN_SECONDS = 150
@@ -41,12 +42,16 @@ export default function ModalPedidoEntrante() {
     // timeout (secondsLeft=0) cerrará la asignación inmediatamente.
     if (restante <= 0) return
 
-    // Sonido loop
+    // Sonido loop — instancia COMPARTIDA y desbloqueada con el primer gesto del
+    // usuario (iOS bloquea autoplay sin gesto; ver lib/pedidoSound). Antes se creaba
+    // un new Audio() aquí y en iOS quedaba mudo siempre.
     try {
-      audioRef.current = new Audio('/sounds/pedido-rider.mp3')
-      audioRef.current.loop = true
-      audioRef.current.volume = 0.85
-      audioRef.current.play().catch(() => { /* user gesture pendiente */ })
+      const a = getPedidoAudio()
+      if (a) {
+        audioRef.current = a
+        a.currentTime = 0
+        a.play().catch(() => { /* autoplay bloqueado: falta el primer gesto */ })
+      }
     } catch (_) {}
 
     // Vibración rítmica repetida mientras el modal esté abierto (cada 3s) para que

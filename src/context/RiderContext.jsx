@@ -22,6 +22,7 @@ import { startTracking, stopTracking, getCurrentPosition, requestLocationPermiss
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
 import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption } from '../lib/offlineBeacon'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
+import { installPedidoSoundUnlock } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
@@ -117,6 +118,10 @@ export function RiderProvider({ children }) {
   // GPS es BEST-EFFORT: si falta, NO bloqueamos ni revertimos el online — la edge
   // pone en_servicio aunque no haya coordenadas y avisamos con `needsLocation`
   // (banner en RiderEsperando). Solo revertimos si la edge falla de verdad (red).
+  // iOS bloquea el autoplay del sonido del modal: desbloquearlo con el primer
+  // gesto del usuario en la app (cualquier toque).
+  useEffect(() => { installPedidoSoundUnlock() }, [])
+
   const setOnline = async (next) => {
     // Mutex: si ya hay un cambio de estado en vuelo, ignoramos el segundo tap
     // (posiblemente desde otro toggle en otra pantalla). Evita que un online y un

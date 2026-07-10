@@ -13,9 +13,12 @@
 //  - La rama final sin target valido ahora devuelve 400 (nunca mas broadcast accidental).
 // v33 (10 jul 2026):
 //  - SONIDO DE PEDIDO EN BACKGROUND para el SOCIO: sus notificaciones usan el canal
-//    Android 'pedidos_sonido' (creado por la app con res/raw/pedido_rider.mp3) + apns
-//    sound 'pedido_rider.caf'. Cliente y restaurante siguen en 'pedidos'/'default' (no
-//    tienen ese canal). El sonido/canal se decide POR suscripcion segun user_type.
+//    Android 'pedidos_sonido' (creado por la app con res/raw/pedido_rider.mp3).
+// v34 (10 jul 2026):
+//  - iOS: apns sound vuelve a 'default'. El bundle iOS AUN no lleva pedido_rider.caf
+//    (paso manual en la Mac) y en iOS un sonido inexistente = SILENCIO TOTAL (bug
+//    detectado en prueba real con deltafood). Cuando el .caf este en el build,
+//    cambiar a 'pedido_rider.caf'. Android mantiene el custom (res/raw, app v286+).
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -180,7 +183,9 @@ serve(async (req) => {
         const esSocio = sub.user_type === 'socio'
         const channelId = esSocio ? 'pedidos_sonido' : 'pedidos'
         const androidSound = esSocio ? 'pedido_rider' : 'default'
-        const apnsSound = esSocio ? 'pedido_rider.caf' : 'default'
+        // v34: en iOS un sound inexistente NO suena nada; hasta que pedido_rider.caf
+        // este en el bundle de la app iOS, usamos 'default' (suena seguro).
+        const apnsSound = 'default' // TODO: 'pedido_rider.caf' cuando el .caf este en el build iOS
         try {
           const r = await sendFCM(sub.fcm_token, title, body, safeData, creds, channelId, androidSound, apnsSound)
           if (r.ok) await dbgLog(supabase, 'fcm_ok', { token: sub.fcm_token.slice(0, 16), proj: creds.project_id })
