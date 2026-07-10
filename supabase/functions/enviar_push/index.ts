@@ -19,6 +19,11 @@
 //    (paso manual en la Mac) y en iOS un sonido inexistente = SILENCIO TOTAL (bug
 //    detectado en prueba real con deltafood). Cuando el .caf este en el build,
 //    cambiar a 'pedido_rider.caf'. Android mantiene el custom (res/raw, app v286+).
+// v35 (10 jul 2026):
+//  - DEDUP DE TOKENS DEL SOCIO: a un socio se le envia SOLO a su token fcm MAS
+//    RECIENTE (por user_id). Los logins/reinstalls acumulaban tokens viejos vivos y
+//    el mismo pedido llegaba 3 veces al mismo movil (visto en prueba real). Coherente
+//    con la politica de un-solo-dispositivo por socio. Cliente/restaurante sin cambio.
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -174,7 +179,15 @@ serve(async (req) => {
     if (!subs || subs.length === 0) { await dbgLog(supabase, 'no_subs', { user_ids, target_type, target_id, user_type }); return new Response(JSON.stringify({ sent: 0, total: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } }) }
     const uniq = new Map<string, any>()
     for (const s of subs) { if (s.fcm_token && !uniq.has(s.fcm_token)) uniq.set(s.fcm_token, s) }
-    const uniqueSubs = Array.from(uniq.values())
+    let uniqueSubs = Array.from(uniq.values())
+    // v35: single-device para socios — solo el token MAS RECIENTE por usuario socio.
+    const newestSocio = new Map<string, any>()
+    for (const s of uniqueSubs) {
+      if (s.user_type !== 'socio' || !s.user_id) continue
+      const prev = newestSocio.get(s.user_id)
+      if (!prev || new Date(s.created_at) > new Date(prev.created_at)) newestSocio.set(s.user_id, s)
+    }
+    uniqueSubs = uniqueSubs.filter((s) => s.user_type !== 'socio' || !s.user_id || newestSocio.get(s.user_id)?.id === s.id)
     const results = await Promise.all(
       uniqueSubs.map(async (sub) => {
         const creds = ((sub.user_type === 'socio' || sub.user_type === 'restaurante') && socioCreds) ? socioCreds : DEFAULT_CREDS
