@@ -3,6 +3,8 @@
 // Fórmula acordada (por pedido):
 //   - delivery: coste_envio + 10% del subtotal + propina
 //   - recogida: 10% del subtotal
+//   - TELEFÓNICO (origen_pedido='telefonico', creado por el restaurante desde su
+//     panel): SOLO coste_envio + propina, sin % del subtotal.
 // El 10% es la comisión del socio sobre el subtotal.
 // El envío y la propina solo aplican en delivery.
 
@@ -14,13 +16,13 @@ function round2(n) {
 }
 
 // calcGanancia(pedido) → { envio, comision, propina, total }
-// Lee: pedido.modo_entrega, pedido.subtotal, pedido.coste_envio, pedido.propina
+// Lee: pedido.modo_entrega, pedido.origen_pedido, pedido.subtotal, pedido.coste_envio, pedido.propina
 export function calcGanancia(pedido) {
   const p = pedido || {}
   const isDelivery = p.modo_entrega === 'delivery'
 
   const subtotal = Number(p.subtotal) || 0
-  const comision = round2(subtotal * COMISION_PCT)
+  const comision = p.origen_pedido === 'telefonico' ? 0 : round2(subtotal * COMISION_PCT)
 
   const envio = isDelivery ? round2(p.coste_envio) : 0
   const propina = isDelivery ? round2(p.propina) : 0

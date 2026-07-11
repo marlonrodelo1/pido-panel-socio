@@ -95,7 +95,7 @@ export default function ModalPedidoEntrante() {
     ;(async () => {
       const { data } = await supabase
         .from('pedidos')
-        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimientos(nombre,direccion,latitud,longitud)')
+        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,origen_pedido,metodo_pago,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimientos(nombre,direccion,latitud,longitud)')
         .eq('id', pedidoId)
         .maybeSingle()
       if (!cancel && data) setPedidoFull(data)

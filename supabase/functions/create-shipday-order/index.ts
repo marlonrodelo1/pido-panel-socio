@@ -1,5 +1,10 @@
 // create-shipday-order — DISPATCHER PROPIO (sin Shipday) desde 20-jun-2026.
 // Asigna el pedido delivery al mejor rider (socio) ONLINE del establecimiento.
+// v53 (11-jul-2026): PEDIDOS TELEFONICOS (origen_pedido='telefonico', creados por el
+//   restaurante via crear-pedido-telefonico). En la terminal de no-cobertura se cancela
+//   igual PERO SIN cargo del 80% al responsable: la comida y el cobro ya son del
+//   restaurante (metodo pagado_local/efectivo propio), cargar al socio sobre-compensaria.
+//   Aviso al restaurante adaptado ("vuelve a crearlo o entregalo por tus medios").
 // v52 (10-jul-2026, Fase 2): al agotar las 2 vueltas se CANCELA el pedido de inmediato
 //   (cancelarPorNoCobertura) y se crea un cargo del 80% del subtotal al socio responsable
 //   (R1) en cargos_socio. El reembolso al cliente (tarjeta) lo emite la red
@@ -13,8 +18,7 @@
 //   pedidos.socio_responsable_id y es el responsable del coste si el pedido acaba cancelado
 //   por no-cobertura (el cobro en si es Fase 2). Cada asignacion guarda su 'vuelta' (1|2) y
 //   'es_responsable' para los avisos de la app. Terminal cuando todos los elegibles llegan a
-//   2 ofertas -> 'agotadas_2_vueltas' (marcarNoRider -> lo cancela/reembolsa el rescatador).
-//   Ventana de aceptacion 150 s (2:30).
+//   2 ofertas -> se cancela y se cobra al responsable. Ventana de aceptacion 150 s (2:30).
 // v50 (5-jul-2026): FRESCURA DE GPS AHORA ES FILTRO DURO. Un socio sin senal reciente
 //   (app cerrada/colgada) NO es asignable aunque siga en_servicio. Umbral MAX_LOC_AGE_MIN 12 min.
 // v48-v49: CANDADO DE AUTENTICACION (cron-secret / service-role / JWT dueno o admin).
@@ -175,8 +179,11 @@ Deno.serve(async (req) => {
   // v52 (Fase 2): terminal de las 2 vueltas. Cancela el pedido YA y crea el cargo del 80%
   // del subtotal al socio responsable (R1). El reembolso al cliente (tarjeta) lo emite la
   // red reconciliar-reembolsos; el aviso al cliente lo dispara el trigger de estado -> 'cancelado'.
+  // v53: los pedidos TELEFONICOS se cancelan igual pero SIN cargo al responsable (la comida
+  // y el cobro ya son del restaurante; el cargo sobre-compensaria) y con aviso adaptado.
   async function cancelarPorNoCobertura() {
     const ahora = new Date().toISOString()
+    const esTelefonico = (pedido as any).origen_pedido === 'telefonico'
     // Cancelacion CONDICIONAL: si el pedido avanzo en carrera (aceptado/recogido/...), no tocar.
     const { data: cancelado, error: cancErr } = await sb.from('pedidos')
       .update({ estado: 'cancelado', cancelado_at: ahora, motivo_cancelacion: 'no_cubierto_2_vueltas', shipday_status: 'no_rider' })
@@ -191,11 +198,12 @@ Deno.serve(async (req) => {
       return json({ ok: false, reason: 'ya_resuelto_en_carrera' })
     }
     // Cargo al responsable (R1) = 80% del subtotal. Idempotente (indice unico por pedido).
+    // v53: NUNCA en pedidos telefonicos.
     const responsable = (pedido as any).socio_responsable_id
     const subtotal = Number((pedido as any).subtotal || 0)
     const monto = Math.round(subtotal * 0.80 * 100) / 100
     let cargoCreado = false
-    if (responsable && monto > 0) {
+    if (responsable && monto > 0 && !esTelefonico) {
       const { error: cargoErr } = await sb.from('cargos_socio').insert({
         socio_id: responsable,
         pedido_id: pedido.id,
@@ -212,21 +220,26 @@ Deno.serve(async (req) => {
     await enviarPush({
       user_type: 'superadmin',
       title: 'Pedido cancelado sin rider',
-      body: `#${pedido.codigo}: nadie lo acepto en 2 vueltas. Cancelado${cargoCreado ? ` · cargo ${monto.toFixed(2)} EUR al responsable` : ''}.`,
+      body: `#${pedido.codigo}: nadie lo acepto en 2 vueltas. Cancelado${cargoCreado ? ` · cargo ${monto.toFixed(2)} EUR al responsable` : (esTelefonico ? ' · telefonico, sin cargo' : '')}.`,
       data: { tipo: 'pedido_no_cubierto', pedido_id: pedido.id },
     })
     if (pedido.establecimiento_id) {
+      const descRestaurante = esTelefonico
+        ? `Ningun repartidor acepto el pedido telefonico ${pedido.codigo} y se ha cancelado. Vuelve a crearlo si sigues necesitando el envio, o entregalo por tus medios.`
+        : `Ningun repartidor acepto el pedido ${pedido.codigo}, se ha cancelado. La compensacion de la comida se gestiona con el repartidor responsable.`
       await sb.from('notificaciones').insert({
         establecimiento_id: pedido.establecimiento_id,
         titulo: `Pedido ${pedido.codigo} cancelado`,
-        descripcion: `Ningun repartidor acepto el pedido ${pedido.codigo}, se ha cancelado. La compensacion de la comida se gestiona con el repartidor responsable.`,
+        descripcion: descRestaurante,
         tipo: 'pedido_cancelado',
         data: { pedido_id: pedido.id, codigo: pedido.codigo },
       })
       await enviarPush({
         target_type: 'restaurante', target_id: pedido.establecimiento_id,
         title: `Pedido ${pedido.codigo} cancelado`,
-        body: 'Ningun repartidor lo acepto. Cancelado; la compensacion se gestiona con el repartidor responsable.',
+        body: esTelefonico
+          ? 'Ningun repartidor acepto el envio telefonico. Vuelve a crearlo o entregalo por tus medios.'
+          : 'Ningun repartidor lo acepto. Cancelado; la compensacion se gestiona con el repartidor responsable.',
         data: { tipo: 'pedido_cancelado', pedido_id: pedido.id, codigo: pedido.codigo },
       })
     }

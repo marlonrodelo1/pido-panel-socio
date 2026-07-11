@@ -47,7 +47,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
       // Re-cargamos el pedido completo (el objeto entrante puede venir parcial).
       const [pedRes, itemsRes] = await Promise.all([
         supabase.from('pedidos')
-          .select('id, codigo, estado, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, cliente_telefono, guest_telefono, guest_nombre')
+          .select('id, codigo, estado, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, cliente_telefono, guest_telefono, guest_nombre')
           .eq('id', pedido.id).maybeSingle(),
         supabase.from('pedido_items').select('*').eq('pedido_id', pedido.id),
       ])
@@ -352,7 +352,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
             marginTop: 10, padding: '8px 12px', borderRadius: 8,
             background: colors.cream2, fontSize: 11, color: colors.stone, fontWeight: 600,
           }}>
-            Pago: {pedido.metodo_pago === 'efectivo' ? '💵 Efectivo (cobra al cliente)' : '💳 Tarjeta (ya pagado)'}
+            Pago: {pedido.metodo_pago === 'efectivo' ? '💵 Efectivo (cobra al cliente)' : pedido.metodo_pago === 'pagado_local' ? '✅ Ya pagado (solo entregar)' : '💳 Tarjeta (ya pagado)'}
           </div>
         </Card>
 

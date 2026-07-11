@@ -2,11 +2,13 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
 
-// generar-factura-socio-restaurante v6 — modelo comision (22-jun-2026).
+// generar-factura-socio-restaurante v8 — modelo comision (22-jun-2026).
 // El socio factura al restaurante por: COMISION (% pactado del subtotal) + ENVIO + PROPINA.
 //  - Delivery entregado: comision + envio + propina.
 //  - Recogida del MARKETPLACE del socio (origen_pedido='marketplace_socio'): SOLO comision.
 //  - Recogida por tienda del restaurante / app general: NO entra (el socio no cobra).
+//  - v8 (11-jul-2026): pedido TELEFONICO (origen_pedido='telefonico') factura SOLO
+//    envio + propina, sin % del subtotal (el rider gana su tarifa de envio pactada).
 // Comision % = socio_establecimiento.comision_pct (default 10). Calcula desde pedidos,
 // marca los facturados (factura_socio_id) y genera PDF.
 
@@ -95,7 +97,7 @@ Deno.serve(async (req) => {
   // Lineas: comision siempre; envio y propina solo en delivery.
   const lineas = pedidos.map((r) => {
     const esDelivery = r.modo_entrega === 'delivery'
-    const comision = +(toNum(r.subtotal) * comisionPct / 100).toFixed(2)
+    const comision = r.origen_pedido === 'telefonico' ? 0 : +(toNum(r.subtotal) * comisionPct / 100).toFixed(2)
     const envio = esDelivery ? toNum(r.coste_envio) : 0
     const propina = esDelivery ? toNum(r.propina) : 0
     return {

@@ -1,3 +1,8 @@
+// get-tracking-publico v8 (11-jul-2026): FIX embed ambiguo. Desde que v51 del
+// dispatcher añadió pedidos.socio_responsable_id (2ª FK hacia socios, 10-jul),
+// el embed `socios:socios(...)` era ambiguo para PostgREST y la query fallaba
+// → not_found para TODOS los pedidos (tracking del cliente roto). Se fija la
+// relación explícita `socios!pedidos_socio_id_fkey`.
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -15,7 +20,7 @@ Deno.serve(async (req: Request) => {
   if (!codigo) return json({ error: 'not_found' }, 404)
   const hasValidToken = !!token && UUID_RE.test(token)
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false, autoRefreshToken: false } })
-  let q = admin.from('pedidos').select(`id, codigo, estado, total, created_at, modo_entrega, minutos_preparacion, recogido_at, entregado_at, establecimiento_id, socio_id, lat_entrega, lng_entrega, establecimientos:establecimientos!inner(nombre, logo_url, telefono, latitud, longitud), socios:socios(id, nombre, nombre_comercial, slug, logo_url, color_primario, telefono, rating, latitud_actual, longitud_actual, last_location_at)`).eq('codigo', codigo)
+  let q = admin.from('pedidos').select(`id, codigo, estado, total, created_at, modo_entrega, minutos_preparacion, recogido_at, entregado_at, establecimiento_id, socio_id, lat_entrega, lng_entrega, establecimientos:establecimientos!inner(nombre, logo_url, telefono, latitud, longitud), socios:socios!pedidos_socio_id_fkey(id, nombre, nombre_comercial, slug, logo_url, color_primario, telefono, rating, latitud_actual, longitud_actual, last_location_at)`).eq('codigo', codigo)
   if (hasValidToken) q = q.eq('tracking_token', token)
   const { data: ped } = await q.maybeSingle()
   if (!ped) return json({ error: 'not_found' }, 404)

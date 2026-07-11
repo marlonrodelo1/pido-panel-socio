@@ -198,7 +198,10 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
       let comision = 0, envios = 0, propinas = 0
       for (const p of peds) {
         const del = p.modo_entrega === 'delivery'
-        comision += +(Number(p.subtotal || 0) * pct / 100).toFixed(2) // redondeo por pedido (igual que la edge)
+        // Telefónico: solo envío + propina, sin % del subtotal (igual que la edge v8)
+        if (p.origen_pedido !== 'telefonico') {
+          comision += +(Number(p.subtotal || 0) * pct / 100).toFixed(2) // redondeo por pedido (igual que la edge)
+        }
         if (del) { envios += Number(p.coste_envio || 0); propinas += Number(p.propina || 0) }
       }
       comision = +comision.toFixed(2); envios = +envios.toFixed(2); propinas = +propinas.toFixed(2)

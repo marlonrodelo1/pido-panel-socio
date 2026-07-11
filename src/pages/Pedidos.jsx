@@ -24,15 +24,17 @@ const PAGOS = [
   { id: 'efectivo', label: 'Efectivo' },
 ]
 
-// Solo dos métodos: tarjeta (pagado online) o efectivo (cobrar al cliente).
+// Métodos: tarjeta (pagado online), efectivo (cobrar al cliente) o
+// 'pagado_local' (pedido telefónico ya cobrado por el restaurante: NO cobrar).
 // Cualquier valor legacy (p.ej. 'datafono') se trata como cobro en persona.
-const esPagadoOnline = (m) => m === 'tarjeta'
-const metodoPagoLabel = (m) => (esPagadoOnline(m) ? 'Tarjeta' : 'Efectivo')
+const esPagadoOnline = (m) => m === 'tarjeta' || m === 'pagado_local'
+const metodoPagoLabel = (m) => (m === 'tarjeta' ? 'Tarjeta' : m === 'pagado_local' ? 'Ya pagado' : 'Efectivo')
 
 // Origen del pedido para el socio.
 const origenLabel = (o) => {
   if (o === 'tienda_publica') return 'Tienda del restaurante'
   if (o === 'marketplace_socio') return 'Mi marketplace'
+  if (o === 'telefonico') return 'Pedido telefónico'
   return 'App Pidoo'
 }
 
@@ -379,8 +381,9 @@ function DetalleModal({ pedidoId, onClose }) {
   const propina = Number(pedido?.propina || 0)
   const badge = pedido?.estado ? stateBadge(pedido.estado) : null
   // Ganancia del socio (rider) para este pedido: envío + comisión% del subtotal + propina.
+  // Telefónico: SOLO envío + propina (el % no aplica a pedidos creados por el restaurante).
   const esReparto = pedido?.modo_entrega === 'delivery' || envio > 0
-  const comisionSocio = subtotal * (comisionPct / 100)
+  const comisionSocio = pedido?.origen_pedido === 'telefonico' ? 0 : subtotal * (comisionPct / 100)
   const gananciaSocio = envio + comisionSocio + propina
 
   return (
