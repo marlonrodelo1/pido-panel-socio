@@ -69,28 +69,22 @@ export async function registerSocioPushNative(userId) {
     return { ok: false, reason: 'perm_error', error: e?.message }
   }
 
-  // Canal Android "pedidos_sonido" con prioridad MAX y el SONIDO DE PEDIDO
-  // (res/raw/pedido_rider.mp3) — el mismo chime que suena en la app abierta. En Android
-  // O+ el sonido lo fija el CANAL (no el payload), y los canales son inmutables, por eso
-  // es un id nuevo. enviar_push enruta los pushes del socio a este canal.
-  // Mantenemos también el canal viejo "pedidos" por compatibilidad.
+  // 18-jul-2026: los canales YA NO SE CREAN DESDE JS. Ahora los crea MainActivity
+  // (canal 'pedidos_alarma_v1', sonido R.raw.pedido_rider, USAGE_ALARM).
+  //
+  // Por qué se quitó: el canal 'pedidos' se creaba aquí con sound:'default'. El plugin no
+  // interpreta ese literal — lo concatena y genera android.resource://<pkg>/raw/default,
+  // un recurso que no existe → CANAL MUDO. Y como era el canal por defecto del manifest,
+  // TODOS los avisos de pedido quedaban en silencio. Además, con OTA (Capgo) el JS puede
+  // adelantarse al APK y crear el canal apuntando a un sonido que aún no está empaquetado;
+  // los canales son INMUTABLES, así que ese daño no se repara reinstalando.
+  //
+  // Solo dejamos el BORRADO de los canales corruptos como red de seguridad para los
+  // móviles que ya los tienen (MainActivity también lo hace, esto es cinturón y tirantes).
   try {
-    await Push.createChannel?.({
-      id: 'pedidos_sonido',
-      name: 'Pedidos entrantes',
-      description: 'Nuevos pedidos asignados (con sonido de pedido)',
-      importance: 5, // MAX
-      visibility: 1, // PUBLIC
-      vibration: true,
-      lights: true,
-      sound: 'pedido_rider', // res/raw/pedido_rider.mp3 (sin extensión)
-    })
-    await Push.createChannel?.({
-      id: 'pedidos',
-      name: 'Pedidos (antiguo)',
-      description: 'Canal antiguo de pedidos',
-      importance: 5, visibility: 1, vibration: true, lights: true, sound: 'default',
-    })
+    for (const viejo of ['pedidos', 'pedidos_sonido']) {
+      try { await Push.deleteChannel?.({ id: viejo }) } catch (_) {}
+    }
   } catch (_) { /* iOS no soporta channels, ignorar */ }
 
   // iOS: arrancar la escalera de claims YA (no esperar al evento 'registration',

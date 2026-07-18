@@ -22,7 +22,7 @@ import { startTracking, stopTracking, getCurrentPosition, requestLocationPermiss
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
 import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption } from '../lib/offlineBeacon'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
-import { installPedidoSoundUnlock } from '../lib/pedidoSound'
+import { installPedidoSoundUnlock, getPedidoAudio } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
@@ -185,36 +185,44 @@ export function RiderProvider({ children }) {
       })()
       return { ok: true, optimistic: true }
     } else {
-      // === IR OFFLINE === (se espera; es rápido, solo la edge)
-      try {
-        setIsOnline(false) // optimista
-        // OJO: no paramos el tracking hasta confirmar que la desconexión fue OK.
-        // Si riderOffline() falla por red, revertimos a online y el GPS/latido deben
-        // seguir vivos (si paráramos el tracking antes, quedaría "online + latiendo"
-        // pero sin posición, justo lo que este sistema quiere evitar).
-        const res = await riderOffline()
-        if (!res.ok) {
-          setIsOnline(true)
-          if (res.sessionDead) {
-            stopTracking()
-            disarmOfflineBeacon()
-            lastPosRef.current = null
-            setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
-            try { await supabase.auth.signOut() } catch (_) {}
-          } else {
-            setActionError('No se pudo desconectar. Inténtalo de nuevo.')
+      // === IR OFFLINE (OPTIMISTA) ===
+      // UI INSTANTÁNEA: pintamos "Offline" YA; la edge corre en segundo plano igual
+      // que en el camino online (misma queja de Marlon en ambos sentidos: el toggle
+      // no puede quedarse "pensando" lo que dure la red).
+      // OJO: no paramos el tracking hasta confirmar que la desconexión fue OK.
+      // Si riderOffline() falla por red, revertimos a online y el GPS/latido deben
+      // seguir vivos (si paráramos el tracking antes, quedaría "online + latiendo"
+      // pero sin posición, justo lo que este sistema quiere evitar).
+      setIsOnline(false)
+      ;(async () => {
+        try {
+          const res = await riderOffline()
+          if (!res.ok) {
+            if (res.sessionDead) {
+              stopTracking()
+              disarmOfflineBeacon()
+              lastPosRef.current = null
+              setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+              try { await supabase.auth.signOut() } catch (_) {}
+            } else {
+              // Fallo de red real → seguimos en servicio: revertimos el offline optimista.
+              setIsOnline(true)
+              setActionError('No se pudo desconectar. Inténtalo de nuevo.')
+            }
+            return
           }
-          return res
+          stopTracking()
+          disarmOfflineBeacon() // Parte B: desconexión manual -> desarmar beacon
+          lastPosRef.current = null
+          setNeedsLocation(false)
+          refreshSocio?.()
+        } finally {
+          // El mutex se mantiene durante la desconexión en vuelo (evita que un tap
+          // de online entre a medias) y se libera aquí al terminar.
+          togglingRef.current = false
         }
-        stopTracking()
-        disarmOfflineBeacon() // Parte B: desconexión manual -> desarmar beacon
-        lastPosRef.current = null
-        setNeedsLocation(false)
-        refreshSocio?.()
-        return res
-      } finally {
-        togglingRef.current = false
-      }
+      })()
+      return { ok: true, optimistic: true }
     }
   }
 
@@ -280,7 +288,7 @@ export function RiderProvider({ children }) {
     // asignación (no por pedido.estado) evita perder los recién aceptados.
     const { data: asigs } = await supabase
       .from('pedido_asignaciones')
-      .select('created_at, pedidos!inner(id, codigo, estado, shipday_status, modo_entrega, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at)')
+      .select('created_at, pedidos!inner(id, codigo, estado, shipday_status, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at)')
       .eq('socio_id', socio.id)
       .eq('estado', 'aceptado')
       .in('pedidos.estado', ['preparando', 'listo', 'recogido', 'en_camino'])
@@ -291,7 +299,7 @@ export function RiderProvider({ children }) {
     // Asignación pendiente (esperando aceptación)
     const { data: pendiente } = await supabase
       .from('pedido_asignaciones')
-      .select('id, pedido_id, estado, created_at, pedidos!inner(codigo, total, modo_entrega, direccion_entrega, establecimientos(nombre, direccion))')
+      .select('id, pedido_id, estado, created_at, pedidos!inner(codigo, total, modo_entrega, origen_pedido, direccion_entrega, establecimientos(nombre, direccion))')
       .eq('socio_id', socio.id)
       .eq('estado', 'esperando_aceptacion')
       .order('created_at', { ascending: false })
@@ -396,7 +404,12 @@ export function RiderProvider({ children }) {
 
   // ─── Listeners push: fallback cuando realtime no llega ─────
   useEffect(() => {
-    const offRecv = onPushReceived(() => {
+    const offRecv = onPushReceived((detail) => {
+      // 18-jul-2026: arrancar el timbre YA, sin esperar a que monte el modal. Si el push
+      // llega con la app viva pero el realtime caído, antes pasaban segundos en silencio.
+      if (detail?.data?.tipo === 'nueva_asignacion') {
+        try { getPedidoAudio()?.play?.().catch(() => {}) } catch (_) {}
+      }
       // Re-fetch para coger la asignación nueva
       refreshAsignaciones()
     })

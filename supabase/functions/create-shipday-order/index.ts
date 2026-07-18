@@ -1,5 +1,13 @@
 // create-shipday-order — DISPATCHER PROPIO (sin Shipday) desde 20-jun-2026.
 // Asigna el pedido delivery al mejor rider (socio) ONLINE del establecimiento.
+// v54 (18-jul-2026): AUTONOMIA DEL SOCIO (features de Marlon):
+//   1) socio_establecimiento.reparto_activo — el socio pausa restaurantes concretos.
+//      Vinculos pausados NO reciben pedidos (ninguna via, incluido su marketplace).
+//   2) Fuentes de pedido (socios.acepta_marketplace / acepta_telefonicos / acepta_app):
+//      el socio decide de que via acepta pedidos. Mapeo por pedidos.origen_pedido:
+//      marketplace_socio -> acepta_marketplace · telefonico -> acepta_telefonicos ·
+//      pido / tienda_publica / null -> acepta_app.
+//   3) Push de asignacion en telefonicos avisa: "solo envio, sin comision".
 // v53 (11-jul-2026): PEDIDOS TELEFONICOS (origen_pedido='telefonico', creados por el
 //   restaurante via crear-pedido-telefonico). En la terminal de no-cobertura se cancela
 //   igual PERO SIN cargo del 80% al responsable: la comida y el cobro ya son del
@@ -261,29 +269,55 @@ Deno.serve(async (req) => {
     return await marcarNoRider('establecimiento_sin_gps')
   }
 
+  // v54: fuente del pedido -> flag del socio que la acepta.
+  const origenPedido = (pedido as any).origen_pedido
+  const esMarketplaceSocio = origenPedido === 'marketplace_socio' && !!(pedido as any).socio_id
+  const esTelefonicoPed = origenPedido === 'telefonico'
+  const aceptaFuente = (s: any) => {
+    if (esMarketplaceSocio) return s?.acepta_marketplace !== false
+    if (esTelefonicoPed) return s?.acepta_telefonicos !== false
+    return s?.acepta_app !== false // 'pido', 'tienda_publica', null u otros = fuente app
+  }
+
   // 2. Socios candidatos. REGLA 1: marketplace del socio -> solo ese socio.
-  const esMarketplaceSocio = (pedido as any).origen_pedido === 'marketplace_socio' && !!(pedido as any).socio_id
+  //    v54: los vinculos pausados por el socio (reparto_activo=false) NO cuentan en NINGUNA via.
   let socioIds: string[]
   if (esMarketplaceSocio) {
+    // Si el socio pauso este restaurante, tampoco reparte pedidos de su propio marketplace.
+    const { data: vincSocio } = await sb.from('socio_establecimiento')
+      .select('id, reparto_activo')
+      .eq('establecimiento_id', pedido.establecimiento_id)
+      .eq('socio_id', (pedido as any).socio_id)
+      .eq('estado', 'activa')
+      .maybeSingle()
+    if (vincSocio && vincSocio.reparto_activo === false) {
+      return await marcarNoRider('socio_pauso_restaurante')
+    }
     socioIds = [(pedido as any).socio_id]
   } else {
     const { data: vincs, error: vErr } = await sb.from('socio_establecimiento')
-      .select('socio_id').eq('establecimiento_id', pedido.establecimiento_id).eq('estado', 'activa')
+      .select('socio_id').eq('establecimiento_id', pedido.establecimiento_id).eq('estado', 'activa').eq('reparto_activo', true)
     if (vErr) return json({ error: 'vinculo_query_failed', detail: vErr.message }, 500)
     socioIds = [...new Set((vincs || []).map((v: any) => v.socio_id))]
   }
   if (!socioIds.length) return await marcarNoRider('sin_socio_vinculado')
 
-  // 3. Riders de esos socios.
+  // 3. Riders de esos socios (v54: + flags de fuentes).
   const { data: riders, error: rErr } = await sb.from('rider_accounts')
-    .select('id, nombre, socio_id, activa, estado, socios!inner(id, user_id, nombre, en_servicio, activo, marketplace_activo, latitud_actual, longitud_actual, last_location_at)')
+    .select('id, nombre, socio_id, activa, estado, socios!inner(id, user_id, nombre, en_servicio, activo, marketplace_activo, latitud_actual, longitud_actual, last_location_at, acepta_marketplace, acepta_telefonicos, acepta_app)')
     .in('socio_id', socioIds).eq('activa', true).eq('estado', 'activa')
   if (rErr) return json({ error: 'riders_query_failed', detail: rErr.message }, 500)
 
   // 5. Candidatos ONLINE + distancia Haversine. Gating por socios.activo. marketplace_activo
   //    NO se usa a proposito (pausar la tienda publica no debe cortar el reparto de pidoo.es).
-  const base = (riders || [])
+  const online = (riders || [])
     .filter((r: any) => r.socios?.en_servicio === true && r.socios?.activo !== false)
+  if (!online.length) return await marcarNoRider(esMarketplaceSocio ? 'socio_marketplace_offline' : 'no_rider')
+
+  // v54: FILTRO POR FUENTE. Socios online que no aceptan esta via -> fuera, con motivo propio
+  // (distinguible de "offline" para diagnostico y avisos).
+  const base = online
+    .filter((r: any) => aceptaFuente(r.socios))
     .map((r: any) => {
       const s = r.socios
       const dist = (s?.latitud_actual != null && s?.longitud_actual != null)
@@ -291,7 +325,9 @@ Deno.serve(async (req) => {
         : null
       return { rider: r, socio: s, dist, score: 0 }
     })
-  if (!base.length) return await marcarNoRider(esMarketplaceSocio ? 'socio_marketplace_offline' : 'no_rider')
+  if (!base.length) {
+    return await marcarNoRider(esMarketplaceSocio ? 'socio_no_acepta_marketplace' : (esTelefonicoPed ? 'sin_rider_acepta_telefonicos' : 'sin_rider_acepta_app'))
+  }
 
   // v50: FRESCURA como GATE DURO.
   const ahoraMs = Date.now()
@@ -375,15 +411,17 @@ Deno.serve(async (req) => {
   const { error: updPedidoErr } = await sb.from('pedidos').update(updatePedido).eq('id', pedido.id)
   if (updPedidoErr) console.error('[dispatch] update pedido fallo', pedido.id, updPedidoErr.message)
 
-  // 8. Push inmediato al rider (v51: 150 s + aviso de responsable / ultima vuelta)
+  // 8. Push inmediato al rider (v51: 150 s + aviso de responsable / ultima vuelta;
+  //    v54: en telefonicos, aviso de "solo envio, sin comision" YA en el push)
   let sufijo = ''
   if (esUltimaVuelta) sufijo = ' · ÚLTIMA VUELTA: acéptalo o se cancela'
   else if (esResponsable) sufijo = ' · eres el responsable del pedido'
+  const prefijoTel = esTelefonicoPed ? 'Telefónico (solo envío, sin comisión) · ' : ''
   await enviarPush({
     user_ids: [elegido.socio.user_id],
     title: `Nuevo pedido · ${est?.nombre || ''}`,
-    body: `#${pedido.codigo}${elegido.dist != null ? ` · ${(elegido.dist / 1000).toFixed(1)} km` : ''} — acepta en 2:30${sufijo}`,
-    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion?.id, urgente: true, vuelta: vueltaRider, es_responsable: esResponsable },
+    body: `${prefijoTel}#${pedido.codigo}${elegido.dist != null ? ` · ${(elegido.dist / 1000).toFixed(1)} km` : ''} — acepta en 2:30${sufijo}`,
+    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion?.id, urgente: true, vuelta: vueltaRider, es_responsable: esResponsable, telefonico: esTelefonicoPed },
   })
 
   return json({ ok: true, pedido_id: pedido.id, rider_account_id: elegido.rider.id, socio_id: elegido.socio.id, intento, vuelta: vueltaRider, es_responsable: esResponsable, ultima_vuelta: esUltimaVuelta, distancia_metros: elegido.dist, carga_previa: cargaPorRider.get(elegido.rider.id) || 0, marketplace_socio: esMarketplaceSocio })

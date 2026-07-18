@@ -1,5 +1,12 @@
-// crear-pedido-telefonico v1 (11-jul-2026) — el RESTAURANTE crea un envío manual
+// crear-pedido-telefonico v3 (18-jul-2026) — el RESTAURANTE crea un envío manual
 // para un pedido que le entró por TELÉFONO (fuera de la app cliente).
+// v3: AUTONOMIA DEL SOCIO — el pre-check de riders online ahora excluye:
+//     - vínculos con reparto_activo=false (el socio pausó ese restaurante)
+//     - socios con acepta_telefonicos=false (el socio no acepta esta fuente)
+//     Alineado con el dispatcher v54 y assign-pedido-restaurante v4.
+// v2: el pre-check de riders online exige frescura de GPS (≤12 min), igual que
+//     check-socio-availability-now v9 y el dispatcher v53 (evita el "verde" fantasma
+//     que dejaba pedidos huérfanos si el socio tenía la app colgada).
 //
 // Modelo de negocio (decidido por Marlon 11-jul):
 //   - Sin productos: solo importe acordado + notas. subtotal = importe de la comida.
@@ -107,11 +114,24 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── Riders online (mismo criterio que check-socio-availability-now v9) ──
+  // ── Riders online — MISMO criterio que check-socio-availability-now v9 y el
+  //    dispatcher create-shipday-order v53: activo + en_servicio + señal GPS fresca
+  //    (last_location_at ≤ 12 min). Sin la frescura, un socio con la app cerrada/colgada
+  //    daría "verde" aquí pero el dispatcher (gate duro de frescura) no podría asignarlo,
+  //    dejando el pedido huérfano. v2 (12-jul): añadida la frescura para alinear los 3.
+  const MAX_LOC_AGE_MS = 12 * 60 * 1000
+  const ahoraLoc = Date.now()
+  const esFresco = (s: any) => {
+    const ts = s?.last_location_at ? new Date(s.last_location_at).getTime() : NaN
+    return Number.isFinite(ts) && (ahoraLoc - ts) <= MAX_LOC_AGE_MS
+  }
   const { data: vinc } = await sb.from('socio_establecimiento')
-    .select('socio_id, socios!inner(id, en_servicio, activo)')
+    .select('socio_id, reparto_activo, socios!inner(id, en_servicio, activo, last_location_at, acepta_telefonicos)')
     .eq('establecimiento_id', establecimiento_id).eq('estado', 'activa')
-  const online = (vinc || []).map((v: any) => v.socios).filter((s: any) => s && s.activo && s.en_servicio)
+  const online = (vinc || [])
+    .filter((v: any) => v.reparto_activo !== false)
+    .map((v: any) => v.socios)
+    .filter((s: any) => s && s.activo && s.en_servicio && esFresco(s) && s.acepta_telefonicos !== false)
   if (online.length === 0) return json({ error: 'sin_riders_online', online_count: 0 }, 409)
   if (asignacion.modo === 'socio' && !online.some((s: any) => s.id === asignacion.socio_id)) {
     return json({ error: 'socio_offline', online_count: online.length }, 409)

@@ -18,10 +18,11 @@ const COUNTDOWN_SECONDS = 150
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
 export default function ModalPedidoEntrante() {
-  const { asignacionPendiente, dismissPendiente } = useRider() || {}
+  const { asignacionPendiente, dismissPendiente, socio } = useRider() || {}
   const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECONDS)
   const [busy, setBusy] = useState(null) // 'accept' | 'reject' | null
   const [pedidoFull, setPedidoFull] = useState(null) // pedido completo (mapa + ganancia)
+  const [pacto, setPacto] = useState(null)           // tarifa pactada con ese restaurante
   const audioRef = useRef(null)
   const intervalRef = useRef(null)
 
@@ -45,18 +46,42 @@ export default function ModalPedidoEntrante() {
     // Sonido loop — instancia COMPARTIDA y desbloqueada con el primer gesto del
     // usuario (iOS bloquea autoplay sin gesto; ver lib/pedidoSound). Antes se creaba
     // un new Audio() aquí y en iOS quedaba mudo siempre.
+    //
+    // 18-jul-2026: antes un solo rechazo de autoplay = 150 s de SILENCIO, sin reintento
+    // y sin log (el .catch estaba vacío). Ahora se reintenta cada 800 ms mientras el
+    // modal esté abierto, se engancha al primer toque del rider, y si falla se ve en
+    // consola en lugar de perderse.
+    let retryId = null
     try {
       const a = getPedidoAudio()
       if (a) {
         audioRef.current = a
         a.currentTime = 0
-        a.play().catch(() => { /* autoplay bloqueado: falta el primer gesto */ })
+        const intentar = () => a.play().then(() => {
+          if (retryId) { clearInterval(retryId); retryId = null }
+        }).catch((e) => {
+          console.error('[pedidoSound] play bloqueado:', e?.name || e)
+        })
+        intentar()
+        retryId = setInterval(intentar, 800)
+        const alTocar = () => intentar()
+        window.addEventListener('pointerdown', alTocar, { once: true })
+        a.addEventListener('error', (e) => console.error('[pedidoSound] error de audio', e))
       }
-    } catch (_) {}
+    } catch (e) { console.error('[pedidoSound] excepción', e) }
 
     // Vibración rítmica repetida mientras el modal esté abierto (cada 3s) para que
     // el rider lo note aunque el móvil esté en el bolsillo.
-    const vibe = () => { try { if (navigator.vibrate) navigator.vibrate([300, 200, 300, 200, 600]) } catch (_) {} }
+    // navigator.vibrate NO existe en WKWebView (iOS): el iPhone no vibraba nunca.
+    // @capacitor/haptics sí funciona en ambas plataformas; web cae al fallback.
+    const vibe = async () => {
+      try {
+        const { Haptics } = await import('@capacitor/haptics')
+        await Haptics.vibrate({ duration: 800 })
+      } catch (_) {
+        try { navigator.vibrate?.([300, 200, 300, 200, 600]) } catch (_) {}
+      }
+    }
     vibe()
     const vibeId = setInterval(vibe, 3000)
 
@@ -68,6 +93,7 @@ export default function ModalPedidoEntrante() {
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
+      if (retryId) clearInterval(retryId)
       clearInterval(vibeId)
       try { navigator.vibrate?.(0) } catch (_) {}
       try { audioRef.current?.pause() } catch (_) {}
@@ -87,22 +113,38 @@ export default function ModalPedidoEntrante() {
 
   // El objeto asignacionPendiente.pedidos viene PARCIAL. Cargamos el pedido
   // completo para poder pintar el mini-mapa y calcular la ganancia del socio.
+  // 18-jul-2026: además traemos el PACTO vigente con ese restaurante para poder
+  // avisar en la propia asignación si la tarifa acordada es un PRECIO FIJO.
   useEffect(() => {
     setPedidoFull(null)
+    setPacto(null)
     const pedidoId = asignacionPendiente?.pedido_id
     if (!pedidoId) return
     let cancel = false
     ;(async () => {
       const { data } = await supabase
         .from('pedidos')
-        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,origen_pedido,metodo_pago,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimientos(nombre,direccion,latitud,longitud)')
+        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,origen_pedido,metodo_pago,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimiento_id,establecimientos(nombre,direccion,latitud,longitud)')
         .eq('id', pedidoId)
         .maybeSingle()
-      if (!cancel && data) setPedidoFull(data)
+      if (cancel || !data) return
+      setPedidoFull(data)
+
+      // socio del CONTEXTO: la asignación recuperada al recargar (refreshAsignaciones)
+      // no trae socio_id en su select, solo la que llega por realtime.
+      const socioId = socio?.id || asignacionPendiente?.socio_id
+      if (!socioId || !data.establecimiento_id) return
+      const { data: vinc } = await supabase
+        .from('socio_establecimiento')
+        .select('tarifa_modo, tarifa_fija')
+        .eq('socio_id', socioId)
+        .eq('establecimiento_id', data.establecimiento_id)
+        .maybeSingle()
+      if (!cancel && vinc) setPacto(vinc)
     })()
     return () => { cancel = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asignacionPendiente?.pedido_id])
+  }, [asignacionPendiente?.pedido_id, socio?.id])
 
   // Mini-mapa estático: restaurante (terracotta) + entrega (verde) + path.
   // pedidoFull puede ser null mientras carga → mapa solo cuando hay coords + key.
@@ -130,6 +172,10 @@ export default function ModalPedidoEntrante() {
   const total = Number(pedido.total || 0)
   const ganancia = calcGanancia(pedido)
   const isDelivery = pedido.modo_entrega === 'delivery'
+  const esTelefonico = pedido.origen_pedido === 'telefonico'
+  // Tarifa pactada con este restaurante: si es PRECIO FIJO, el rider debe verlo al aceptar.
+  const esTarifaFija = pacto?.tarifa_modo === 'fija'
+  const importeFijo = Number(pacto?.tarifa_fija ?? 0)
 
   // v51 round-robin: vuelta (1|2) y si este socio es el responsable (R1) del pedido.
   const vuelta = asignacionPendiente.vuelta || 1
@@ -219,6 +265,32 @@ export default function ModalPedidoEntrante() {
         animation: 'slideUp 0.25s ease',
       }}>
         <style>{`@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
+
+        {/* Tarifa FIJA pactada con este restaurante: el rider cobra siempre lo mismo
+            por entrega, sin importar la distancia. Debe verlo ANTES de aceptar. */}
+        {esTarifaFija && (
+          <div style={{
+            borderRadius: 12, padding: '11px 13px',
+            background: colors.sageSoft, color: colors.sage2,
+            fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+            border: `1px solid ${colors.sage}`,
+          }}>
+            Tarifa fija pactada con {est.nombre || 'este restaurante'}: {importeFijo.toFixed(2).replace('.', ',')} € por entrega, vaya donde vaya.
+          </div>
+        )}
+
+        {/* Pedido telefónico: el rider cobra SOLO el envío (sin % del subtotal).
+            Tiene que quedarle claro ANTES de aceptar. */}
+        {esTelefonico && (
+          <div style={{
+            borderRadius: 12, padding: '11px 13px',
+            background: colors.infoSoft, color: colors.info,
+            fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+            border: `1px solid ${colors.info}`,
+          }}>
+            Pedido telefónico: cobras SOLO el envío. Este tipo de pedido no lleva comisión.
+          </div>
+        )}
 
         {/* v51/v52: 3 avisos segun round-robin. Prioridad: ultima vuelta + responsable >
             ultima vuelta > responsable (primera asignacion). */}
@@ -337,7 +409,9 @@ export default function ModalPedidoEntrante() {
           <div>
             <div style={{ fontSize: 12, color: colors.sage2, fontWeight: 700 }}>Tu ganancia</div>
             <div style={{ fontSize: 10, color: colors.stone }}>
-              {isDelivery ? 'Envío + 10% + propina' : '10% del subtotal'}
+              {esTarifaFija
+                ? `Tarifa fija pactada · ${importeFijo.toFixed(2).replace('.', ',')} € por entrega`
+                : (esTelefonico ? 'Solo envío · sin comisión' : (isDelivery ? 'Envío + 10% + propina' : '10% del subtotal'))}
             </div>
           </div>
           <div style={{ fontSize: 22, fontWeight: 800, color: colors.sage2 }}>

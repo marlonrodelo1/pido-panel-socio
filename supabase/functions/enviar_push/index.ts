@@ -24,6 +24,15 @@
 //    RECIENTE (por user_id). Los logins/reinstalls acumulaban tokens viejos vivos y
 //    el mismo pedido llegaba 3 veces al mismo movil (visto en prueba real). Coherente
 //    con la politica de un-solo-dispositivo por socio. Cliente/restaurante sin cambio.
+// v37 (18 jul 2026) — "el pedido no suena" (Marlon):
+//  - CANAL NUEVO 'pedidos_alarma_v1' para el socio. Los anteriores estaban MUDOS: se
+//    creaban desde JS con sound:'default', literal que el plugin de Capacitor concatena
+//    a android.resource://<pkg>/raw/default (recurso inexistente) -> canal sin sonido.
+//    Como los NotificationChannel son INMUTABLES, no bastaba con reinstalar: el canal
+//    nuevo lo crea MainActivity en nativo (R.raw.pedido_rider + USAGE_ALARM = volumen de
+//    ALARMA) y la app borra los viejos al arrancar.
+//  - androidSound nunca vuelve a ser 'default' (esa cadena era justo el origen del bug).
+//  REQUIERE build nativa >= v290 para que el canal exista en el movil.
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -91,7 +100,10 @@ async function sendFCM(fcmToken: string, title: string, body: string, data: Reco
     android: {
       priority: 'high',
       notification: {
-        sound: androidSound, channel_id: channelId, default_sound: androidSound === 'default', default_vibrate_timings: false,
+        // androidSound vacío => no mandamos 'sound' y dejamos el del sistema (default_sound).
+        // En Android 8+ manda el CANAL, esto solo aplica a versiones antiguas.
+        ...(androidSound ? { sound: androidSound } : { default_sound: true }),
+        channel_id: channelId, default_vibrate_timings: false,
         vibrate_timings: ['0s', '0.5s', '0.2s', '0.5s', '0.2s', '0.5s', '0.2s', '0.5s'],
         notification_priority: 'PRIORITY_MAX', visibility: 'PUBLIC',
       },
@@ -191,11 +203,16 @@ serve(async (req) => {
     const results = await Promise.all(
       uniqueSubs.map(async (sub) => {
         const creds = ((sub.user_type === 'socio' || sub.user_type === 'restaurante') && socioCreds) ? socioCreds : DEFAULT_CREDS
-        // v33: el SOCIO recibe el sonido de pedido (canal 'pedidos_sonido' + res/raw/pedido_rider).
-        // Cliente/restaurante siguen en 'pedidos'/'default' (no tienen ese canal).
+        // v37 (18-jul-2026): canal NUEVO 'pedidos_alarma_v1', creado en NATIVO por
+        // MainActivity con R.raw.pedido_rider y USAGE_ALARM (suena al volumen de alarma).
+        // Los canales viejos ('pedidos', 'pedidos_sonido') quedaron MUDOS: se creaban
+        // desde JS con sound:'default', literal que el plugin concatena a
+        // android.resource://<pkg>/raw/default -> recurso inexistente -> sin sonido.
+        // Los canales son inmutables, así que la app los BORRA al arrancar.
+        // OJO: nunca mandar 'default' como androidSound; cadena vacía = sonido del sistema.
         const esSocio = sub.user_type === 'socio'
-        const channelId = esSocio ? 'pedidos_sonido' : 'pedidos'
-        const androidSound = esSocio ? 'pedido_rider' : 'default'
+        const channelId = esSocio ? 'pedidos_alarma_v1' : 'pedidos'
+        const androidSound = esSocio ? 'pedido_rider' : ''
         // v36: el bundle iOS ya lleva pedido_rider.caf (build 28+, confirmado con el
         // 2.7.8 (29) instalado) -> chime custom tambien en iPhone.
         const apnsSound = esSocio ? 'pedido_rider.caf' : 'default'

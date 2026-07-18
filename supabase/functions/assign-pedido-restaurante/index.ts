@@ -1,5 +1,9 @@
-// assign-pedido-restaurante v1 — el RESTAURANTE (dueño del establecimiento)
+// assign-pedido-restaurante v4 — el RESTAURANTE (dueño del establecimiento)
 // asigna un pedido delivery a UNO de sus socios vinculados (caso multi-socio).
+// v4 (18-jul-2026): AUTONOMIA DEL SOCIO — el forzado del restaurante respeta:
+//   - socio_establecimiento.reparto_activo (el socio pauso ese restaurante) -> 409 socio_pauso_restaurante
+//   - fuentes del socio (acepta_marketplace/acepta_telefonicos/acepta_app segun
+//     pedidos.origen_pedido) -> 409 socio_no_acepta_fuente
 // Elige el rider mas cercano ONLINE de ese socio. Mismo flujo que el dispatcher:
 // pedido_asignaciones (con socio_id) + pedidos.socio_id + push al socio.
 // verify_jwt=true: ademas validamos que el caller es dueno del establecimiento.
@@ -50,15 +54,33 @@ serve(async (req: Request) => {
       return Response.json({ error: 'marketplace_propio', mensaje: 'Este pedido pertenece al marketplace de otro socio y no puede reasignarse.' }, { status: 403, headers: CORS })
     }
 
-    // El socio debe estar vinculado y activo a este establecimiento
+    // El socio debe estar vinculado y activo a este establecimiento.
+    // v4: y NO haber pausado el reparto de este restaurante.
     const { data: vinc } = await sb.from('socio_establecimiento')
-      .select('id').eq('establecimiento_id', pedido.establecimiento_id).eq('socio_id', socio_id).eq('estado', 'activa').maybeSingle()
+      .select('id, reparto_activo').eq('establecimiento_id', pedido.establecimiento_id).eq('socio_id', socio_id).eq('estado', 'activa').maybeSingle()
     if (!vinc) return Response.json({ error: 'socio_no_vinculado' }, { status: 403, headers: CORS })
+    if (vinc.reparto_activo === false) {
+      return Response.json({ error: 'socio_pauso_restaurante', mensaje: 'El repartidor ha pausado los pedidos de este restaurante desde su app.' }, { status: 409, headers: CORS })
+    }
 
-    // Riders de ese socio
+    // Riders de ese socio (v4: + flags de fuentes)
     const { data: riders } = await sb.from('rider_accounts')
-      .select('id, nombre, socio_id, activa, estado, socios!inner(id, user_id, nombre, en_servicio, latitud_actual, longitud_actual)')
+      .select('id, nombre, socio_id, activa, estado, socios!inner(id, user_id, nombre, en_servicio, latitud_actual, longitud_actual, acepta_marketplace, acepta_telefonicos, acepta_app)')
       .eq('socio_id', socio_id).eq('activa', true).eq('estado', 'activa')
+
+    // v4: el socio decide de que fuentes acepta pedidos. El forzado del restaurante
+    // no puede saltarse esa preferencia.
+    const origen = (pedido as any).origen_pedido
+    const aceptaFuente = (s: any) => {
+      if (origen === 'marketplace_socio') return s?.acepta_marketplace !== false
+      if (origen === 'telefonico') return s?.acepta_telefonicos !== false
+      return s?.acepta_app !== false
+    }
+    const socioFlags: any = (riders || [])[0]?.socios
+    if (socioFlags && !aceptaFuente(socioFlags)) {
+      const fuente = origen === 'telefonico' ? 'pedidos telefónicos' : (origen === 'marketplace_socio' ? 'pedidos de su marketplace' : 'pedidos de la app')
+      return Response.json({ error: 'socio_no_acepta_fuente', mensaje: `El repartidor ha desactivado los ${fuente} desde su app.` }, { status: 409, headers: CORS })
+    }
 
     // Excluir ya intentados
     const { data: prev } = await sb.from('pedido_asignaciones').select('rider_account_id, intento').eq('pedido_id', pedido_id)
@@ -105,10 +127,11 @@ serve(async (req: Request) => {
     if (!pedUpd || pedUpd.length === 0) return Response.json({ error: 'pedido_estado_no_asignable', estado: pedido.estado }, { status: 409, headers: CORS })
 
     try {
+      const prefijoTel = origen === 'telefonico' ? 'Telefónico (solo envío, sin comisión) · ' : ''
       await fetch(`${url}/functions/v1/enviar_push`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${service}` },
-        body: JSON.stringify({ user_ids: [elegido.socio.user_id], title: `Nuevo pedido · ${est?.nombre || ''}`, body: `#${pedido.codigo}${elegido.dist != null ? ` · ${(elegido.dist / 1000).toFixed(1)} km` : ''} — acepta antes de 3 min`, data: { tipo: 'nueva_asignacion', pedido_id, asignacion_id: asignacion?.id, urgente: true } }),
+        body: JSON.stringify({ user_ids: [elegido.socio.user_id], title: `Nuevo pedido · ${est?.nombre || ''}`, body: `${prefijoTel}#${pedido.codigo}${elegido.dist != null ? ` · ${(elegido.dist / 1000).toFixed(1)} km` : ''} — acepta antes de 3 min`, data: { tipo: 'nueva_asignacion', pedido_id, asignacion_id: asignacion?.id, urgente: true, telefonico: origen === 'telefonico' } }),
       })
     } catch (_) {}
 

@@ -87,7 +87,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
         supabase.from('socio_establecimiento')
           .select(`
             id, estado, es_captador, solicitado_at, aceptado_at,
-            tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct,
+            tarifa_modo, tarifa_fija, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct,
             tarifa_aceptada_en, tarifa_pendiente, tarifa_pendiente_at,
             tarifa_pendiente_origen, tarifa_pendiente_expira_en,
             establecimiento:establecimientos(id, nombre, logo_url, slug, tipo, rating, activo, estado, alta_confirmada_at)
@@ -148,6 +148,15 @@ export default function Restaurantes({ onOpenRestaurante }) {
         loading: false,
         error: null,
         tarifaActualizada: null,
+        // Tarifa que PROPONE el socio (18-jul-2026). Se siembra con la del restaurante
+        // como punto de partida razonable; el socio puede cambiarla antes de enviar.
+        tarifa_modo: 'distancia',
+        tarifa_fija: '',
+        tarifa_base: data?.tarifa_base ?? '',
+        tarifa_radio_base_km: data?.tarifa_radio_base_km ?? '',
+        tarifa_precio_km: data?.tarifa_precio_km ?? '',
+        tarifa_maxima: data?.tarifa_maxima ?? '',
+        comision_pct: 10,
       })
     } catch (e) {
       alert('No se pudo cargar la tarifa: ' + e.message)
@@ -168,11 +177,27 @@ export default function Restaurantes({ onOpenRestaurante }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session?.access_token}`,
         },
-        body: JSON.stringify({
-          establecimiento_id: modalSolicitar.establecimiento.id,
-          acepta_tarifa: true,
-          tarifa_snapshot: tarifaSnapshot || null,
-        }),
+        // 18-jul-2026: el socio propone SU tarifa al solicitar, para que el restaurante
+        // sepa cuánto cobra ANTES de aceptar la vinculación (solicitar-vinculacion v8).
+        body: JSON.stringify(
+          modalSolicitar.tarifa_modo === 'fija'
+            ? {
+                establecimiento_id: modalSolicitar.establecimiento.id,
+                tarifa_modo: 'fija',
+                tarifa_fija: Number(modalSolicitar.tarifa_fija),
+                comision_pct: modalSolicitar.comision_pct === '' || modalSolicitar.comision_pct == null ? 10 : Number(modalSolicitar.comision_pct),
+              }
+            : {
+                establecimiento_id: modalSolicitar.establecimiento.id,
+                tarifa_modo: 'distancia',
+                tarifa_base: Number(modalSolicitar.tarifa_base),
+                tarifa_radio_base_km: Number(modalSolicitar.tarifa_radio_base_km),
+                tarifa_precio_km: Number(modalSolicitar.tarifa_precio_km),
+                tarifa_maxima: modalSolicitar.tarifa_maxima === '' || modalSolicitar.tarifa_maxima == null ? null : Number(modalSolicitar.tarifa_maxima),
+                comision_pct: modalSolicitar.comision_pct === '' || modalSolicitar.comision_pct == null ? 10 : Number(modalSolicitar.comision_pct),
+                tarifa_snapshot: tarifaSnapshot || null,
+              }
+        ),
       })
       const data = await r.json().catch(() => ({}))
       if (r.status === 409 && data?.tarifa_actual) {
@@ -230,14 +255,26 @@ export default function Restaurantes({ onOpenRestaurante }) {
       const r = await fetch(`${FUNCTIONS_URL}/proponer-tarifa-socio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
-        body: JSON.stringify({
-          socio_establecimiento_id: m.vinc.id,
-          tarifa_base: Number(m.tarifa_base),
-          tarifa_radio_base_km: Number(m.tarifa_radio_base_km),
-          tarifa_precio_km: Number(m.tarifa_precio_km),
-          tarifa_maxima: m.tarifa_maxima === '' || m.tarifa_maxima == null ? null : Number(m.tarifa_maxima),
-          comision_pct: m.comision_pct === '' || m.comision_pct == null ? 10 : Number(m.comision_pct),
-        }),
+        // 18-jul-2026: el pacto lleva modalidad. En 'fija' solo viaja el importe por
+        // entrega; en 'distancia' los 4 campos de siempre (proponer-tarifa-socio v7).
+        body: JSON.stringify(
+          m.tarifa_modo === 'fija'
+            ? {
+                socio_establecimiento_id: m.vinc.id,
+                tarifa_modo: 'fija',
+                tarifa_fija: Number(m.tarifa_fija),
+                comision_pct: m.comision_pct === '' || m.comision_pct == null ? 10 : Number(m.comision_pct),
+              }
+            : {
+                socio_establecimiento_id: m.vinc.id,
+                tarifa_modo: 'distancia',
+                tarifa_base: Number(m.tarifa_base),
+                tarifa_radio_base_km: Number(m.tarifa_radio_base_km),
+                tarifa_precio_km: Number(m.tarifa_precio_km),
+                tarifa_maxima: m.tarifa_maxima === '' || m.tarifa_maxima == null ? null : Number(m.tarifa_maxima),
+                comision_pct: m.comision_pct === '' || m.comision_pct == null ? 10 : Number(m.comision_pct),
+              }
+        ),
       })
       const data = await r.json().catch(() => ({}))
       if (!r.ok || !data?.ok) throw new Error(data?.error || `Error (${r.status})`)
@@ -343,7 +380,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
           <button onClick={load} style={ds.primaryBtn}>Reintentar</button>
         </div>
       ) : tab === 'vinculados' ? (
-        renderVinculados({ vinculados, onOpenRestaurante, setTab, onAlta: () => setModalAlta(nuevoAltaState()), onProponer: (vinc) => setModalProponer({ vinc, tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', comision_pct: vinc.comision_pct ?? 10, error: null }) })
+        renderVinculados({ vinculados, onOpenRestaurante, setTab, onAlta: () => setModalAlta(nuevoAltaState()), onProponer: (vinc) => setModalProponer({ vinc, tarifa_modo: vinc.tarifa_modo === 'fija' ? 'fija' : 'distancia', tarifa_fija: vinc.tarifa_fija ?? '', tarifa_base: vinc.tarifa_base ?? '', tarifa_radio_base_km: vinc.tarifa_radio_base_km ?? '', tarifa_precio_km: vinc.tarifa_precio_km ?? '', tarifa_maxima: vinc.tarifa_maxima ?? '', comision_pct: vinc.comision_pct ?? 10, error: null }) })
       ) : tab === 'propuestas' ? (
         renderPropuestas({
           propuestas, respondiendo,
@@ -417,7 +454,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
       {modalSolicitar && (
         <ModalSolicitar
           state={modalSolicitar}
-          onAcepta={(v) => setModalSolicitar(m => ({ ...m, acepta: v }))}
+          onAcepta={(cambios) => setModalSolicitar(m => ({ ...m, ...cambios }))}
           onConfirm={confirmarSolicitar}
           onClose={() => setModalSolicitar(null)}
         />
@@ -762,60 +799,81 @@ function TablaComparativa({ filas, actual, propuesta }) {
 function ModalSolicitar({ state, onAcepta, onConfirm, onClose }) {
   const tarifaMostrada = state.tarifaActualizada || state.tarifa
   const e = state.establecimiento
+  // Para enviar hace falta la tarifa completa + la confirmación explícita.
+  const comisionOk = state.comision_pct !== '' && state.comision_pct != null
+  const tarifaOk = state.tarifa_modo === 'fija'
+    ? (state.tarifa_fija !== '' && state.tarifa_fija != null && comisionOk)
+    : (state.tarifa_base !== '' && state.tarifa_radio_base_km !== '' && state.tarifa_precio_km !== '' && comisionOk)
+  const puedeEnviar = tarifaOk && state.acepta
   return (
     <ModalShell onClose={onClose}>
       <h2 style={{ ...ds.h2, marginBottom: 6 }}>Solicitar vinculación</h2>
-      <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 16 }}>
-        Vas a solicitar la vinculación con <b style={{ color: colors.text }}>{e.nombre}</b>. Revisa la tarifa que cobrarás por cada pedido entregado.
+      <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 14 }}>
+        Vas a solicitar la vinculación con <b style={{ color: colors.text }}>{e.nombre}</b>. Indica <b style={{ color: colors.text }}>cuánto cobras por entrega</b>: el restaurante lo verá antes de aceptarte.
       </div>
 
-      {state.tarifaActualizada && (
+      {tarifaMostrada && (
         <div style={{
           padding: '10px 12px', borderRadius: 10, marginBottom: 12,
-          background: colors.warningSoft, color: colors.warning,
-          fontSize: type.xs, fontWeight: 600,
+          background: colors.surface2, border: `1px solid ${colors.border}`,
+          fontSize: type.xs, color: colors.textMute, lineHeight: 1.5,
         }}>
-          La tarifa del restaurante cambió mientras decidías. Esta es la nueva — revísala antes de confirmar.
+          Referencia · tarifa actual del restaurante: <b style={{ color: colors.text }}>{formatTarifa(tarifaMostrada)}</b>
         </div>
       )}
 
-      <div style={{
-        padding: '14px 16px', borderRadius: 12,
-        background: colors.surface2, border: `1px solid ${colors.border}`,
-        marginBottom: 16,
-      }}>
-        <div style={{
-          fontSize: 11, fontWeight: 700, color: colors.textMute,
-          letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8,
-        }}>
-          Tarifa propuesta
-        </div>
-        {tarifaMostrada ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {tarifaCampos(tarifaMostrada).map(c => (
-              <div key={c.campo}>
-                <div style={{ fontSize: 11, color: colors.textMute, fontWeight: 600 }}>{
-                  {
-                    tarifa_base: 'Tarifa base',
-                    tarifa_radio_base_km: 'Radio incluido',
-                    tarifa_precio_km: 'Precio km extra',
-                    tarifa_maxima: 'Tarifa máxima',
-                  }[c.campo]
-                }</div>
-                <div style={{
-                  fontSize: 17, fontWeight: 800, color: colors.text,
-                  fontVariantNumeric: 'tabular-nums', marginTop: 2,
-                }}>
-                  {c.fmt(c.valor)}
-                </div>
-              </div>
-            ))}
+      {/* Modalidad de la tarifa que propone el socio */}
+      <label style={{ fontSize: 11, color: colors.textMute, fontWeight: 600, display: 'block', marginBottom: 6 }}>
+        ¿Cómo cobras?
+      </label>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[
+          { v: 'fija', t: 'Precio fijo', d: 'Lo mismo por cada entrega.' },
+          { v: 'distancia', t: 'Por distancia', d: 'Base + coste por km extra.' },
+        ].map(o => {
+          const activo = (state.tarifa_modo === 'fija' ? 'fija' : 'distancia') === o.v
+          return (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => onAcepta({ tarifa_modo: o.v })}
+              style={{
+                flex: 1, textAlign: 'left', cursor: 'pointer',
+                padding: '10px 12px', borderRadius: 10,
+                border: `1.5px solid ${activo ? colors.primary : colors.border}`,
+                background: activo ? (colors.primarySoft || colors.surface2) : colors.surface,
+                fontFamily: 'inherit',
+              }}
+            >
+              <div style={{ fontSize: type.sm, fontWeight: 700, color: activo ? colors.primary : colors.text }}>{o.t}</div>
+              <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>{o.d}</div>
+            </button>
+          )
+        })}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        {(state.tarifa_modo === 'fija'
+          ? [{ k: 'tarifa_fija', l: 'Precio por entrega (€)' }, { k: 'comision_pct', l: 'Comisión (%)' }]
+          : [
+              { k: 'tarifa_base', l: 'Tarifa base (€)' },
+              { k: 'tarifa_radio_base_km', l: 'Radio incluido (km)' },
+              { k: 'tarifa_precio_km', l: 'Precio km extra (€)' },
+              { k: 'tarifa_maxima', l: 'Tarifa máxima (€)' },
+              { k: 'comision_pct', l: 'Comisión (%)' },
+            ]
+        ).map(c => (
+          <div key={c.k}>
+            <label style={{ fontSize: 11, color: colors.textMute, fontWeight: 600, display: 'block', marginBottom: 4 }}>{c.l}</label>
+            <input
+              type="number" step={c.k === 'comision_pct' ? '0.5' : '0.01'} min="0"
+              max={c.k === 'comision_pct' ? '100' : undefined}
+              value={state[c.k] ?? ''}
+              onChange={(ev) => onAcepta({ [c.k]: ev.target.value })}
+              style={ds.input}
+            />
           </div>
-        ) : (
-          <div style={{ fontSize: type.sm, color: colors.textDim }}>
-            El restaurante no tiene tarifa propia. Se aplicará la <b>tarifa por defecto</b> de la plataforma.
-          </div>
-        )}
+        ))}
       </div>
 
       <label style={{
@@ -824,11 +882,11 @@ function ModalSolicitar({ state, onAcepta, onConfirm, onClose }) {
       }}>
         <input
           type="checkbox" checked={state.acepta}
-          onChange={(e) => onAcepta(e.target.checked)}
+          onChange={(ev) => onAcepta({ acepta: ev.target.checked })}
           style={{ marginTop: 3, accentColor: colors.terracotta }}
         />
         <span>
-          Acepto la tarifa propuesta y entiendo que el restaurante puede proponerme cambios futuros que tendré que aceptar o rechazar.
+          Confirmo mi tarifa. El restaurante la verá al recibir la solicitud y podrá aceptarla o rechazarla.
         </span>
       </label>
 
@@ -844,10 +902,10 @@ function ModalSolicitar({ state, onAcepta, onConfirm, onClose }) {
         <button onClick={onClose} style={ds.secondaryBtn} disabled={state.loading}>Cancelar</button>
         <button
           onClick={onConfirm}
-          disabled={!state.acepta || state.loading}
-          style={{ ...ds.glossyBtn, opacity: (!state.acepta || state.loading) ? 0.5 : 1 }}
+          disabled={!puedeEnviar || state.loading}
+          style={{ ...ds.glossyBtn, opacity: (!puedeEnviar || state.loading) ? 0.5 : 1 }}
         >
-          {state.loading ? 'Enviando…' : 'Confirmar solicitud'}
+          {state.loading ? 'Enviando…' : 'Enviar solicitud y tarifa'}
         </button>
       </div>
     </ModalShell>
@@ -883,20 +941,61 @@ function ModalRechazar({ state, loading, onChange, onConfirm, onClose }) {
 }
 
 function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
-  const campos = [
-    { k: 'tarifa_base', l: 'Tarifa base (€)', req: true },
-    { k: 'tarifa_radio_base_km', l: 'Radio incluido (km)', req: true },
-    { k: 'tarifa_precio_km', l: 'Precio km extra (€)', req: true },
-    { k: 'tarifa_maxima', l: 'Tarifa máxima (€)', req: false },
-    { k: 'comision_pct', l: 'Comisión (%)', req: true },
-  ]
-  const completo = state.tarifa_base !== '' && state.tarifa_radio_base_km !== '' && state.tarifa_precio_km !== '' && state.comision_pct !== '' && state.comision_pct != null
+  // 18-jul-2026: el pacto puede ser PRECIO FIJO por entrega o POR DISTANCIA.
+  // Antes solo existía "por distancia" y no había forma de pactar (ni guardar) un fijo.
+  const modo = state.tarifa_modo === 'fija' ? 'fija' : 'distancia'
+  const campos = modo === 'fija'
+    ? [
+        { k: 'tarifa_fija', l: 'Precio por entrega (€)', req: true },
+        { k: 'comision_pct', l: 'Comisión (%)', req: true },
+      ]
+    : [
+        { k: 'tarifa_base', l: 'Tarifa base (€)', req: true },
+        { k: 'tarifa_radio_base_km', l: 'Radio incluido (km)', req: true },
+        { k: 'tarifa_precio_km', l: 'Precio km extra (€)', req: true },
+        { k: 'tarifa_maxima', l: 'Tarifa máxima (€)', req: false },
+        { k: 'comision_pct', l: 'Comisión (%)', req: true },
+      ]
+  const comisionOk = state.comision_pct !== '' && state.comision_pct != null
+  const completo = modo === 'fija'
+    ? (state.tarifa_fija !== '' && state.tarifa_fija != null && comisionOk)
+    : (state.tarifa_base !== '' && state.tarifa_radio_base_km !== '' && state.tarifa_precio_km !== '' && comisionOk)
+
+  const OpcionModo = ({ valor, titulo, desc }) => {
+    const activo = modo === valor
+    return (
+      <button
+        type="button"
+        onClick={() => onChange({ tarifa_modo: valor })}
+        style={{
+          flex: 1, textAlign: 'left', cursor: 'pointer',
+          padding: '10px 12px', borderRadius: 10,
+          border: `1.5px solid ${activo ? colors.primary : colors.border}`,
+          background: activo ? colors.primarySoft || colors.surface2 : colors.surface,
+          fontFamily: 'inherit',
+        }}
+      >
+        <div style={{ fontSize: type.sm, fontWeight: 700, color: activo ? colors.primary : colors.text }}>{titulo}</div>
+        <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2, lineHeight: 1.35 }}>{desc}</div>
+      </button>
+    )
+  }
+
   return (
     <ModalShell onClose={onClose}>
       <h2 style={{ ...ds.h2, marginBottom: 6 }}>Proponer tarifa</h2>
-      <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 16 }}>
+      <div style={{ fontSize: type.sm, color: colors.textMute, marginBottom: 14 }}>
         Propones a <b style={{ color: colors.text }}>{state.vinc.establecimiento?.nombre}</b> la tarifa de reparto que cobrarás por pedido. El restaurante tiene 7 días para aceptarla o rechazarla.
       </div>
+
+      <label style={{ fontSize: 11, color: colors.textMute, fontWeight: 600, display: 'block', marginBottom: 6 }}>
+        Tipo de tarifa
+      </label>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <OpcionModo valor="fija" titulo="Precio fijo" desc="Lo mismo por cada entrega, sin importar la distancia." />
+        <OpcionModo valor="distancia" titulo="Por distancia" desc="Base + coste por km fuera del radio incluido." />
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         {campos.map(c => (
           <div key={c.k}>

@@ -58,7 +58,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
           supabase.from('socio_establecimiento')
             .select(`
               id, estado, solicitado_at, aceptado_at, exclusivo, destacado, orden_destacado,
-              tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct, tarifa_aceptada_en,
+              tarifa_modo, tarifa_fija, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct, tarifa_aceptada_en,
               tarifa_pendiente, tarifa_pendiente_origen, tarifa_pendiente_expira_en
             `)
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id).maybeSingle(),
@@ -117,13 +117,21 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
   // Tarifa pactada (snapshot vigente en socio_establecimiento)
   const tarifaPactada = useMemo(() => {
     if (!vinculacion) return null
-    const t = {
-      tarifa_base: vinculacion.tarifa_base,
-      tarifa_radio_base_km: vinculacion.tarifa_radio_base_km,
-      tarifa_precio_km: vinculacion.tarifa_precio_km,
-      tarifa_maxima: vinculacion.tarifa_maxima,
-    }
-    const tieneAlguna = Object.values(t).some(v => v !== null && v !== undefined)
+    // 18-jul-2026: el pacto puede ser 'fija' (precio por entrega) o 'distancia'.
+    // Los vínculos antiguos no traen tarifa_modo → se tratan como 'distancia'.
+    const esFija = vinculacion.tarifa_modo === 'fija'
+    const t = esFija
+      ? { tarifa_modo: 'fija', tarifa_fija: vinculacion.tarifa_fija }
+      : {
+          tarifa_modo: 'distancia',
+          tarifa_base: vinculacion.tarifa_base,
+          tarifa_radio_base_km: vinculacion.tarifa_radio_base_km,
+          tarifa_precio_km: vinculacion.tarifa_precio_km,
+          tarifa_maxima: vinculacion.tarifa_maxima,
+        }
+    const tieneAlguna = Object.entries(t)
+      .filter(([k]) => k !== 'tarifa_modo')
+      .some(([, v]) => v !== null && v !== undefined)
     if (!tieneAlguna) return null
     return { ...t, comision_pct: vinculacion.comision_pct }
   }, [vinculacion])

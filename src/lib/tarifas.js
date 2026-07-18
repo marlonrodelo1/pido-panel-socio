@@ -21,9 +21,25 @@ export const fmtPct = (n) => {
   }) + ' %'
 }
 
+// ¿La tarifa está pactada como PRECIO FIJO por entrega? (18-jul-2026)
+// Las tarifas antiguas no traen tarifa_modo → se asumen 'distancia'.
+export function esTarifaFija(t) {
+  return t?.tarifa_modo === 'fija'
+}
+
 // Formato compacto: "3,00 € (≤5 km) · +0,50 €/km · máx 10,00 €"
+// En modo fijo: "4,50 € por entrega · 10 % comisión"
 export function formatTarifa(t) {
   if (!t) return 'Tarifa por defecto de la plataforma'
+
+  if (esTarifaFija(t)) {
+    const partes = [`${fmtEuro(t.tarifa_fija)} por entrega`]
+    if (t.comision_pct !== null && t.comision_pct !== undefined) {
+      partes.push(`${fmtPct(t.comision_pct)} comisión`)
+    }
+    return partes.join(' · ')
+  }
+
   const base = t.tarifa_base
   const radio = t.tarifa_radio_base_km
   const porKm = t.tarifa_precio_km
@@ -48,6 +64,11 @@ export function formatTarifa(t) {
 
 // Versión larga, una línea por concepto. Se usa en la tabla comparativa.
 export function tarifaCampos(t) {
+  if (esTarifaFija(t)) {
+    return [
+      { campo: 'tarifa_fija', label: 'Precio por entrega', valor: t?.tarifa_fija, fmt: fmtEuro },
+    ]
+  }
   return [
     { campo: 'tarifa_base', label: 'Tarifa base', valor: t?.tarifa_base, fmt: fmtEuro },
     { campo: 'tarifa_radio_base_km', label: 'Radio incluido', valor: t?.tarifa_radio_base_km, fmt: fmtKm },
@@ -64,6 +85,29 @@ export function tarifaCampos(t) {
 export function compararTarifas(actual, propuesta) {
   const a = actual || {}
   const p = propuesta || {}
+
+  // Cambio de MODALIDAD (fija <-> distancia): los importes no son comparables campo a
+  // campo, así que se muestra como un único cambio de tipo de acuerdo.
+  const modoA = esTarifaFija(a) ? 'fija' : 'distancia'
+  const modoP = esTarifaFija(p) ? 'fija' : 'distancia'
+  if (modoA !== modoP) {
+    return [
+      { campo: 'tarifa_modo', antes: modoA, despues: modoP, mejor: 'cambio_modalidad', esModalidad: true },
+      { campo: 'comision_pct', antes: a.comision_pct, despues: p.comision_pct, mejor: 'igual' },
+    ]
+  }
+
+  // Ambas fijas: solo importe + comisión.
+  if (modoP === 'fija') {
+    const antes = a.tarifa_fija, despues = p.tarifa_fija
+    const igual = Number(antes) === Number(despues)
+    return [
+      { campo: 'tarifa_fija', antes, despues, mejor: igual ? 'igual' : (Number(despues) > Number(antes) ? 'despues' : 'antes') },
+      { campo: 'comision_pct', antes: a.comision_pct, despues: p.comision_pct,
+        mejor: Number(a.comision_pct) === Number(p.comision_pct) ? 'igual' : (Number(p.comision_pct) > Number(a.comision_pct) ? 'despues' : 'antes') },
+    ]
+  }
+
   const cmp = (campo, subeEsMejor) => {
     const antes = a[campo]
     const despues = p[campo]

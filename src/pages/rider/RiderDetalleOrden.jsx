@@ -34,8 +34,9 @@ const PASOS = [
 ]
 
 export default function RiderDetalleOrden({ pedido: initial, onBack }) {
-  const { refreshAsignaciones } = useRider() || {}
+  const { refreshAsignaciones, socio } = useRider() || {}
   const [pedido, setPedido] = useState(initial)
+  const [pacto, setPacto] = useState(null) // tarifa pactada con el restaurante (fija/distancia)
   const [items, setItems] = useState([])
   const [est, setEst] = useState(null)
   const [cliente, setCliente] = useState(null)
@@ -55,6 +56,15 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
       const ped = pedRes.data ? { ...pedido, ...pedRes.data } : pedido
       setPedido(ped)
       setItems(itemsRes.data || [])
+
+      // Pacto vigente con ese restaurante: si es precio fijo, se muestra en la ganancia.
+      if (socio?.id && ped.establecimiento_id) {
+        supabase.from('socio_establecimiento')
+          .select('tarifa_modo, tarifa_fija')
+          .eq('socio_id', socio.id).eq('establecimiento_id', ped.establecimiento_id)
+          .maybeSingle()
+          .then(({ data }) => { if (!cancel && data) setPacto(data) }, () => {})
+      }
 
       const [estRes, cliRes] = await Promise.all([
         ped.establecimiento_id
@@ -357,7 +367,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
         </Card>
 
         {/* TU GANANCIA — desglose de lo que gana el socio en este pedido */}
-        <GananciaCard pedido={pedido} />
+        <GananciaCard pedido={pedido} pacto={pacto} />
 
         {/* ACCIONES según estado */}
         {paso === 0 && (
@@ -458,8 +468,11 @@ function Stepper({ paso }) {
 }
 
 // ─── Tu ganancia (desglose para el socio) ───────────────────
-function GananciaCard({ pedido }) {
+function GananciaCard({ pedido, pacto }) {
   const isDelivery = pedido.modo_entrega === 'delivery'
+  const esTelefonico = pedido.origen_pedido === 'telefonico'
+  const esTarifaFija = pacto?.tarifa_modo === 'fija'
+  const importeFijo = Number(pacto?.tarifa_fija ?? 0)
   const g = calcGanancia(pedido)
   return (
     <div style={{
@@ -467,10 +480,20 @@ function GananciaCard({ pedido }) {
       border: `1px solid ${colors.sage}`,
     }}>
       <SectionLabel>Tu ganancia</SectionLabel>
+      {esTarifaFija && (
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: colors.sage2, marginBottom: 8 }}>
+          Tarifa fija pactada: {importeFijo.toFixed(2).replace('.', ',')} € por entrega, sea cual sea la distancia.
+        </div>
+      )}
+      {esTelefonico && (
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: colors.sage2, marginBottom: 8 }}>
+          Pedido telefónico: cobras solo el envío, sin comisión.
+        </div>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
         {isDelivery && <GananciaRow label="Envío" value={g.envio} />}
-        {isDelivery && <GananciaRow label="Propina" value={g.propina} />}
-        <GananciaRow label="Comisión 10%" value={g.comision} />
+        {isDelivery && !esTelefonico && <GananciaRow label="Propina" value={g.propina} />}
+        {!esTelefonico && <GananciaRow label="Comisión 10%" value={g.comision} />}
       </div>
 
       <div style={{ height: 1, background: colors.sage, opacity: 0.5, margin: '12px 0' }} />

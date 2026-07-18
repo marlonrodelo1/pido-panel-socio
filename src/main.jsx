@@ -7,6 +7,13 @@ import ConfigErrorScreen from './components/ConfigErrorScreen.jsx'
 import { SUPABASE_CONFIG_OK } from './lib/supabase'
 import { setupStatusBar, hideSplash } from './lib/capacitor'
 import { initLiveUpdates } from './lib/liveUpdates'
+import { installPedidoSoundUnlock } from './lib/pedidoSound'
+
+// Desbloqueo del audio del pedido LO ANTES POSIBLE (18-jul-2026). Antes se instalaba
+// dentro de RiderProvider, que solo se monta tras el gate de sesión: los toques en el
+// Login no contaban, así que en el arranque en frío el audio quedaba bloqueado y el
+// modal de pedido salía MUDO. Cualquier toque en la app ya vale.
+installPedidoSoundUnlock()
 
 // OTA (Capgo): confirma que este bundle arrancó bien (si no, Capgo revierte al anterior) y
 // deja que autoUpdate traiga las siguientes versiones sin pasar por la tienda. No-op en web.
