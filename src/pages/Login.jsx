@@ -97,15 +97,21 @@ export default function Login({ onBack }) {
 
   return (
     <div style={{
-      // Altura del viewport REALMENTE visible (ver useEffect de visualViewport arriba).
-      // En iOS/WKWebView ni 100vh ni 100dvh se encogen al abrir el teclado: el formulario
-      // quedaba detrás del teclado y la pantalla se podía arrastrar de más. visualViewport
-      // sí reporta el alto real, y es JS puro (sin plugin nativo).
-      height: altoVisible, minHeight: altoVisible,
+      // FIXED al viewport visible: en iOS el teclado no encoge el viewport y además
+      // WKWebView desplaza TODA la página para enfocar el input, dejando el formulario
+      // cortado arriba y un hueco enorme debajo. Anclándolo con position:fixed la página
+      // ya no se puede arrastrar; visualViewport da el alto libre real sobre el teclado
+      // y el contenido scrollea DENTRO si no cabe.
+      position: 'fixed', top: 0, left: 0, right: 0,
+      height: altoVisible,
       background: colors.cream, fontFamily: type.family,
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      // OJO: NADA de justifyContent:'center' aquí. Con flex centrado, si el contenido no
+      // cabe (teclado abierto) el desbordamiento SUPERIOR queda inalcanzable: el logo se
+      // corta arriba y no hay forma de subir. El centrado se hace con `margin:auto` en el
+      // hijo, que sí degrada bien a scroll cuando falta sitio.
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
       padding: 'calc(env(safe-area-inset-top) + 32px) 20px 32px',
-      position: 'relative', overflow: 'hidden',
+      overflowY: 'auto', WebkitOverflowScrolling: 'touch',
     }}>
       {onBack && (
         <button onClick={onBack} style={{
@@ -117,7 +123,8 @@ export default function Login({ onBack }) {
         }}>← Volver</button>
       )}
 
-      <div style={{ width: '100%', maxWidth: 380 }}>
+      {/* margin:auto = centrado vertical cuando cabe, y scroll normal cuando no (teclado). */}
+      <div style={{ width: '100%', maxWidth: 380, margin: 'auto 0', flexShrink: 0 }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img src="/icon.png" alt="Pidoo Socios" width={108} height={108}
             style={{
