@@ -1,4 +1,7 @@
 // create-shipday-order — DISPATCHER PROPIO (sin Shipday) desde 20-jun-2026.
+// v55 (19-jul-2026): RECHAZO EXPLICITO = DEFINITIVO. Si el rider pulsa "Rechazar", ya no
+//   se le vuelve a ofrecer ese pedido en la 2a vuelta del round-robin (antes tenia que
+//   rechazarlo dos veces). Los timeout SI siguen volviendo: no llegar a tiempo no es un no.
 // Asigna el pedido delivery al mejor rider (socio) ONLINE del establecimiento.
 // v54 (18-jul-2026): AUTONOMIA DEL SOCIO (features de Marlon):
 //   1) socio_establecimiento.reparto_activo — el socio pausa restaurantes concretos.
@@ -256,7 +259,7 @@ Deno.serve(async (req) => {
 
   // 1b. Historial de asignaciones + IDEMPOTENCIA. Si hay una asignacion activa (esperando o
   //     aceptada), se corta aqui sin disparar ningun aviso.
-  const { data: prev, error: prevErr } = await sb.from('pedido_asignaciones').select('id, rider_account_id, intento, estado').eq('pedido_id', pedido.id)
+  const { data: prev, error: prevErr } = await sb.from('pedido_asignaciones').select('id, rider_account_id, intento, estado, motivo_rechazo').eq('pedido_id', pedido.id)
   if (prevErr) return json({ error: 'historial_query_failed', detail: prevErr.message }, 500)
   const maxPrev = (prev || []).reduce((m: number, p: any) => Math.max(m, p.intento || 0), 0)
   const yaActiva = (prev || []).find((p: any) => p.estado === 'esperando_aceptacion' || p.estado === 'aceptado')
@@ -367,7 +370,25 @@ Deno.serve(async (req) => {
   for (const p of (prev || []) as any[]) {
     offersByRider.set(p.rider_account_id, (offersByRider.get(p.rider_account_id) || 0) + 1)
   }
-  const conOffers = (elegibles as any[]).map((c) => ({ ...c, offers: offersByRider.get(c.rider.id) || 0 }))
+
+  // v55 (19-jul-2026, Marlon: "si lo rechazo, que se rechace una sola vez"): un rechazo
+  // EXPLÍCITO del rider es DEFINITIVO — no se le vuelve a ofrecer el mismo pedido en la
+  // 2ª vuelta. Antes el round-robin se lo reofrecía y tenía que rechazarlo dos veces.
+  // Los TIMEOUT sí siguen volviendo en la 2ª vuelta: no ver el móvil a tiempo no es
+  // lo mismo que decir que no (puede estar conduciendo y querer el pedido después).
+  const rechazoExplicito = new Set<string>()
+  for (const p of (prev || []) as any[]) {
+    if (p.estado === 'rechazado' && p.motivo_rechazo && p.motivo_rechazo !== 'timeout') {
+      rechazoExplicito.add(p.rider_account_id)
+    }
+  }
+  const noRechazados = (elegibles as any[]).filter((c) => !rechazoExplicito.has(c.rider.id))
+  if (!noRechazados.length) {
+    // Todos los elegibles lo han rechazado a mano => no hay a quién ofrecérselo.
+    return await cancelarPorNoCobertura()
+  }
+
+  const conOffers = noRechazados.map((c) => ({ ...c, offers: offersByRider.get(c.rider.id) || 0 }))
   const minOffers = Math.min(...conOffers.map((c) => c.offers))
   if (minOffers >= MAX_VUELTAS) return await cancelarPorNoCobertura()
   const porScore = (a: any, b: any) => a.score - b.score

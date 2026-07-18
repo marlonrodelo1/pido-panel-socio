@@ -21,6 +21,7 @@
 
 let audio = null
 let unlocked = false
+let unlocking = false
 let installed = false
 
 export function getPedidoAudio() {
@@ -38,22 +39,34 @@ export function getPedidoAudio() {
 }
 
 function unlock() {
-  if (unlocked) return
+  // Guard SINCRONO: un solo toque dispara pointerdown Y click (y touchend). Como play()
+  // es asincrono, sin este guard entraban 2-3 llamadas antes de que `unlocked` pasara a
+  // true y el chime sonaba varias veces al abrir la app. (Visto en iPhone, 19-jul-2026.)
+  if (unlocked || unlocking) return
   const a = getPedidoAudio()
   if (!a) return
+  unlocking = true
   try {
-    const vol = a.volume
-    a.volume = 0.01
+    // MUTED, no volumen bajo: en iOS `audio.volume` es de SOLO LECTURA (WebKit ignora
+    // la asignacion), asi que el truco de "reproducir a 0.01" sonaba a TODO VOLUMEN nada
+    // mas abrir la app. `muted` si se respeta. Si iOS no acepta el gesto muteado como
+    // desbloqueo, no pasa nada: el modal reintenta play() cada 800 ms y al primer toque
+    // del rider suena igual.
+    a.muted = true
     const p = a.play()
-    if (p && typeof p.then === 'function') {
-      p.then(() => {
-        a.pause()
-        a.currentTime = 0
-        a.volume = vol
-        unlocked = true
-      }).catch(() => { a.volume = vol })
+    const restaurar = () => {
+      try { a.pause(); a.currentTime = 0; a.muted = false } catch (_) {}
+      unlocking = false
     }
-  } catch (_) { try { a.volume = 1.0 } catch (_) {} }
+    if (p && typeof p.then === 'function') {
+      p.then(() => { restaurar(); unlocked = true }).catch(() => { restaurar() })
+    } else {
+      restaurar()
+    }
+  } catch (_) {
+    try { a.muted = false } catch (_) {}
+    unlocking = false
+  }
 }
 
 export function installPedidoSoundUnlock() {

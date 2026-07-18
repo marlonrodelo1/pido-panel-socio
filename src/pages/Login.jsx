@@ -79,7 +79,10 @@ export default function Login({ onBack }) {
 
   return (
     <div style={{
-      minHeight: '100vh', background: colors.cream, fontFamily: type.family,
+      // 100dvh (no 100vh): en iOS el teclado NO reduce 100vh, así que el contenido
+      // centrado quedaba detrás del teclado y la pantalla se arrastraba de más.
+      // dvh sigue al viewport realmente visible.
+      minHeight: '100dvh', background: colors.cream, fontFamily: type.family,
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: 'calc(env(safe-area-inset-top) + 32px) 20px 32px',
       position: 'relative',
