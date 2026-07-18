@@ -31,6 +31,24 @@ function Field({ label, ...props }) {
 
 export default function Login({ onBack }) {
   const { authError, setAuthError } = useSocio()
+
+  // Alto del viewport VISIBLE. En iOS (WKWebView) el teclado no reduce ni 100vh ni
+  // 100dvh: el formulario se quedaba debajo del teclado y la pantalla se arrastraba.
+  // visualViewport sí refleja el hueco real que deja el teclado. JS puro, sin plugin.
+  const [altoVisible, setAltoVisible] = useState('100dvh')
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null
+    if (!vv) return
+    const ajustar = () => setAltoVisible(`${Math.round(vv.height)}px`)
+    ajustar()
+    vv.addEventListener('resize', ajustar)
+    vv.addEventListener('scroll', ajustar)
+    return () => {
+      vv.removeEventListener('resize', ajustar)
+      vv.removeEventListener('scroll', ajustar)
+    }
+  }, [])
+
   const [modo, setModo] = useState('login')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(authError)
@@ -79,13 +97,15 @@ export default function Login({ onBack }) {
 
   return (
     <div style={{
-      // 100dvh (no 100vh): en iOS el teclado NO reduce 100vh, así que el contenido
-      // centrado quedaba detrás del teclado y la pantalla se arrastraba de más.
-      // dvh sigue al viewport realmente visible.
-      minHeight: '100dvh', background: colors.cream, fontFamily: type.family,
+      // Altura del viewport REALMENTE visible (ver useEffect de visualViewport arriba).
+      // En iOS/WKWebView ni 100vh ni 100dvh se encogen al abrir el teclado: el formulario
+      // quedaba detrás del teclado y la pantalla se podía arrastrar de más. visualViewport
+      // sí reporta el alto real, y es JS puro (sin plugin nativo).
+      height: altoVisible, minHeight: altoVisible,
+      background: colors.cream, fontFamily: type.family,
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: 'calc(env(safe-area-inset-top) + 32px) 20px 32px',
-      position: 'relative',
+      position: 'relative', overflow: 'hidden',
     }}>
       {onBack && (
         <button onClick={onBack} style={{

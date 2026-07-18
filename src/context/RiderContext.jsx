@@ -22,7 +22,7 @@ import { startTracking, stopTracking, getCurrentPosition, requestLocationPermiss
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
 import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption } from '../lib/offlineBeacon'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
-import { installPedidoSoundUnlock, getPedidoAudio } from '../lib/pedidoSound'
+import { installPedidoSoundUnlock } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
@@ -404,13 +404,12 @@ export function RiderProvider({ children }) {
 
   // ─── Listeners push: fallback cuando realtime no llega ─────
   useEffect(() => {
-    const offRecv = onPushReceived((detail) => {
-      // 18-jul-2026: arrancar el timbre YA, sin esperar a que monte el modal. Si el push
-      // llega con la app viva pero el realtime caído, antes pasaban segundos en silencio.
-      if (detail?.data?.tipo === 'nueva_asignacion') {
-        try { getPedidoAudio()?.play?.().catch(() => {}) } catch (_) {}
-      }
-      // Re-fetch para coger la asignación nueva
+    const offRecv = onPushReceived(() => {
+      // OJO (19-jul-2026): aquí NO se reproduce el sonido. Se intentó ("arrancar el timbre
+      // sin esperar al modal") y salió mal: iOS entrega de golpe los push ACUMULADOS al
+      // abrir la app, así que sonaba el chime nada más abrir, por pedidos viejos que ya no
+      // existían. El timbre es responsabilidad EXCLUSIVA de ModalPedidoEntrante, que solo
+      // suena si hay una asignación pendiente de verdad (y ya reintenta play cada 800 ms).
       refreshAsignaciones()
     })
     const offTap = onPushTapped(() => {
