@@ -32,22 +32,6 @@ function Field({ label, ...props }) {
 export default function Login({ onBack }) {
   const { authError, setAuthError } = useSocio()
 
-  // Alto del viewport VISIBLE. En iOS (WKWebView) el teclado no reduce ni 100vh ni
-  // 100dvh: el formulario se quedaba debajo del teclado y la pantalla se arrastraba.
-  // visualViewport sí refleja el hueco real que deja el teclado. JS puro, sin plugin.
-  const [altoVisible, setAltoVisible] = useState('100dvh')
-  useEffect(() => {
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null
-    if (!vv) return
-    const ajustar = () => setAltoVisible(`${Math.round(vv.height)}px`)
-    ajustar()
-    vv.addEventListener('resize', ajustar)
-    vv.addEventListener('scroll', ajustar)
-    return () => {
-      vv.removeEventListener('resize', ajustar)
-      vv.removeEventListener('scroll', ajustar)
-    }
-  }, [])
 
   const [modo, setModo] = useState('login')
   const [loading, setLoading] = useState(false)
@@ -97,21 +81,17 @@ export default function Login({ onBack }) {
 
   return (
     <div style={{
-      // FIXED al viewport visible: en iOS el teclado no encoge el viewport y además
-      // WKWebView desplaza TODA la página para enfocar el input, dejando el formulario
-      // cortado arriba y un hueco enorme debajo. Anclándolo con position:fixed la página
-      // ya no se puede arrastrar; visualViewport da el alto libre real sobre el teclado
-      // y el contenido scrollea DENTRO si no cabe.
-      position: 'fixed', top: 0, left: 0, right: 0,
-      height: altoVisible,
+      // El teclado lo gestiona el plugin Keyboard (resize:'native' en capacitor.config):
+      // el WEBVIEW se encoge, así que aquí basta con ocupar el alto disponible.
+      // OJO: NADA de justifyContent:'center'. Con flex centrado, si el contenido no cabe
+      // (pantallas bajas / teclado) el desbordamiento SUPERIOR queda inalcanzable: el logo
+      // se corta arriba y no hay forma de subir. El centrado lo hace `margin:auto` en el
+      // hijo, que sí degrada a scroll normal cuando falta sitio.
+      minHeight: '100vh',
       background: colors.cream, fontFamily: type.family,
-      // OJO: NADA de justifyContent:'center' aquí. Con flex centrado, si el contenido no
-      // cabe (teclado abierto) el desbordamiento SUPERIOR queda inalcanzable: el logo se
-      // corta arriba y no hay forma de subir. El centrado se hace con `margin:auto` en el
-      // hijo, que sí degrada bien a scroll cuando falta sitio.
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       padding: 'calc(env(safe-area-inset-top) + 32px) 20px 32px',
-      overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+      position: 'relative',
     }}>
       {onBack && (
         <button onClick={onBack} style={{

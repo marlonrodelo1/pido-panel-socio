@@ -9,6 +9,15 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
   },
   plugins: {
+    // Teclado (19-jul-2026). En iOS, WKWebView PANEA su UIScrollView nativo para enfocar
+    // el input: la página entera se arrastraba dejando el formulario cortado arriba y un
+    // hueco enorme abajo. Eso NO se puede evitar desde el DOM — se intentaron 100dvh,
+    // visualViewport y position:fixed y ninguno sirve, porque el paneo ocurre en UIKit,
+    // por debajo del CSS. resize:'native' hace que el WEBVIEW se encoja al abrir el
+    // teclado, así que no hay nada que panear. Android ya hacía adjustResize.
+    Keyboard: {
+      resize: 'native',
+    },
     SplashScreen: {
       launchShowDuration: 1500,
       backgroundColor: '#16130F',
