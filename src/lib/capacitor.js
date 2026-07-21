@@ -118,6 +118,10 @@ export async function getPlugin(name) {
         mod = await import('@capacitor/splash-screen')
         _pluginsCache[name] = mod.SplashScreen
         break
+      case 'AppleSignIn':
+        mod = await import('@capacitor-community/apple-sign-in')
+        _pluginsCache[name] = mod.SignInWithApple
+        break
       default:
         return null
     }

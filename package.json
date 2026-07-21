@@ -11,6 +11,7 @@
     "postinstall": "node scripts/fix-bg-geo-spm.mjs"
   },
   "dependencies": {
+    "@capacitor-community/apple-sign-in": "^7.1.0",
     "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor/android": "^8.3.4",
     "@capacitor/app": "^8.1.0",
