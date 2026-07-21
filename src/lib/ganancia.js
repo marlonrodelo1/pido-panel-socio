@@ -29,8 +29,10 @@ export function calcGanancia(pedido, pacto) {
 
   const subtotal = Number(p.subtotal) || 0
 
-  // Comisión: telefónico = 0; si el pacto define comision_pct, se respeta; si no, 10%.
-  const comisionFrac = esTelefonico
+  // Comisión: 0 si telefónico O si es una ENTREGA con tarifa fija (el fijo ya es el pago
+  // completo del reparto, "vaya donde vaya", sin comisión encima — decisión 21-jul-2026,
+  // alineado con calc_ganancia_socio de la BD). Resto: comision_pct del pacto (o 10% por defecto).
+  const comisionFrac = (esTelefonico || (isDelivery && esFija))
     ? 0
     : (pacto && pacto.comision_pct != null ? Number(pacto.comision_pct) / 100 : COMISION_PCT)
   const comision = round2(subtotal * comisionFrac)

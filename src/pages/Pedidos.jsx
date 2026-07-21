@@ -338,6 +338,7 @@ function DetalleModal({ pedidoId, onClose }) {
   const [pedido, setPedido] = useState(null)
   const [items, setItems] = useState([])
   const [comisionPct, setComisionPct] = useState(10)
+  const [tarifaPacto, setTarifaPacto] = useState({ tarifa_modo: null, tarifa_fija: null })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -362,11 +363,12 @@ function DetalleModal({ pedidoId, onClose }) {
       if (ped?.establecimiento_id && socio?.id) {
         const { data: vinc } = await supabase
           .from('socio_establecimiento')
-          .select('comision_pct')
+          .select('comision_pct, tarifa_modo, tarifa_fija')
           .eq('socio_id', socio.id)
           .eq('establecimiento_id', ped.establecimiento_id)
           .maybeSingle()
         if (vinc?.comision_pct != null) setComisionPct(Number(vinc.comision_pct))
+        if (vinc) setTarifaPacto({ tarifa_modo: vinc.tarifa_modo, tarifa_fija: vinc.tarifa_fija })
       }
       setLoading(false)
     })()
@@ -380,11 +382,19 @@ function DetalleModal({ pedidoId, onClose }) {
   const envio = Number(pedido?.coste_envio || pedido?.precio_envio || 0)
   const propina = Number(pedido?.propina || 0)
   const badge = pedido?.estado ? stateBadge(pedido.estado) : null
-  // Ganancia del socio (rider) para este pedido: envío + comisión% del subtotal + propina.
-  // Telefónico: SOLO envío + propina (el % no aplica a pedidos creados por el restaurante).
+  // Ganancia del socio. Si el pedido está ENTREGADO y tiene la ganancia CONGELADA
+  // (socio_liq_*), se usa esa (respeta la tarifa pactada: fija = solo el fijo, sin
+  // comisión). Si no, se estima con el pacto vigente (misma regla que calc_ganancia_socio).
   const esReparto = pedido?.modo_entrega === 'delivery' || envio > 0
-  const comisionSocio = pedido?.origen_pedido === 'telefonico' ? 0 : subtotal * (comisionPct / 100)
-  const gananciaSocio = envio + comisionSocio + propina
+  const tieneSnap = pedido?.socio_liq_total != null
+  const esFijaPacto = tarifaPacto.tarifa_modo === 'fija'
+  const esTelef = pedido?.origen_pedido === 'telefonico'
+  const gEnvio = tieneSnap ? Number(pedido.socio_liq_envio || 0)
+    : (esReparto ? (esFijaPacto ? Number(tarifaPacto.tarifa_fija || 0) : envio) : 0)
+  const comisionSocio = tieneSnap ? Number(pedido.socio_liq_comision || 0)
+    : ((esTelef || esFijaPacto) ? 0 : subtotal * (comisionPct / 100))
+  const gPropina = tieneSnap ? Number(pedido.socio_liq_propina || 0) : (esReparto ? propina : 0)
+  const gananciaSocio = tieneSnap ? Number(pedido.socio_liq_total || 0) : (gEnvio + comisionSocio + gPropina)
 
   return (
     <div
@@ -513,9 +523,9 @@ function DetalleModal({ pedidoId, onClose }) {
 
             {esReparto && (
               <Section title="Tu ganancia por este pedido">
-                <Row k="Envío" v={`${envio.toFixed(2)} €`} />
-                <Row k={`Comisión (${comisionPct}% del subtotal)`} v={`${comisionSocio.toFixed(2)} €`} />
-                {propina > 0 && <Row k="Propina (100% para ti)" v={`${propina.toFixed(2)} €`} />}
+                <Row k={esFijaPacto ? 'Tarifa fija' : 'Envío'} v={`${gEnvio.toFixed(2)} €`} />
+                {comisionSocio > 0 && <Row k={`Comisión (${comisionPct}% del subtotal)`} v={`${comisionSocio.toFixed(2)} €`} />}
+                {gPropina > 0 && <Row k="Propina (100% para ti)" v={`${gPropina.toFixed(2)} €`} />}
                 <Row k="Total para ti" v={`${gananciaSocio.toFixed(2)} €`} highlight />
                 <div style={{ fontSize: 11, color: colors.textMute, marginTop: 8, lineHeight: 1.4 }}>
                   Cifra orientativa según tu tarifa con este restaurante. El importe que cobras es el de tus facturas / lo que tienes por cobrar.
