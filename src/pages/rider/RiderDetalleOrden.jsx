@@ -60,7 +60,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
       // Pacto vigente con ese restaurante: si es precio fijo, se muestra en la ganancia.
       if (socio?.id && ped.establecimiento_id) {
         supabase.from('socio_establecimiento')
-          .select('tarifa_modo, tarifa_fija')
+          .select('tarifa_modo, tarifa_fija, comision_pct')
           .eq('socio_id', socio.id).eq('establecimiento_id', ped.establecimiento_id)
           .maybeSingle()
           .then(({ data }) => { if (!cancel && data) setPacto(data) }, () => {})
@@ -473,7 +473,7 @@ function GananciaCard({ pedido, pacto }) {
   const esTelefonico = pedido.origen_pedido === 'telefonico'
   const esTarifaFija = pacto?.tarifa_modo === 'fija'
   const importeFijo = Number(pacto?.tarifa_fija ?? 0)
-  const g = calcGanancia(pedido)
+  const g = calcGanancia(pedido, pacto)
   return (
     <div style={{
       background: colors.sageSoft, borderRadius: 14, padding: 14,
@@ -491,9 +491,9 @@ function GananciaCard({ pedido, pacto }) {
         </div>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
-        {isDelivery && <GananciaRow label="Envío" value={g.envio} />}
+        {isDelivery && <GananciaRow label={esTarifaFija ? 'Tarifa fija' : 'Envío'} value={g.envio} />}
         {isDelivery && !esTelefonico && <GananciaRow label="Propina" value={g.propina} />}
-        {!esTelefonico && <GananciaRow label="Comisión 10%" value={g.comision} />}
+        {!esTelefonico && g.comisionPct > 0 && <GananciaRow label={`Comisión ${g.comisionPct}%`} value={g.comision} />}
       </div>
 
       <div style={{ height: 1, background: colors.sage, opacity: 0.5, margin: '12px 0' }} />

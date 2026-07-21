@@ -136,7 +136,7 @@ export default function ModalPedidoEntrante() {
       if (!socioId || !data.establecimiento_id) return
       const { data: vinc } = await supabase
         .from('socio_establecimiento')
-        .select('tarifa_modo, tarifa_fija')
+        .select('tarifa_modo, tarifa_fija, comision_pct')
         .eq('socio_id', socioId)
         .eq('establecimiento_id', data.establecimiento_id)
         .maybeSingle()
@@ -170,7 +170,7 @@ export default function ModalPedidoEntrante() {
   const pedido = pedidoFull || asignacionPendiente.pedidos || {}
   const est = pedido.establecimientos || {}
   const total = Number(pedido.total || 0)
-  const ganancia = calcGanancia(pedido)
+  const ganancia = calcGanancia(pedido, pacto)
   const isDelivery = pedido.modo_entrega === 'delivery'
   const esTelefonico = pedido.origen_pedido === 'telefonico'
   // Tarifa pactada con este restaurante: si es PRECIO FIJO, el rider debe verlo al aceptar.
