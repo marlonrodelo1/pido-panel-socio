@@ -23,6 +23,27 @@ function iniciales(nombre) {
   return nombre.split(' ').slice(0, 2).map(w => w[0] || '').join('').toUpperCase().slice(0, 2)
 }
 
+// Devuelve el objeto de tarifa pactada del vínculo respetando la MODALIDAD.
+// OJO: una tarifa FIJA usa tarifa_fija (tarifa_base es null), así que mirar solo
+// tarifa_base mostraba "por defecto" en tarifas fijas reales (bug). Devuelve null
+// solo si el vínculo NO tiene ninguna tarifa pactada real.
+function tarifaDeVinc(v) {
+  if (v.tarifa_modo === 'fija' && v.tarifa_fija != null) {
+    return { tarifa_modo: 'fija', tarifa_fija: v.tarifa_fija, comision_pct: v.comision_pct }
+  }
+  if (v.tarifa_base != null) {
+    return {
+      tarifa_modo: 'distancia',
+      tarifa_base: v.tarifa_base,
+      tarifa_radio_base_km: v.tarifa_radio_base_km,
+      tarifa_precio_km: v.tarifa_precio_km,
+      tarifa_maxima: v.tarifa_maxima,
+      comision_pct: v.comision_pct,
+    }
+  }
+  return null
+}
+
 function nuevoAltaState() {
   return { nombre: '', email: '', telefono: '', direccion: '', latitud: null, longitud: null, loading: false, error: null, success: null }
 }
@@ -32,6 +53,9 @@ function nuevoAltaState() {
 function altaEstadoBadge(v) {
   if (!v?.es_captador) return null
   const e = v.establecimiento || {}
+  // Si el restaurante ya está activo, no tiene sentido un badge "pendiente"
+  // (puede haberse activado por otra vía sin marcar alta_confirmada_at).
+  if (e.estado === 'activo') return null
   if (e.alta_confirmada_at == null) {
     return { label: 'Pendiente confirmación', bg: colors.warningSoft, color: colors.warning }
   }
@@ -348,15 +372,16 @@ export default function Restaurantes({ onOpenRestaurante }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h1 style={ds.h1}>Restaurantes</h1>
-          <p style={{ fontSize: type.sm, color: colors.textMute, marginTop: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
+          <h1 style={{ ...ds.h1, fontSize: 20, margin: 0 }}>Restaurantes</h1>
+          <span style={{ fontSize: 12, color: colors.textMute, fontWeight: 600, whiteSpace: 'nowrap' }}>
             {activos} / {socio?.limite_restaurantes ?? 5} activos
-          </p>
+          </span>
         </div>
-        <button onClick={() => setModalAlta(nuevoAltaState())} style={ds.glossyBtn}>
-          + Dar de alta restaurante
+        <button onClick={() => setModalAlta(nuevoAltaState())}
+          style={{ ...ds.glossyBtn, height: 36, padding: '0 14px', fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0 }}>
+          + Dar de alta
         </button>
       </div>
 
@@ -495,7 +520,7 @@ export default function Restaurantes({ onOpenRestaurante }) {
 // ───────────── Pills (tabs) ─────────────
 function PillTabs({ tabs, value, onChange }) {
   return (
-    <div style={{ display: 'flex', gap: 6, marginBottom: 22, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
       {tabs.map(t => {
         const active = value === t.id
         return (
@@ -565,13 +590,14 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer, o
         const tienePropuesta = !!v.tarifa_pendiente && Object.keys(v.tarifa_pendiente).length > 0
         const cuenta = tienePropuesta ? formatCuentaAtras(v.tarifa_pendiente_expira_en) : null
         const tone = colorPara(e.id || e.nombre)
+        const tarifaT = tarifaDeVinc(v)
         return (
           <div
             key={v.id}
             onClick={() => { if (clickable && onOpenRestaurante) onOpenRestaurante(e.id) }}
             style={{
-              ...ds.card, padding: 18,
-              display: 'flex', flexDirection: 'column', gap: 12,
+              ...ds.card, padding: 13,
+              display: 'flex', flexDirection: 'column', gap: 9,
               cursor: clickable ? 'pointer' : 'default',
               transition: 'transform 0.15s, box-shadow 0.15s',
               borderColor: tienePropuesta ? colors.terracotta : colors.border,
@@ -579,51 +605,54 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer, o
             onMouseEnter={(ev) => { if (clickable) { ev.currentTarget.style.transform = 'translateY(-2px)'; ev.currentTarget.style.boxShadow = colors.shadowLg } }}
             onMouseLeave={(ev) => { ev.currentTarget.style.transform = 'translateY(0)'; ev.currentTarget.style.boxShadow = '' }}
           >
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            {/* Cabecera: logo + nombre + estado + chevron (la card entera abre el detalle) */}
+            <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
               {e.logo_url ? (
                 <div style={{
-                  width: 52, height: 52, borderRadius: 12, flexShrink: 0,
+                  width: 44, height: 44, borderRadius: 11, flexShrink: 0,
                   background: `url(${e.logo_url}) center/cover`,
                   border: `1.5px solid ${tone}`,
                 }} />
               ) : (
                 <div style={{
-                  width: 52, height: 52, borderRadius: 12, flexShrink: 0,
+                  width: 44, height: 44, borderRadius: 11, flexShrink: 0,
                   background: tone + '22', border: `1.5px solid ${tone}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: tone, fontWeight: 800, fontSize: 15,
+                  color: tone, fontWeight: 800, fontSize: 14,
                 }}>{iniciales(e.nombre)}</div>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{
-                  fontSize: 15, fontWeight: 700, color: colors.text,
+                  fontSize: 14, fontWeight: 700, color: colors.text,
                   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 }}>{e.nombre || '—'}</div>
                 <div style={{
-                  fontSize: 11, color: colors.textFaint, marginTop: 2,
+                  fontSize: 10, color: colors.textFaint, marginTop: 1,
                   fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
                 }}>{e.tipo || 'Restaurante'}</div>
               </div>
-            </div>
-            <div style={{
-              background: colors.surface2, borderRadius: 10, padding: '10px 12px',
-              fontSize: 12, color: colors.textMute, lineHeight: 1.5,
-            }}>
-              <div style={{
-                fontWeight: 700, color: colors.text, fontSize: 11,
-                letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 4,
-              }}>Tarifa</div>
-              {formatTarifa(v.tarifa_base !== null ? {
-                tarifa_base: v.tarifa_base,
-                tarifa_radio_base_km: v.tarifa_radio_base_km,
-                tarifa_precio_km: v.tarifa_precio_km,
-                tarifa_maxima: v.tarifa_maxima,
-                comision_pct: v.comision_pct,
-              } : null)}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 <div style={badge}>{badge._label}</div>
+                {clickable && (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={colors.textFaint} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                )}
+              </div>
+            </div>
+
+            {/* Tarifa en una sola línea */}
+            <div style={{ fontSize: 12, color: colors.textMute, lineHeight: 1.4 }}>
+              <span style={{
+                fontWeight: 700, color: colors.textDim, fontSize: 10,
+                letterSpacing: '0.04em', textTransform: 'uppercase', marginRight: 6,
+              }}>Tarifa</span>
+              {tarifaT
+                ? formatTarifa(tarifaT)
+                : <span style={{ fontStyle: 'italic', color: colors.textFaint }}>Sin tarifa pactada</span>}
+            </div>
+
+            {/* Badges extra (alta pendiente / nueva propuesta) — solo si aplican */}
+            {(altaBadge || tienePropuesta) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 {altaBadge && (
                   <span style={{
                     fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 6,
@@ -631,35 +660,20 @@ function renderVinculados({ vinculados, onOpenRestaurante, setTab, onProponer, o
                     background: altaBadge.bg, color: altaBadge.color,
                   }}>{altaBadge.label}</span>
                 )}
-              </div>
-              {tienePropuesta && (
-                <div style={{
-                  fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 999,
-                  letterSpacing: '0.04em', textTransform: 'uppercase',
-                  background: colors.warningSoft, color: colors.warning,
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 3, background: colors.warning }}/>
-                  Nueva propuesta{cuenta && !cuenta.expirada ? ` · ${formatFechaCorta(v.tarifa_pendiente_expira_en)}` : ''}
-                </div>
-              )}
-            </div>
-            {v.estado === 'activa' && (
-              <button
-                onClick={(ev) => { ev.stopPropagation(); onProponer && onProponer(v) }}
-                style={{ ...ds.secondaryBtn, width: '100%' }}
-              >Proponer tarifa</button>
-            )}
-            {clickable && (
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                fontSize: 11, fontWeight: 700, color: colors.terracotta,
-                letterSpacing: '0.03em', textTransform: 'uppercase',
-              }}>
-                Ver detalle
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                {tienePropuesta && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 999,
+                    letterSpacing: '0.04em', textTransform: 'uppercase',
+                    background: colors.warningSoft, color: colors.warning,
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                  }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 3, background: colors.warning }}/>
+                    Nueva propuesta{cuenta && !cuenta.expirada ? ` · ${formatFechaCorta(v.tarifa_pendiente_expira_en)}` : ''}
+                  </span>
+                )}
               </div>
             )}
+
           </div>
         )
       })}
@@ -940,7 +954,7 @@ function ModalRechazar({ state, loading, onChange, onConfirm, onClose }) {
   )
 }
 
-function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
+export function ModalProponer({ state, loading, onChange, onConfirm, onClose }) {
   // 18-jul-2026: el pacto puede ser PRECIO FIJO por entrega o POR DISTANCIA.
   // Antes solo existía "por distancia" y no había forma de pactar (ni guardar) un fijo.
   const modo = state.tarifa_modo === 'fija' ? 'fija' : 'distancia'

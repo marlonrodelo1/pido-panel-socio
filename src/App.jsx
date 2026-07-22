@@ -315,7 +315,7 @@ function ShellRider() {
         paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)',
       }}>
         <Suspense fallback={<PageFallback />}>
-          {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} />}
+          {tab === 'esperando'   && <RiderEsperando onOpenPedido={setOpenDetail} onOpenRestaurante={openRestaurante} />}
           {tab === 'pedidos'     && <RiderPedidos onOpenPedido={setOpenDetail} />}
           {tab === 'chat'        && <RiderChat />}
           {tab === 'completadas' && <RiderCompletadas />}

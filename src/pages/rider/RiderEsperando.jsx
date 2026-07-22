@@ -4,7 +4,7 @@
 // vínculo) + toggles de fuentes (acepta_marketplace/telefonicos/app en socios).
 // Ambos optimistas: la UI cambia YA y el update corre detrás; si falla, revierte.
 import { useEffect, useState } from 'react'
-import { Bike, MapPin, AlertCircle, X, Store, Phone, Smartphone } from 'lucide-react'
+import { Bike, MapPin, AlertCircle, X, Store, Phone, Smartphone, ChevronRight } from 'lucide-react'
 import { useRider } from '../../context/RiderContext'
 import { supabase } from '../../lib/supabase'
 import { colors } from '../../lib/uiStyles'
@@ -51,7 +51,7 @@ const FUENTES = [
   },
 ]
 
-export default function RiderEsperando({ onOpenPedido }) {
+export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
   const { socio, isOnline, needsLocation, actionError, retryLocation, clearActionError, asignacionesActivas } = useRider() || {}
   const [restaurantes, setRestaurantes] = useState([])
   const [retrying, setRetrying] = useState(false)
@@ -82,17 +82,6 @@ export default function RiderEsperando({ onOpenPedido }) {
     })()
     return () => { cancel = true }
   }, [socio?.id, isOnline])
-
-  // Toggle por restaurante (optimista): pinta YA, guarda detrás, revierte si falla.
-  async function toggleRestaurante(vincId, next) {
-    setRestaurantes(prev => prev.map(r => r._vincId === vincId ? { ...r, _repartoActivo: next } : r))
-    const { error } = await supabase.from('socio_establecimiento')
-      .update({ reparto_activo: next }).eq('id', vincId)
-    if (error) {
-      console.error('[RiderEsperando] toggle restaurante fallo:', error.message)
-      setRestaurantes(prev => prev.map(r => r._vincId === vincId ? { ...r, _repartoActivo: !next } : r))
-    }
-  }
 
   // Toggle de fuente (optimista sobre socios.acepta_*).
   async function toggleFuente(campo) {
@@ -284,12 +273,14 @@ export default function RiderEsperando({ onOpenPedido }) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {restaurantes.map(r => (
-            <div
+            <button
               key={r.id}
+              onClick={() => onOpenRestaurante?.(r.id)}
               style={{
-                display: 'flex', alignItems: 'center', gap: 10,
+                display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                 padding: 11, borderRadius: 12, background: colors.paper,
-                border: `1px solid ${colors.border}`,
+                border: `1px solid ${colors.border}`, cursor: 'pointer',
+                textAlign: 'left', fontFamily: 'inherit',
                 opacity: r._repartoActivo ? 1 : 0.72,
               }}
             >
@@ -324,20 +315,20 @@ export default function RiderEsperando({ onOpenPedido }) {
                       </span>
                     </>
                   ) : (
-                    <span style={{ fontWeight: 700 }}>En pausa: no recibirás pedidos de este restaurante</span>
+                    <span style={{ fontWeight: 700 }}>En pausa</span>
                   )}
                 </div>
               </div>
-              {/* Toggle por restaurante: solo en vínculos activos (los "pausada" los
-                  gestiona el sistema, no el socio). */}
-              {r._estado === 'activa' && (
-                <Switch
-                  on={r._repartoActivo}
-                  onToggle={() => toggleRestaurante(r._vincId, !r._repartoActivo)}
-                  ariaLabel={`Recibir pedidos de ${r.nombre}`}
-                />
+              {/* Badge "Pausado" + chevron. El on/off vive ahora en el detalle. */}
+              {r._estado === 'activa' && !r._repartoActivo && (
+                <span style={{
+                  fontSize: 10, fontWeight: 800, color: '#B0763B',
+                  background: colors.warningSoft, padding: '3px 8px',
+                  borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
+                }}>Pausado</span>
               )}
-            </div>
+              <ChevronRight size={18} strokeWidth={2.2} style={{ color: colors.stone2, flexShrink: 0 }} />
+            </button>
           ))}
           {restaurantes.length === 0 && (
             <div style={{ fontSize: 12, color: colors.stone, padding: 14, textAlign: 'center' }}>

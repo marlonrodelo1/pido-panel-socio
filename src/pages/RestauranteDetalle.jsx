@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, Children, cloneElement, isValidElement } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 import StatCard from '../components/StatCard'
 import { formatTarifa, tarifaCampos, fmtPct, formatFechaCorta } from '../lib/tarifas'
 import { getPlugin } from '../lib/capacitor'
+import { Bike } from 'lucide-react'
+import { ModalProponer } from './Restaurantes'
 
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
 
@@ -33,6 +35,9 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
   const [preview, setPreview] = useState(null)
   const [msg, setMsg] = useState(null)
   const [togglingDestacado, setTogglingDestacado] = useState(false)
+  const [togglingReparto, setTogglingReparto] = useState(false)
+  const [modalProponer, setModalProponer] = useState(null)
+  const [proponiendo, setProponiendo] = useState(false)
   const [confirmarDesv, setConfirmarDesv] = useState(false)
   const [desvinculando, setDesvinculando] = useState(false)
 
@@ -57,7 +62,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
             .eq('id', establecimiento_id).maybeSingle(),
           supabase.from('socio_establecimiento')
             .select(`
-              id, estado, solicitado_at, aceptado_at, exclusivo, destacado, orden_destacado,
+              id, estado, solicitado_at, aceptado_at, exclusivo, destacado, orden_destacado, reparto_activo,
               tarifa_modo, tarifa_fija, tarifa_base, tarifa_radio_base_km, tarifa_precio_km, tarifa_maxima, comision_pct, tarifa_aceptada_en,
               tarifa_pendiente, tarifa_pendiente_origen, tarifa_pendiente_expira_en
             `)
@@ -156,6 +161,69 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
       setMsg({ tipo: 'error', txt: 'No se pudo actualizar: ' + e.message })
     } finally {
       setTogglingDestacado(false)
+    }
+  }
+
+  // Reparto por restaurante (socio_establecimiento.reparto_activo). Optimista.
+  const repartoActivo = vinculacion?.reparto_activo !== false
+  const toggleReparto = async () => {
+    if (!vinculacion?.id || togglingReparto) return
+    const nuevo = !repartoActivo
+    setTogglingReparto(true); setMsg(null)
+    setVinculacion(v => v ? ({ ...v, reparto_activo: nuevo }) : v)
+    try {
+      const { error } = await supabase.from('socio_establecimiento')
+        .update({ reparto_activo: nuevo }).eq('id', vinculacion.id)
+      if (error) throw error
+      setMsg({ tipo: 'ok', txt: nuevo
+        ? 'Activado: recibirás pedidos de este restaurante.'
+        : 'Pausado: no recibirás pedidos de este restaurante.' })
+    } catch (e) {
+      setVinculacion(v => v ? ({ ...v, reparto_activo: !nuevo }) : v)
+      setMsg({ tipo: 'error', txt: 'No se pudo actualizar: ' + e.message })
+    } finally {
+      setTogglingReparto(false)
+    }
+  }
+
+  // Proponer nueva tarifa a este restaurante (reusa el modal de Restaurantes.jsx).
+  const abrirProponer = () => {
+    if (!vinculacion) return
+    setModalProponer({
+      vinc: { id: vinculacion.id, establecimiento: { nombre: establecimiento?.nombre } },
+      tarifa_modo: vinculacion.tarifa_modo === 'fija' ? 'fija' : 'distancia',
+      tarifa_fija: vinculacion.tarifa_fija ?? '',
+      tarifa_base: vinculacion.tarifa_base ?? '',
+      tarifa_radio_base_km: vinculacion.tarifa_radio_base_km ?? '',
+      tarifa_precio_km: vinculacion.tarifa_precio_km ?? '',
+      tarifa_maxima: vinculacion.tarifa_maxima ?? '',
+      comision_pct: vinculacion.comision_pct ?? 10,
+      error: null,
+    })
+  }
+  const proponerTarifa = async () => {
+    if (!modalProponer) return
+    const m = modalProponer
+    setProponiendo(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const r = await fetch(`${FUNCTIONS_URL}/proponer-tarifa-socio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session?.access_token}` },
+        body: JSON.stringify(
+          m.tarifa_modo === 'fija'
+            ? { socio_establecimiento_id: m.vinc.id, tarifa_modo: 'fija', tarifa_fija: Number(m.tarifa_fija), comision_pct: m.comision_pct === '' || m.comision_pct == null ? 10 : Number(m.comision_pct) }
+            : { socio_establecimiento_id: m.vinc.id, tarifa_modo: 'distancia', tarifa_base: Number(m.tarifa_base), tarifa_radio_base_km: Number(m.tarifa_radio_base_km), tarifa_precio_km: Number(m.tarifa_precio_km), tarifa_maxima: m.tarifa_maxima === '' || m.tarifa_maxima == null ? null : Number(m.tarifa_maxima), comision_pct: m.comision_pct === '' || m.comision_pct == null ? 10 : Number(m.comision_pct) }
+        ),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok || !data?.ok) throw new Error(data?.error || `Error (${r.status})`)
+      setModalProponer(null)
+      setMsg({ tipo: 'ok', txt: 'Propuesta de tarifa enviada. El restaurante tiene 7 días para responder.' })
+    } catch (e) {
+      setModalProponer(prev => prev ? ({ ...prev, error: e.message }) : null)
+    } finally {
+      setProponiendo(false)
     }
   }
 
@@ -308,6 +376,18 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
 
   return (
     <div>
+      {/* En móvil las tablas se apilan (fila = tarjeta con "etiqueta: valor"),
+          así no hace falta scroll lateral. En web (>640px) siguen como tabla. */}
+      <style>{`
+        @media (max-width: 640px) {
+          .pd-rtable .pd-rhead { display: none !important; }
+          .pd-rtable .pd-rrow { grid-template-columns: 1fr !important; gap: 3px !important; padding: 11px 14px !important; align-items: stretch !important; }
+          .pd-rtable .pd-rrow > * { display: flex !important; justify-content: space-between !important; align-items: center; gap: 14px; text-align: right; min-width: 0; }
+          .pd-rtable .pd-rrow > *::before { content: attr(data-label); color: ${colors.textMute}; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; text-align: left; white-space: nowrap; flex-shrink: 0; }
+          .pd-rtotal { display: flex !important; justify-content: space-between !important; align-items: center; grid-template-columns: none !important; }
+          .pd-rtotal > span { grid-column: auto !important; }
+        }
+      `}</style>
       {!hideBack && <BackBtn onBack={onBack} />}
 
       {/* Header card */}
@@ -368,6 +448,31 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
         </div>
       </div>
 
+      {/* Reparto: activar / pausar la recepción de pedidos de este restaurante */}
+      {vinculacion?.estado === 'activa' && (
+        <div style={{ ...ds.card, padding: 16, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+            background: repartoActivo ? colors.sageSoft : colors.warningSoft,
+            color: repartoActivo ? colors.sage2 : colors.warning,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Bike size={20} strokeWidth={2.2} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text }}>
+              {repartoActivo ? 'Recibiendo pedidos' : 'En pausa'}
+            </div>
+            <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2, lineHeight: 1.4 }}>
+              {repartoActivo
+                ? 'Estás recibiendo pedidos de este restaurante.'
+                : 'No recibirás pedidos de este restaurante hasta que lo actives.'}
+            </div>
+          </div>
+          <Switch on={repartoActivo} onToggle={toggleReparto} disabled={togglingReparto} ariaLabel="Recibir pedidos de este restaurante" />
+        </div>
+      )}
+
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, marginBottom: 18 }}>
         <StatCard label="Enviado este mes" value={euro(ingresosMes)} sub={pedidosMes.length === 1 ? '1 entregado' : `${pedidosMes.length} entregados`} tone="sage" />
@@ -412,10 +517,16 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
           </>
         ) : (
           <div style={{ fontSize: type.sm, color: colors.textDim }}>
-            No hay tarifa pactada con este restaurante. Se aplica la <b>tarifa por defecto</b> de la plataforma.
+            Aún no has pactado una tarifa con este restaurante. Propón una con el botón de abajo.
           </div>
         )}
       </div>
+
+      {vinculacion?.estado === 'activa' && (
+        <button onClick={abrirProponer} style={{ ...ds.secondaryBtn, width: '100%', marginBottom: 18 }}>
+          Proponer nueva tarifa
+        </button>
+      )}
 
       {/* Warning fiscal restaurante */}
       {!fiscalRestauranteOk && (
@@ -504,7 +615,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
               </span>
             </TableRow>
           ))}
-          <div style={{
+          <div className="pd-rtotal" style={{
             display: 'grid', gridTemplateColumns: '110px 1fr 90px 90px 100px', gap: 10,
             padding: '12px 16px', alignItems: 'center',
             borderTop: `1px solid ${colors.borderStrong}`, background: colors.surface2,
@@ -648,6 +759,16 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
           </div>
         </div>
       )}
+
+      {modalProponer && (
+        <ModalProponer
+          state={modalProponer}
+          loading={proponiendo}
+          onChange={(patch) => setModalProponer(m => m ? ({ ...m, ...patch }) : null)}
+          onConfirm={proponerTarifa}
+          onClose={() => setModalProponer(null)}
+        />
+      )}
     </div>
   )
 }
@@ -693,10 +814,37 @@ function SectionTitle({ children }) {
   )
 }
 
-function Table({ head, cols, children }) {
+// Switch pill (verde=on / gris=off). Cambia al instante; el guardado corre detrás.
+function Switch({ on, onToggle, ariaLabel, disabled }) {
   return (
-    <div style={{ ...ds.card, padding: 0, overflow: 'hidden', marginBottom: 22 }}>
-      <div style={{
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      role="switch"
+      aria-checked={on}
+      style={{
+        width: 48, height: 28, borderRadius: 999, border: 'none', padding: 2,
+        background: on ? colors.sage : colors.stone2,
+        cursor: disabled ? 'wait' : 'pointer',
+        display: 'flex', alignItems: 'center', flexShrink: 0,
+        justifyContent: on ? 'flex-end' : 'flex-start',
+        transition: 'background .15s', opacity: disabled ? 0.7 : 1,
+      }}
+    >
+      <span style={{ width: 24, height: 24, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(26,24,21,0.25)' }} />
+    </button>
+  )
+}
+
+function Table({ head, cols, children }) {
+  // Inyecta las etiquetas de cabecera en cada TableRow → en móvil cada celda
+  // muestra su etiqueta (data-label) delante del valor.
+  const rows = Children.map(children, (child) =>
+    isValidElement(child) && child.type === TableRow ? cloneElement(child, { head }) : child)
+  return (
+    <div className="pd-rtable" style={{ ...ds.card, padding: 0, overflow: 'hidden', marginBottom: 22 }}>
+      <div className="pd-rhead" style={{
         display: 'grid', gridTemplateColumns: cols, gap: 10,
         padding: '12px 16px',
         background: colors.surface2,
@@ -705,18 +853,22 @@ function Table({ head, cols, children }) {
       }}>
         {head.map((h, i) => <div key={i}>{h}</div>)}
       </div>
-      {children}
+      {rows}
     </div>
   )
 }
 
-function TableRow({ cols, children }) {
+function TableRow({ cols, head, children }) {
+  const cells = head
+    ? Children.map(children, (child, i) =>
+        isValidElement(child) ? cloneElement(child, { 'data-label': head[i] }) : child)
+    : children
   return (
-    <div style={{
+    <div className="pd-rrow" style={{
       display: 'grid', gridTemplateColumns: cols, gap: 10,
       padding: '12px 16px', alignItems: 'center',
       borderTop: `1px solid ${colors.border}`,
       fontSize: type.sm, color: colors.textDim,
-    }}>{children}</div>
+    }}>{cells}</div>
   )
 }
