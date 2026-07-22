@@ -18,6 +18,7 @@ const Configuracion = lazy(() => import('./pages/Configuracion'))
 const MiSuscripcion = lazy(() => import('./pages/MiSuscripcion'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const MiMarketplace = lazy(() => import('./pages/MiMarketplace'))
+const Clientes = lazy(() => import('./pages/Clientes'))
 const EliminarCuenta = lazy(() => import('./pages/EliminarCuenta'))
 const Soporte = lazy(() => import('./pages/Soporte'))
 const SeguirPedido = lazy(() => import('./pages/SeguirPedido'))
@@ -69,6 +70,7 @@ function ShellAdmin({ section, setSection, detalleEstId, openRestaurante, closeR
       ? <RestauranteDetalle establecimiento_id={detalleEstId} onBack={closeRestaurante} />
       : <Restaurantes onOpenRestaurante={openRestaurante} />,
     pedidos:              <Pedidos />,
+    clientes:             <Clientes />,
     configuracion:        <Configuracion />,
     suscripcion:          <MiSuscripcion />,
     marketplace:          <MiMarketplace />,
@@ -135,6 +137,7 @@ const ADMIN_TITLES = {
   'restaurante-detalle':'Restaurante',
   ganancias:            'Ganancias',
   pedidos:              'Historial',
+  clientes:             'Clientes',
   suscripcion:          'Mi suscripción',
   configuracion:        'Configuración',
   soporte:              'Soporte',
@@ -150,6 +153,7 @@ function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, on
       : <Restaurantes onOpenRestaurante={onOpenRestaurante} />,
     ganancias:            <Ganancias />,
     pedidos:              <Pedidos />,
+    clientes:             <Clientes />,
     suscripcion:          <MiSuscripcion />,
     configuracion:        <Configuracion />,
     soporte:              <Soporte />,
