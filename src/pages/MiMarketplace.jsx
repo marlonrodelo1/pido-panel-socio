@@ -22,6 +22,8 @@ export default function MiMarketplace() {
   const [form, setForm] = useState({
     nombre_comercial: socio?.nombre_comercial || '',
     descripcion: socio?.descripcion || '',
+    splash_titulo: socio?.splash_titulo || '',
+    splash_subtitulo: socio?.splash_subtitulo || '',
     logo_url: socio?.logo_url || '',
     banner_url: socio?.banner_url || '',
     instagram: socio?.redes?.instagram || '',
@@ -48,6 +50,8 @@ export default function MiMarketplace() {
     setForm({
       nombre_comercial: socio.nombre_comercial || '',
       descripcion: socio.descripcion || '',
+      splash_titulo: socio.splash_titulo || '',
+      splash_subtitulo: socio.splash_subtitulo || '',
       logo_url: socio.logo_url || '',
       banner_url: socio.banner_url || '',
       instagram: socio.redes?.instagram || '',
@@ -259,6 +263,8 @@ export default function MiMarketplace() {
       await updateSocio({
         nombre_comercial: form.nombre_comercial,
         descripcion: form.descripcion,
+        splash_titulo: form.splash_titulo?.trim() || null,
+        splash_subtitulo: form.splash_subtitulo?.trim() || null,
         logo_url: form.logo_url || null,
         banner_url: form.banner_url || null,
         radio_marketplace_km: radioFinal,
@@ -423,6 +429,26 @@ export default function MiMarketplace() {
               <button type="button" onClick={() => logoInputRef.current?.click()} disabled={uploading === 'logo'} style={{ ...ds.secondaryBtn, opacity: uploading === 'logo' ? 0.6 : 1 }}>
                 {uploading === 'logo' ? 'Subiendo…' : (form.logo_url ? 'Cambiar logo' : 'Subir logo')}
               </button>
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
+          <div>
+            <label style={ds.label}>Título de tu tienda (portada)</label>
+            <input value={form.splash_titulo} maxLength={60}
+              onChange={e => setForm({ ...form, splash_titulo: e.target.value })}
+              placeholder={form.nombre_comercial || '¿Qué necesitas hoy?'} style={ds.input} />
+            <div style={{ fontSize: 11, color: colors.textMute, marginTop: 4 }}>
+              Se muestra grande al abrir tu tienda. Vacío = tu nombre comercial.
+            </div>
+          </div>
+          <div>
+            <label style={ds.label}>Subtítulo</label>
+            <input value={form.splash_subtitulo} maxLength={120}
+              onChange={e => setForm({ ...form, splash_subtitulo: e.target.value })}
+              placeholder="Pide lo que quieras, te lo llevamos" style={ds.input} />
+            <div style={{ fontSize: 11, color: colors.textMute, marginTop: 4 }}>
+              Frase corta bajo el título.
             </div>
           </div>
         </div>
