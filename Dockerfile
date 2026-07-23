@@ -1,6 +1,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
+# El postinstall (fix-bg-geo-spm.mjs) corre en `npm install`, así que el script
+# debe estar presente ANTES de instalar (si no, "module not found" -> build falla).
+COPY scripts ./scripts
 RUN npm install
 COPY . .
 
