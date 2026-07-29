@@ -281,14 +281,13 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
         if (del) { envios += Number(p.coste_envio || 0); propinas += Number(p.propina || 0) }
       }
       comision = +comision.toFixed(2); envios = +envios.toFixed(2); propinas = +propinas.toFixed(2)
-      const base = +(comision + envios + propinas).toFixed(2)
-      const ivaPct = Number(socio?.iva_pct ?? 21)
-      const ivaImporte = +(base * ivaPct / 100).toFixed(2)
-      const total = +(base + ivaImporte).toFixed(2)
+      // El total es el precio final: comisión + envíos + propinas, con el IGIC ya dentro.
+      // No se añade ningún impuesto por encima (decisión de Marlon, 29 jul 2026).
+      const total = +(comision + envios + propinas).toFixed(2)
       const fechas = peds.map(p => new Date(p.entregado_at || p.created_at)).sort((a, b) => +a - +b)
       setPreview({
         pedidos_count: peds.length, comision_pct: pct,
-        comision, envios, propinas, base, iva_pct: ivaPct, iva_importe: ivaImporte, total,
+        comision, envios, propinas, total,
         periodo_inicio: fechas[0]?.toISOString().slice(0, 10),
         periodo_fin: fechas[fechas.length - 1]?.toISOString().slice(0, 10),
       })
@@ -740,14 +739,11 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
               <Linea label={`Comisión (${preview.comision_pct}%)`} valor={preview.comision} />
               <Linea label="Envíos" valor={preview.envios} />
               <Linea label="Propinas" valor={preview.propinas} />
-              <div style={{ borderTop: `1px solid ${colors.border}`, margin: '2px 0' }} />
-              <Linea label="Base imponible" valor={preview.base} bold />
-              <Linea label={`IVA (${preview.iva_pct}%)`} valor={preview.iva_importe} />
               <div style={{ borderTop: `1px solid ${colors.borderStrong}`, margin: '2px 0' }} />
-              <Linea label="Total" valor={preview.total} bold big />
+              <Linea label="Total a facturar" valor={preview.total} bold big />
             </div>
             <p style={{ fontSize: 11, color: colors.textFaint, marginBottom: 16, lineHeight: 1.5 }}>
-              Revisa los importes. Al confirmar se emite la factura y estos pedidos quedan marcados como facturados.
+              IGIC incluido. Al confirmar se emite la factura y estos pedidos quedan marcados como facturados.
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setPreview(null)} disabled={emitiendo} style={ds.secondaryBtn}>Cancelar</button>

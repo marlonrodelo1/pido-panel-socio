@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Permisos requeridos -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Sonido del pedido EN BUCLE con la app minimizada (23-jul-2026): foreground service
+         tipo shortService (tarea corta <=3 min). No requiere permiso de tipo específico
+         más allá de FOREGROUND_SERVICE. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <!-- Geolocation. Primer plano: ACCESS_FINE/COARSE. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -82,5 +87,27 @@
             android:name=".OfflineBeaconService"
             android:exported="false"
             android:stopWithTask="false" />
+
+        <!-- 23-jul-2026: SONIDO EN BUCLE del pedido con la app minimizada.
+             1) Nuestro MessagingService (extiende el de Capacitor) intercepta el push de
+                asignación y arranca la alarma en bucle si la app está en segundo plano. -->
+        <service
+            android:name=".PidooMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <!-- Quitamos el MessagingService del plugin de Capacitor: FCM entrega solo al nuestro
+             (que llama a super, preservando el reenvío al JS y el registro de token). -->
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove" />
+
+        <!-- 2) Foreground service que reproduce el sonido en bucle (shortService, <=150 s). -->
+        <service
+            android:name=".PedidoAlarmService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
     </application>
 </manifest>

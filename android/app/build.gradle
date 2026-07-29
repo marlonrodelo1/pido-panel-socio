@@ -14,8 +14,8 @@ android {
         applicationId "com.pidoo.socio"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 296
-        versionName "2.8.5"
+        versionCode 298
+        versionName "2.8.7"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -54,6 +54,10 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // 23-jul-2026: RemoteMessage / FirebaseMessagingService para PidooMessagingService
+    // (sonido en bucle). El plugin push las trae como 'implementation' (transitivas ocultas),
+    // asi que el modulo app las declara explicitas. Version alineada con @capacitor/push-notifications.
+    implementation "com.google.firebase:firebase-messaging:25.0.1"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

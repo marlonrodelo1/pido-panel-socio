@@ -44,6 +44,11 @@ export function RiderProvider({ children }) {
   const disclosureResolveRef = useRef(null)
   const deviceIdRef = useRef(null)     // id de este dispositivo (single-device)
   const supersededRef = useRef(false)  // ya se detecto que otro dispositivo tomo la cuenta
+  // true mientras el RECLAMO del dispositivo (rider-online) está en vuelo. El latido no
+  // debe correr en ese hueco: llegaría con el candado del dispositivo anterior y provocaría
+  // un 409 sesion_superada espurio (logout). Regresión del 10-jul; se reutiliza también en
+  // el re-reclamo al reabrir la app (last-wins single-device, ver efecto de init de abajo).
+  const claimPendingRef = useRef(false)
 
   // Handler de fallo del watcher nativo (permiso denegado / GPS del sistema off).
   // El watcher entrega el error de forma asíncrona; aquí encendemos el banner para
@@ -70,8 +75,30 @@ export function RiderProvider({ children }) {
         // → mantener online y RE-ARRANCAR el tracking (que de verdad comparta, no solo
         // la UI). Así reabrir la app NO te apaga. El latido (efecto de abajo) revive solo
         // al pasar isOnline=true.
+        //
+        // RE-RECLAMO al abrir (last-wins single-device): `en_servicio` es una columna
+        // COMPARTIDA entre dispositivos. Si otro dispositivo la dejó en true, ESTE —el que
+        // ACABA de abrir/loguear— debe RECLAMAR active_device_id (rider-online) ANTES de
+        // empezar a latir. Si no, el latido saldría con el id de ESTE dispositivo mientras
+        // active_device_id sigue siendo el del OTRO → 409 sesion_superada → ESTE (el nuevo)
+        // se desloguea y gana el viejo, justo lo contrario de "el último gana". Reclamando
+        // aquí, el nuevo pasa a ser el activo y el anterior queda superado limpiamente (su
+        // realtime ve el cambio de active_device_id → handleSuperseded). claimPendingRef
+        // silencia el latido inmediato mientras el reclamo está en vuelo (mismo guard de la
+        // regresión del 10-jul). Corre una sola vez por montaje (envuelto por didInitRef).
+        claimPendingRef.current = true
         setIsOnline(true)
         armOfflineBeacon() // Parte B: re-armar el beacon de cierre al reanudar turno
+        riderOnline({})
+          .then((res) => {
+            // Éxito → este dispositivo ya es active_device_id. Un fallo de SESIÓN muerta lo
+            // detecta y gestiona el latido (fuerza re-login); un fallo de RED se ignora a
+            // propósito: NO hard-logout, NO revertimos en_servicio. El latido reintentará y,
+            // sin red, tampoco recibiría un 409 limpio que dispare un logout espurio.
+            if (!res?.ok) console.warn('[RiderContext] re-reclamo al abrir no OK:', res?.error)
+          })
+          .catch((e) => console.warn('[RiderContext] re-reclamo al abrir excepción:', e?.message))
+          .finally(() => { claimPendingRef.current = false })
         requestLocationPermission().then((granted) => {
           setNeedsLocation(!granted)
           if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError })
@@ -121,11 +148,6 @@ export function RiderProvider({ children }) {
   // iOS bloquea el autoplay del sonido del modal: desbloquearlo con el primer
   // gesto del usuario en la app (cualquier toque).
   useEffect(() => { installPedidoSoundUnlock() }, [])
-
-  // true mientras rider-online (el RECLAMO del dispositivo) está en vuelo. El latido
-  // no debe correr en ese hueco: llegaría con el candado del dispositivo anterior y
-  // provocaría un 409 sesion_superada espurio (logout). Regresión del 10-jul.
-  const claimPendingRef = useRef(false)
 
   const setOnline = async (next) => {
     // Mutex: si ya hay un cambio de estado en vuelo, ignoramos el segundo tap

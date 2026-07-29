@@ -2,6 +2,15 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
 
+// ⛔ ARCHIVO DESACTUALIZADO — NO DESPLEGAR DESDE AQUI (29 jul 2026).
+// En produccion corre la v10. Esta copia local se quedo en la v8, asi que desplegarla
+// REVIERTE dos cosas importantes:
+//   - v9 (22-jul-2026): los importes salen del snapshot congelado socio_liq_* del pedido,
+//     que es lo que respeta la TARIFA PACTADA socio-restaurante.
+//   - v10 (29-jul-2026): precio final con IGIC INCLUIDO, sin anadir impuesto por encima.
+// Fuente de verdad: la funcion desplegada en Supabase (bajala con get_edge_function antes
+// de tocar nada). Si actualizas este archivo a la v10, borra este aviso.
+//
 // generar-factura-socio-restaurante v8 — modelo comision (22-jun-2026).
 // El socio factura al restaurante por: COMISION (% pactado del subtotal) + ENVIO + PROPINA.
 //  - Delivery entregado: comision + envio + propina.

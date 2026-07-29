@@ -1,46 +1,29 @@
 // create-shipday-order — DISPATCHER PROPIO (sin Shipday) desde 20-jun-2026.
+// v56 (23-jul-2026): 20 VUELTAS + TOPE DE TIEMPO + BLINDAJE.
+//   1) MAX_VUELTAS default 2 -> 20 (decision Marlon 23-jul: insistir mucho mas antes de cancelar).
+//   2) NUEVO tope de tiempo total DISPATCH_MAX_ESPERA_MIN (default 60 min): si el pedido lleva
+//      mas de 60 min desde que el restaurante lo acepto (o desde la 1a asignacion) sin que
+//      nadie lo coja, se cancela por no-cobertura aunque queden vueltas. Evita pedidos zombi
+//      de horas cuando haya muchos repartidores (20 vueltas x N riders x 150s).
+//   3) BLINDAJE rama marketplace: si el vinculo del socio ya no esta 'activa' (se desvinculo
+//      en vuelo), antes se seguia y el insert reventaba con 23514 del guard en bucle infinito
+//      de 500 -> ahora marcarNoRider('sin_socio_vinculado').
+//   4) BLINDAJE insert: un 23514 (trg_guard_asignacion_socio_vinculado) ya no devuelve 500
+//      crudo reintentable -> marcarNoRider('sin_socio_vinculado') (el rescate cancela+reembolsa).
 // v55 (19-jul-2026): RECHAZO EXPLICITO = DEFINITIVO. Si el rider pulsa "Rechazar", ya no
-//   se le vuelve a ofrecer ese pedido en la 2a vuelta del round-robin (antes tenia que
-//   rechazarlo dos veces). Los timeout SI siguen volviendo: no llegar a tiempo no es un no.
-// Asigna el pedido delivery al mejor rider (socio) ONLINE del establecimiento.
-// v54 (18-jul-2026): AUTONOMIA DEL SOCIO (features de Marlon):
-//   1) socio_establecimiento.reparto_activo — el socio pausa restaurantes concretos.
-//      Vinculos pausados NO reciben pedidos (ninguna via, incluido su marketplace).
-//   2) Fuentes de pedido (socios.acepta_marketplace / acepta_telefonicos / acepta_app):
-//      el socio decide de que via acepta pedidos. Mapeo por pedidos.origen_pedido:
-//      marketplace_socio -> acepta_marketplace · telefonico -> acepta_telefonicos ·
-//      pido / tienda_publica / null -> acepta_app.
-//   3) Push de asignacion en telefonicos avisa: "solo envio, sin comision".
-// v53 (11-jul-2026): PEDIDOS TELEFONICOS (origen_pedido='telefonico', creados por el
-//   restaurante via crear-pedido-telefonico). En la terminal de no-cobertura se cancela
-//   igual PERO SIN cargo del 80% al responsable: la comida y el cobro ya son del
-//   restaurante (metodo pagado_local/efectivo propio), cargar al socio sobre-compensaria.
-//   Aviso al restaurante adaptado ("vuelve a crearlo o entregalo por tus medios").
-// v52 (10-jul-2026, Fase 2): al agotar las 2 vueltas se CANCELA el pedido de inmediato
-//   (cancelarPorNoCobertura) y se crea un cargo del 80% del subtotal al socio responsable
-//   (R1) en cargos_socio. El reembolso al cliente (tarjeta) lo emite la red
-//   reconciliar-reembolsos. Antes solo se marcaba no_rider y cancelaba el rescatador ~10 min.
-// v51 (10-jul-2026): ROUND-ROBIN DE 2 VUELTAS + RESPONSABLE (decision de Marlon).
-//   Antes: "no reofrecer a quien rechazo; tope 3 intentos". Ahora: cada rider elegible
-//   puede recibir el pedido hasta 2 veces (2 vueltas completas por la lista ordenada). Se
-//   ofrece SIEMPRE al que menos veces lo ha recibido (para completar la vuelta en curso),
-//   desempatando por score (mas cercano). Un rider que rechazo/dejo expirar en la 1a vuelta
-//   VUELVE a recibirlo en la 2a. El PRIMER asignado (R1) queda fijado en
-//   pedidos.socio_responsable_id y es el responsable del coste si el pedido acaba cancelado
-//   por no-cobertura (el cobro en si es Fase 2). Cada asignacion guarda su 'vuelta' (1|2) y
-//   'es_responsable' para los avisos de la app. Terminal cuando todos los elegibles llegan a
-//   2 ofertas -> se cancela y se cobra al responsable. Ventana de aceptacion 150 s (2:30).
-// v50 (5-jul-2026): FRESCURA DE GPS AHORA ES FILTRO DURO. Un socio sin senal reciente
-//   (app cerrada/colgada) NO es asignable aunque siga en_servicio. Umbral MAX_LOC_AGE_MIN 12 min.
+//   se le vuelve a ofrecer ese pedido en las vueltas siguientes. Los timeout SI vuelven.
+// v54 (18-jul-2026): AUTONOMIA DEL SOCIO (reparto_activo + acepta_* + aviso telefonicos).
+// v53: PEDIDOS TELEFONICOS — en la terminal de no-cobertura se cancela SIN cargo del 80%.
+// v52: al agotar las vueltas se CANCELA el pedido y se carga el 80% al responsable (R1).
+// v51: ROUND-ROBIN + RESPONSABLE. Ventana de aceptacion 150 s (2:30).
+// v50: FRESCURA DE GPS como FILTRO DURO (MAX_LOC_AGE_MIN 12 min).
 // v48-v49: CANDADO DE AUTENTICACION (cron-secret / service-role / JWT dueno o admin).
-//   verify_jwt sigue false a nivel plataforma; el candado vive en el codigo.
-// v47: FILTRO DURO por GPS y radio (15 km); score = dist + activos*1500; gating socios.activo.
+// v47: FILTRO DURO por GPS y radio (15 km); score = dist + activos*1500.
 // v44: IDEMPOTENCIA anti-duplicado. v42: REGLA 1 marketplace del socio.
 // Body: { pedido_id }
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// Env numerico blindado: secret vacio/basura/<=0 cae al valor por defecto.
 function envNum(name: string, fallback: number): number {
   const n = Number(Deno.env.get(name))
   return Number.isFinite(n) && n > 0 ? n : fallback
@@ -48,8 +31,8 @@ function envNum(name: string, fallback: number): number {
 const MAX_LOC_AGE_MS = envNum('DISPATCH_MAX_LOC_AGE_MIN', 12) * 60 * 1000
 const MAX_RADIUS_KM = envNum('DISPATCH_MAX_RADIUS_KM', 15)
 const CARGA_PESO_METROS = envNum('DISPATCH_CARGA_PESO_METROS', 1500)
-// v51: numero de vueltas completas por la lista de riders antes de cancelar.
-const MAX_VUELTAS = envNum('DISPATCH_MAX_VUELTAS', 2)
+const MAX_VUELTAS = envNum('DISPATCH_MAX_VUELTAS', 20)
+const MAX_ESPERA_MIN = envNum('DISPATCH_MAX_ESPERA_MIN', 60)
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -83,8 +66,6 @@ Deno.serve(async (req) => {
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
   const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
-  // v48: CANDADO. Servidor (cron-secret o service role) pasa directo; cualquier otro
-  // necesita un JWT de usuario valido (la titularidad se comprueba tras cargar el pedido).
   const cronSecret = req.headers.get('x-cron-secret') || ''
   const expectedSecret = Deno.env.get('CRON_SECRET') || ''
   const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
@@ -109,15 +90,12 @@ Deno.serve(async (req) => {
     } catch (_) { /* best-effort */ }
   }
 
-  // 1. Pedido + establecimiento (con GPS y dueno para el candado)
   const { data: pedido, error: pErr } = await sb.from('pedidos')
-    .select('id, codigo, estado, modo_entrega, establecimiento_id, intento_asignacion, socio_id, socio_responsable_id, subtotal, origen_pedido, usuario_id, metodo_pago, establecimientos(id, nombre, latitud, longitud, user_id)')
+    .select('id, codigo, estado, modo_entrega, establecimiento_id, intento_asignacion, socio_id, socio_responsable_id, subtotal, origen_pedido, usuario_id, metodo_pago, aceptado_at, establecimientos(id, nombre, latitud, longitud, user_id)')
     .eq('id', body.pedido_id).maybeSingle()
   if (pErr || !pedido) return json({ error: 'pedido_not_found', detail: pErr?.message }, 404)
   const est: any = (pedido as any).establecimientos
 
-  // v48: un usuario autenticado solo puede despachar pedidos de SU establecimiento,
-  // salvo rol admin/superadmin.
   if (usuarioAutenticado) {
     const esDueno = est?.user_id === usuarioAutenticado
     if (!esDueno) {
@@ -132,8 +110,6 @@ Deno.serve(async (req) => {
   if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') return json({ error: `pedido_${pedido.estado}` }, 400)
 
   async function marcarNoRider(reason: string) {
-    // v47: condicional — SOLO se marca no_rider desde NULL o 'created'. Nunca pisa
-    // 'accepted'/'picked_up'/etc y no repite avisos si ya estaba en no_rider.
     const { data: marcado, error: marcadoErr } = await sb.from('pedidos')
       .update({ shipday_status: 'no_rider' })
       .eq('id', pedido.id)
@@ -187,29 +163,21 @@ Deno.serve(async (req) => {
     return json({ ok: false, reason })
   }
 
-  // v52 (Fase 2): terminal de las 2 vueltas. Cancela el pedido YA y crea el cargo del 80%
-  // del subtotal al socio responsable (R1). El reembolso al cliente (tarjeta) lo emite la
-  // red reconciliar-reembolsos; el aviso al cliente lo dispara el trigger de estado -> 'cancelado'.
-  // v53: los pedidos TELEFONICOS se cancelan igual pero SIN cargo al responsable (la comida
-  // y el cobro ya son del restaurante; el cargo sobre-compensaria) y con aviso adaptado.
-  async function cancelarPorNoCobertura() {
+  async function cancelarPorNoCobertura(motivo = 'no_cubierto_sin_repartidor') {
     const ahora = new Date().toISOString()
     const esTelefonico = (pedido as any).origen_pedido === 'telefonico'
-    // Cancelacion CONDICIONAL: si el pedido avanzo en carrera (aceptado/recogido/...), no tocar.
     const { data: cancelado, error: cancErr } = await sb.from('pedidos')
-      .update({ estado: 'cancelado', cancelado_at: ahora, motivo_cancelacion: 'no_cubierto_2_vueltas', shipday_status: 'no_rider' })
+      .update({ estado: 'cancelado', cancelado_at: ahora, motivo_cancelacion: motivo, shipday_status: 'no_rider' })
       .eq('id', pedido.id)
       .in('estado', ['nuevo', 'preparando', 'listo'])
       .select('id')
     if (cancErr) {
       console.error('[dispatch] cancelarPorNoCobertura update fallo', pedido.id, cancErr.message)
-      return json({ ok: false, reason: 'agotadas_2_vueltas', error: 'cancel_update_failed', detail: cancErr.message }, 500)
+      return json({ ok: false, reason: 'no_cubierto', error: 'cancel_update_failed', detail: cancErr.message }, 500)
     }
     if (!cancelado || cancelado.length === 0) {
       return json({ ok: false, reason: 'ya_resuelto_en_carrera' })
     }
-    // Cargo al responsable (R1) = 80% del subtotal. Idempotente (indice unico por pedido).
-    // v53: NUNCA en pedidos telefonicos.
     const responsable = (pedido as any).socio_responsable_id
     const subtotal = Number((pedido as any).subtotal || 0)
     const monto = Math.round(subtotal * 0.80 * 100) / 100
@@ -221,7 +189,7 @@ Deno.serve(async (req) => {
         establecimiento_id: pedido.establecimiento_id,
         tipo: 'pedido_no_cubierto',
         monto,
-        concepto: `Pedido ${pedido.codigo} cancelado sin repartidor (2 vueltas). Compensacion al restaurante = 80% del subtotal.`,
+        concepto: `Pedido ${pedido.codigo} cancelado sin repartidor. Compensacion al restaurante = 80% del subtotal.`,
         estado: 'pendiente',
       })
       if (cargoErr) {
@@ -231,7 +199,7 @@ Deno.serve(async (req) => {
     await enviarPush({
       user_type: 'superadmin',
       title: 'Pedido cancelado sin rider',
-      body: `#${pedido.codigo}: nadie lo acepto en 2 vueltas. Cancelado${cargoCreado ? ` · cargo ${monto.toFixed(2)} EUR al responsable` : (esTelefonico ? ' · telefonico, sin cargo' : '')}.`,
+      body: `#${pedido.codigo}: nadie lo acepto (${motivo}). Cancelado${cargoCreado ? ` · cargo ${monto.toFixed(2)} EUR al responsable` : (esTelefonico ? ' · telefonico, sin cargo' : '')}.`,
       data: { tipo: 'pedido_no_cubierto', pedido_id: pedido.id },
     })
     if (pedido.establecimiento_id) {
@@ -254,12 +222,12 @@ Deno.serve(async (req) => {
         data: { tipo: 'pedido_cancelado', pedido_id: pedido.id, codigo: pedido.codigo },
       })
     }
-    return json({ ok: false, reason: 'cancelado_no_cubierto', responsable_socio_id: responsable, cargo: cargoCreado ? monto : 0 })
+    return json({ ok: false, reason: 'cancelado_no_cubierto', motivo, responsable_socio_id: responsable, cargo: cargoCreado ? monto : 0 })
   }
 
-  // 1b. Historial de asignaciones + IDEMPOTENCIA. Si hay una asignacion activa (esperando o
-  //     aceptada), se corta aqui sin disparar ningun aviso.
-  const { data: prev, error: prevErr } = await sb.from('pedido_asignaciones').select('id, rider_account_id, intento, estado, motivo_rechazo').eq('pedido_id', pedido.id)
+  // v55: se trae motivo_rechazo para distinguir rechazo explicito de timeout.
+  // v56: se trae created_at para el tope de tiempo total.
+  const { data: prev, error: prevErr } = await sb.from('pedido_asignaciones').select('id, rider_account_id, intento, estado, motivo_rechazo, created_at').eq('pedido_id', pedido.id)
   if (prevErr) return json({ error: 'historial_query_failed', detail: prevErr.message }, 500)
   const maxPrev = (prev || []).reduce((m: number, p: any) => Math.max(m, p.intento || 0), 0)
   const yaActiva = (prev || []).find((p: any) => p.estado === 'esperando_aceptacion' || p.estado === 'aceptado')
@@ -267,33 +235,49 @@ Deno.serve(async (req) => {
     return json({ ok: true, ya_asignado: true, pedido_id: pedido.id, asignacion_id: yaActiva.id })
   }
 
-  // 1c. Establecimiento sin GPS -> motivo propio (alta mal geocodificada).
+  // v56: TOPE DE TIEMPO TOTAL. Referencia = cuando el restaurante acepto el pedido
+  // (aceptado_at); si no existe, la 1a asignacion. Pasado MAX_ESPERA_MIN sin que nadie
+  // lo coja => cancelar por no-cobertura aunque queden vueltas. Nunca pisa un pedido
+  // aceptado por un rider (el check de yaActiva ya retorno antes) ni uno recogido/en
+  // camino (el update condicional de cancelarPorNoCobertura solo toca nuevo/preparando/listo).
+  {
+    const aceptMs = (pedido as any).aceptado_at ? new Date((pedido as any).aceptado_at).getTime() : NaN
+    const primeraAsigMs = (prev || []).reduce((m: number, p: any) => {
+      const t = p.created_at ? new Date(p.created_at).getTime() : NaN
+      return Number.isFinite(t) && t < m ? t : m
+    }, Infinity)
+    const refMs = Number.isFinite(aceptMs) ? aceptMs : (primeraAsigMs !== Infinity ? primeraAsigMs : NaN)
+    if (Number.isFinite(refMs) && (Date.now() - refMs) > MAX_ESPERA_MIN * 60 * 1000) {
+      return await cancelarPorNoCobertura('no_cubierto_tiempo_maximo')
+    }
+  }
+
   if (est?.latitud == null || est?.longitud == null) {
     return await marcarNoRider('establecimiento_sin_gps')
   }
 
-  // v54: fuente del pedido -> flag del socio que la acepta.
   const origenPedido = (pedido as any).origen_pedido
   const esMarketplaceSocio = origenPedido === 'marketplace_socio' && !!(pedido as any).socio_id
   const esTelefonicoPed = origenPedido === 'telefonico'
   const aceptaFuente = (s: any) => {
     if (esMarketplaceSocio) return s?.acepta_marketplace !== false
     if (esTelefonicoPed) return s?.acepta_telefonicos !== false
-    return s?.acepta_app !== false // 'pido', 'tienda_publica', null u otros = fuente app
+    return s?.acepta_app !== false
   }
 
-  // 2. Socios candidatos. REGLA 1: marketplace del socio -> solo ese socio.
-  //    v54: los vinculos pausados por el socio (reparto_activo=false) NO cuentan en NINGUNA via.
   let socioIds: string[]
   if (esMarketplaceSocio) {
-    // Si el socio pauso este restaurante, tampoco reparte pedidos de su propio marketplace.
-    const { data: vincSocio } = await sb.from('socio_establecimiento')
+    const { data: vincSocio, error: vincErr } = await sb.from('socio_establecimiento')
       .select('id, reparto_activo')
       .eq('establecimiento_id', pedido.establecimiento_id)
       .eq('socio_id', (pedido as any).socio_id)
       .eq('estado', 'activa')
       .maybeSingle()
-    if (vincSocio && vincSocio.reparto_activo === false) {
+    if (vincErr) return json({ error: 'vinculo_query_failed', detail: vincErr.message }, 500)
+    // v56: si el vinculo ya no esta 'activa' (se desvinculo en vuelo), antes se seguia
+    // adelante y el insert reventaba con 23514 del guard en bucle -> ahora terminal limpia.
+    if (!vincSocio) return await marcarNoRider('sin_socio_vinculado')
+    if (vincSocio.reparto_activo === false) {
       return await marcarNoRider('socio_pauso_restaurante')
     }
     socioIds = [(pedido as any).socio_id]
@@ -305,20 +289,15 @@ Deno.serve(async (req) => {
   }
   if (!socioIds.length) return await marcarNoRider('sin_socio_vinculado')
 
-  // 3. Riders de esos socios (v54: + flags de fuentes).
   const { data: riders, error: rErr } = await sb.from('rider_accounts')
     .select('id, nombre, socio_id, activa, estado, socios!inner(id, user_id, nombre, en_servicio, activo, marketplace_activo, latitud_actual, longitud_actual, last_location_at, acepta_marketplace, acepta_telefonicos, acepta_app)')
     .in('socio_id', socioIds).eq('activa', true).eq('estado', 'activa')
   if (rErr) return json({ error: 'riders_query_failed', detail: rErr.message }, 500)
 
-  // 5. Candidatos ONLINE + distancia Haversine. Gating por socios.activo. marketplace_activo
-  //    NO se usa a proposito (pausar la tienda publica no debe cortar el reparto de pidoo.es).
   const online = (riders || [])
     .filter((r: any) => r.socios?.en_servicio === true && r.socios?.activo !== false)
   if (!online.length) return await marcarNoRider(esMarketplaceSocio ? 'socio_marketplace_offline' : 'no_rider')
 
-  // v54: FILTRO POR FUENTE. Socios online que no aceptan esta via -> fuera, con motivo propio
-  // (distinguible de "offline" para diagnostico y avisos).
   const base = online
     .filter((r: any) => aceptaFuente(r.socios))
     .map((r: any) => {
@@ -332,20 +311,17 @@ Deno.serve(async (req) => {
     return await marcarNoRider(esMarketplaceSocio ? 'socio_no_acepta_marketplace' : (esTelefonicoPed ? 'sin_rider_acepta_telefonicos' : 'sin_rider_acepta_app'))
   }
 
-  // v50: FRESCURA como GATE DURO.
   const ahoraMs = Date.now()
   const esFresco = (c: any) => {
     const ts = c.socio?.last_location_at ? new Date(c.socio.last_location_at).getTime() : NaN
     return Number.isFinite(ts) && (ahoraMs - ts) <= MAX_LOC_AGE_MS
   }
 
-  // 5b. FILTRO DURO: sin coordenadas, fuera de radio, o SIN SENAL RECIENTE => NO asignable.
   const enRadio = base.filter((c: any) => c.dist != null && c.dist <= MAX_RADIUS_KM * 1000)
   if (!enRadio.length) return await marcarNoRider('sin_rider_en_radio')
   const elegibles = enRadio.filter((c: any) => esFresco(c))
   if (!elegibles.length) return await marcarNoRider('sin_rider_fresco')
 
-  // 5c. Carga activa por rider: multi-pedido permitido pero penalizado en el score.
   const cargaPorRider = new Map<string, number>()
   try {
     const riderIds = [...new Set(elegibles.map((c: any) => c.rider.id))]
@@ -361,21 +337,15 @@ Deno.serve(async (req) => {
   } catch (_) { /* si falla, carga 0 para todos */ }
   for (const c of elegibles as any[]) c.score = c.dist + (cargaPorRider.get(c.rider.id) || 0) * CARGA_PESO_METROS
 
-  // 5d. ROUND-ROBIN DE 2 VUELTAS (v51). Cada rider elegible puede recibir el pedido hasta
-  //     MAX_VUELTAS veces; se ofrece SIEMPRE al que menos veces lo ha recibido (para completar
-  //     la vuelta en curso), desempatando por score (mas cercano). Un rider que rechazo/dejo
-  //     expirar en la 1a vuelta VUELVE a recibirlo en la 2a. Cuando todos los elegibles llegan
-  //     a MAX_VUELTAS ofertas -> terminal (se cancela y R1 respondera del coste).
+  // 5d. ROUND-ROBIN (v51) + RECHAZO DEFINITIVO (v55).
   const offersByRider = new Map<string, number>()
   for (const p of (prev || []) as any[]) {
     offersByRider.set(p.rider_account_id, (offersByRider.get(p.rider_account_id) || 0) + 1)
   }
 
-  // v55 (19-jul-2026, Marlon: "si lo rechazo, que se rechace una sola vez"): un rechazo
-  // EXPLÍCITO del rider es DEFINITIVO — no se le vuelve a ofrecer el mismo pedido en la
-  // 2ª vuelta. Antes el round-robin se lo reofrecía y tenía que rechazarlo dos veces.
-  // Los TIMEOUT sí siguen volviendo en la 2ª vuelta: no ver el móvil a tiempo no es
-  // lo mismo que decir que no (puede estar conduciendo y querer el pedido después).
+  // v55: un rechazo EXPLICITO del rider es DEFINITIVO — no se le vuelve a ofrecer el mismo
+  // pedido en las vueltas siguientes. Los TIMEOUT si vuelven:
+  // no ver el movil a tiempo no es lo mismo que decir que no.
   const rechazoExplicito = new Set<string>()
   for (const p of (prev || []) as any[]) {
     if (p.estado === 'rechazado' && p.motivo_rechazo && p.motivo_rechazo !== 'timeout') {
@@ -384,16 +354,16 @@ Deno.serve(async (req) => {
   }
   const noRechazados = (elegibles as any[]).filter((c) => !rechazoExplicito.has(c.rider.id))
   if (!noRechazados.length) {
-    // Todos los elegibles lo han rechazado a mano => no hay a quién ofrecérselo.
-    return await cancelarPorNoCobertura()
+    // Todos los elegibles lo han rechazado a mano => no hay a quien ofrecerselo.
+    return await cancelarPorNoCobertura('no_cubierto_todos_rechazaron')
   }
 
   const conOffers = noRechazados.map((c) => ({ ...c, offers: offersByRider.get(c.rider.id) || 0 }))
   const minOffers = Math.min(...conOffers.map((c) => c.offers))
-  if (minOffers >= MAX_VUELTAS) return await cancelarPorNoCobertura()
+  if (minOffers >= MAX_VUELTAS) return await cancelarPorNoCobertura('no_cubierto_vueltas_agotadas')
   const porScore = (a: any, b: any) => a.score - b.score
   const elegido = conOffers.filter((c) => c.offers === minOffers).slice().sort(porScore)[0]
-  const vueltaRider = elegido.offers + 1               // 1 = primera vuelta, 2 = ultima
+  const vueltaRider = elegido.offers + 1
   const esUltimaVuelta = vueltaRider >= MAX_VUELTAS
   const esPrimeraAsignacion = !(prev && prev.length)
   const responsableId = esPrimeraAsignacion ? elegido.socio.id : ((pedido as any).socio_responsable_id || null)
@@ -401,7 +371,6 @@ Deno.serve(async (req) => {
   const intento = Math.max((pedido.intento_asignacion || 0), maxPrev) + 1
   const ts = new Date().toISOString()
 
-  // 6. Insert asignacion (socio_id imprescindible: el realtime del socio filtra por socio_id)
   const { data: asignacion, error: aErr } = await sb.from('pedido_asignaciones').insert({
     pedido_id: pedido.id,
     rider_account_id: elegido.rider.id,
@@ -416,10 +385,14 @@ Deno.serve(async (req) => {
     if ((aErr as any).code === '23505') {
       return json({ ok: true, ya_asignado: true, pedido_id: pedido.id })
     }
+    // v56: el guard de BD trg_guard_asignacion_socio_vinculado (23514) significa que el
+    // socio se desvinculo en carrera -> terminal limpia en vez de 500 reintentable en bucle.
+    if ((aErr as any).code === '23514' || /guard_vinculo/i.test(aErr.message || '')) {
+      return await marcarNoRider('sin_socio_vinculado')
+    }
     return json({ error: 'asignacion_insert_failed', detail: aErr.message }, 500)
   }
 
-  // 7. Update pedido. socio_responsable_id se fija SOLO en la primera asignacion (R1).
   const updatePedido: Record<string, unknown> = {
     shipday_status: 'created',
     shipday_tracking_url: `https://socio.pidoo.es/seguir/${pedido.codigo}`,
@@ -432,17 +405,16 @@ Deno.serve(async (req) => {
   const { error: updPedidoErr } = await sb.from('pedidos').update(updatePedido).eq('id', pedido.id)
   if (updPedidoErr) console.error('[dispatch] update pedido fallo', pedido.id, updPedidoErr.message)
 
-  // 8. Push inmediato al rider (v51: 150 s + aviso de responsable / ultima vuelta;
-  //    v54: en telefonicos, aviso de "solo envio, sin comision" YA en el push)
   let sufijo = ''
   if (esUltimaVuelta) sufijo = ' · ÚLTIMA VUELTA: acéptalo o se cancela'
   else if (esResponsable) sufijo = ' · eres el responsable del pedido'
   const prefijoTel = esTelefonicoPed ? 'Telefónico (solo envío, sin comisión) · ' : ''
   await enviarPush({
     user_ids: [elegido.socio.user_id],
+    user_type: 'socio',
     title: `Nuevo pedido · ${est?.nombre || ''}`,
     body: `${prefijoTel}#${pedido.codigo}${elegido.dist != null ? ` · ${(elegido.dist / 1000).toFixed(1)} km` : ''} — acepta en 2:30${sufijo}`,
-    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion?.id, urgente: true, vuelta: vueltaRider, es_responsable: esResponsable, telefonico: esTelefonicoPed },
+    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion?.id, urgente: true, vuelta: vueltaRider, es_responsable: esResponsable, telefonico: esTelefonicoPed, loop_sound: '1', codigo: pedido.codigo },
   })
 
   return json({ ok: true, pedido_id: pedido.id, rider_account_id: elegido.rider.id, socio_id: elegido.socio.id, intento, vuelta: vueltaRider, es_responsable: esResponsable, ultima_vuelta: esUltimaVuelta, distancia_metros: elegido.dist, carga_previa: cargaPorRider.get(elegido.rider.id) || 0, marketplace_socio: esMarketplaceSocio })

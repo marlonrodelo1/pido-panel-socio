@@ -153,7 +153,7 @@ export default function Ganancias() {
       </div>
 
       <div style={{ fontSize: type.xs, color: colors.textFaint, marginBottom: 14, marginTop: -4, lineHeight: 1.5 }}>
-        Es lo que facturas a cada restaurante por tus repartos: envío + comisión + propina (sin IVA).
+        Es lo que facturas a cada restaurante por tus repartos: envío + comisión + propina (IGIC incluido).
         En pedidos en efectivo recuerda que ya cobraste el total al cliente y debes entregarle al restaurante su parte.
       </div>
 

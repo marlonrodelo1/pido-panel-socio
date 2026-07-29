@@ -18,12 +18,30 @@ public class MainActivity extends BridgeActivity {
     // exige un id distinto de los anteriores ('pedidos', 'pedidos_sonido').
     public static final String CH_PEDIDOS = "pedidos_alarma_v1";
 
+    // 23-jul-2026: lo lee PidooMessagingService para NO arrancar la alarma en bucle si la
+    // app está en primer plano (ahí el ModalPedidoEntrante ya reproduce el audio HTML).
+    public static volatile boolean appEnPrimerPlano = false;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Plugin local: detecta el cierre de la app -> offline instantáneo (Parte B).
         registerPlugin(OfflineBeaconPlugin.class);
         super.onCreate(savedInstanceState);
         crearCanalPedidos();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        appEnPrimerPlano = true;
+        // El rider abrió la app -> el modal in-app toma el relevo; callamos la alarma en bucle.
+        PedidoAlarmService.detener(this);
+    }
+
+    @Override
+    public void onStop() {
+        appEnPrimerPlano = false;
+        super.onStop();
     }
 
     /**
