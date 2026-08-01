@@ -1,4 +1,23 @@
 // create-shipday-order — DISPATCHER PROPIO (sin Shipday) desde 20-jun-2026.
+// v58 (31-jul-2026): VENTANA MINIMA DE BUSQUEDA + COOLDOWN DE RECHAZO (decision Marlon).
+//   Problema que cierra: un pedido YA ACEPTADO por el restaurante podia cancelarse en
+//   SEGUNDOS. Caso real PD-5EHV2Y (29-jul): aceptado 12:21:51, cancelado 12:22:39 = 48 s,
+//   porque el unico socio elegible pulso "Rechazar" y v55 hacia el rechazo DEFINITIVO
+//   => 'no_cubierto_todos_rechazaron' => cancelacion inmediata + cargo del 80% al responsable.
+//   1) NUEVO DISPATCH_MIN_BUSQUEDA_MIN (default 15): SUELO de tiempo. Dentro de esa ventana
+//      el dispatcher NO cancela por no-cobertura; deja el pedido en busqueda (no_rider) y el
+//      cron lo reintenta cada minuto. Se aplica a 'todos rechazaron' y 'vueltas agotadas'.
+//      NO se aplica a 'tiempo maximo' (ese es el TECHO de 60 min y debe cancelar siempre).
+//   2) NUEVO DISPATCH_RECHAZO_COOLDOWN_MIN (default 5): el rechazo explicito deja de ser
+//      definitivo PARA SIEMPRE y pasa a ser un COOLDOWN. Quien rechaza no vuelve a recibir el
+//      pedido durante 5 min; pasados esos 5 min vuelve a la rueda. Como el round-robin ordena
+//      por numero de ofertas recibidas, el que rechazo va SIEMPRE el ultimo: solo le vuelve a
+//      sonar si no hay nadie mas. Conserva el espiritu de v55 (no acosar) sin matar el pedido.
+//      Un rechazo sin fecha (resolved_at y created_at nulos) se sigue tratando como definitivo.
+//   Nota: 'no_rider' ya NO es terminal. El cron dispatcher-cada-minuto re-dispara los pedidos
+//   en no_rider dentro de la ventana (migracion ventana_minima_busqueda_rider), asi que si un
+//   socio se conecta en el minuto 6, el pedido lo pilla. Antes se quedaba quieto hasta que
+//   rescatar-pedidos-no-rider lo cancelaba.
 // v56 (23-jul-2026): 20 VUELTAS + TOPE DE TIEMPO + BLINDAJE.
 //   1) MAX_VUELTAS default 2 -> 20 (decision Marlon 23-jul: insistir mucho mas antes de cancelar).
 //   2) NUEVO tope de tiempo total DISPATCH_MAX_ESPERA_MIN (default 60 min): si el pedido lleva
@@ -10,8 +29,7 @@
 //      de 500 -> ahora marcarNoRider('sin_socio_vinculado').
 //   4) BLINDAJE insert: un 23514 (trg_guard_asignacion_socio_vinculado) ya no devuelve 500
 //      crudo reintentable -> marcarNoRider('sin_socio_vinculado') (el rescate cancela+reembolsa).
-// v55 (19-jul-2026): RECHAZO EXPLICITO = DEFINITIVO. Si el rider pulsa "Rechazar", ya no
-//   se le vuelve a ofrecer ese pedido en las vueltas siguientes. Los timeout SI vuelven.
+// v55 (19-jul-2026): RECHAZO EXPLICITO = DEFINITIVO. (SUAVIZADO A COOLDOWN EN v58.)
 // v54 (18-jul-2026): AUTONOMIA DEL SOCIO (reparto_activo + acepta_* + aviso telefonicos).
 // v53: PEDIDOS TELEFONICOS — en la terminal de no-cobertura se cancela SIN cargo del 80%.
 // v52: al agotar las vueltas se CANCELA el pedido y se carga el 80% al responsable (R1).
@@ -33,6 +51,9 @@ const MAX_RADIUS_KM = envNum('DISPATCH_MAX_RADIUS_KM', 15)
 const CARGA_PESO_METROS = envNum('DISPATCH_CARGA_PESO_METROS', 1500)
 const MAX_VUELTAS = envNum('DISPATCH_MAX_VUELTAS', 20)
 const MAX_ESPERA_MIN = envNum('DISPATCH_MAX_ESPERA_MIN', 60)
+// v58: suelo de busqueda y cooldown de rechazo.
+const MIN_BUSQUEDA_MIN = envNum('DISPATCH_MIN_BUSQUEDA_MIN', 15)
+const RECHAZO_COOLDOWN_MS = envNum('DISPATCH_RECHAZO_COOLDOWN_MIN', 5) * 60 * 1000
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -91,7 +112,7 @@ Deno.serve(async (req) => {
   }
 
   const { data: pedido, error: pErr } = await sb.from('pedidos')
-    .select('id, codigo, estado, modo_entrega, establecimiento_id, intento_asignacion, socio_id, socio_responsable_id, subtotal, origen_pedido, usuario_id, metodo_pago, aceptado_at, establecimientos(id, nombre, latitud, longitud, user_id)')
+    .select('id, codigo, estado, modo_entrega, establecimiento_id, intento_asignacion, socio_id, socio_responsable_id, subtotal, origen_pedido, usuario_id, metodo_pago, aceptado_at, created_at, establecimientos(id, nombre, latitud, longitud, user_id)')
     .eq('id', body.pedido_id).maybeSingle()
   if (pErr || !pedido) return json({ error: 'pedido_not_found', detail: pErr?.message }, 404)
   const est: any = (pedido as any).establecimientos
@@ -109,7 +130,7 @@ Deno.serve(async (req) => {
   if (pedido.modo_entrega !== 'delivery') return json({ error: 'pedido_no_delivery' }, 400)
   if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') return json({ error: `pedido_${pedido.estado}` }, 400)
 
-  async function marcarNoRider(reason: string) {
+  async function marcarNoRider(reason: string, extra: Record<string, unknown> = {}) {
     const { data: marcado, error: marcadoErr } = await sb.from('pedidos')
       .update({ shipday_status: 'no_rider' })
       .eq('id', pedido.id)
@@ -160,7 +181,7 @@ Deno.serve(async (req) => {
         })
       }
     }
-    return json({ ok: false, reason })
+    return json({ ok: false, reason, ...extra })
   }
 
   async function cancelarPorNoCobertura(motivo = 'no_cubierto_sin_repartidor') {
@@ -227,7 +248,8 @@ Deno.serve(async (req) => {
 
   // v55: se trae motivo_rechazo para distinguir rechazo explicito de timeout.
   // v56: se trae created_at para el tope de tiempo total.
-  const { data: prev, error: prevErr } = await sb.from('pedido_asignaciones').select('id, rider_account_id, intento, estado, motivo_rechazo, created_at').eq('pedido_id', pedido.id)
+  // v58: se trae resolved_at para el cooldown de rechazo.
+  const { data: prev, error: prevErr } = await sb.from('pedido_asignaciones').select('id, rider_account_id, intento, estado, motivo_rechazo, created_at, resolved_at').eq('pedido_id', pedido.id)
   if (prevErr) return json({ error: 'historial_query_failed', detail: prevErr.message }, 500)
   const maxPrev = (prev || []).reduce((m: number, p: any) => Math.max(m, p.intento || 0), 0)
   const yaActiva = (prev || []).find((p: any) => p.estado === 'esperando_aceptacion' || p.estado === 'aceptado')
@@ -235,21 +257,42 @@ Deno.serve(async (req) => {
     return json({ ok: true, ya_asignado: true, pedido_id: pedido.id, asignacion_id: yaActiva.id })
   }
 
-  // v56: TOPE DE TIEMPO TOTAL. Referencia = cuando el restaurante acepto el pedido
-  // (aceptado_at); si no existe, la 1a asignacion. Pasado MAX_ESPERA_MIN sin que nadie
-  // lo coja => cancelar por no-cobertura aunque queden vueltas. Nunca pisa un pedido
-  // aceptado por un rider (el check de yaActiva ya retorno antes) ni uno recogido/en
-  // camino (el update condicional de cancelarPorNoCobertura solo toca nuevo/preparando/listo).
-  {
-    const aceptMs = (pedido as any).aceptado_at ? new Date((pedido as any).aceptado_at).getTime() : NaN
-    const primeraAsigMs = (prev || []).reduce((m: number, p: any) => {
-      const t = p.created_at ? new Date(p.created_at).getTime() : NaN
-      return Number.isFinite(t) && t < m ? t : m
-    }, Infinity)
-    const refMs = Number.isFinite(aceptMs) ? aceptMs : (primeraAsigMs !== Infinity ? primeraAsigMs : NaN)
-    if (Number.isFinite(refMs) && (Date.now() - refMs) > MAX_ESPERA_MIN * 60 * 1000) {
-      return await cancelarPorNoCobertura('no_cubierto_tiempo_maximo')
+  // Referencia temporal de la busqueda: cuando el restaurante acepto el pedido; si no consta,
+  // la 1a asignacion; y en ultimo termino la creacion del pedido. La comparten el TECHO de
+  // v56 (MAX_ESPERA_MIN) y el SUELO de v58 (MIN_BUSQUEDA_MIN).
+  const aceptMs = (pedido as any).aceptado_at ? new Date((pedido as any).aceptado_at).getTime() : NaN
+  const primeraAsigMs = (prev || []).reduce((m: number, p: any) => {
+    const t = p.created_at ? new Date(p.created_at).getTime() : NaN
+    return Number.isFinite(t) && t < m ? t : m
+  }, Infinity)
+  const creadoMs = (pedido as any).created_at ? new Date((pedido as any).created_at).getTime() : NaN
+  const refMs = Number.isFinite(aceptMs)
+    ? aceptMs
+    : (primeraAsigMs !== Infinity ? primeraAsigMs : (Number.isFinite(creadoMs) ? creadoMs : NaN))
+  const buscandoDesdeMs = Number.isFinite(refMs) ? (Date.now() - refMs) : NaN
+
+  // v56: TOPE DE TIEMPO TOTAL. Pasado MAX_ESPERA_MIN sin que nadie lo coja => cancelar por
+  // no-cobertura aunque queden vueltas. Nunca pisa un pedido aceptado por un rider (el check
+  // de yaActiva ya retorno antes) ni uno recogido/en camino (el update condicional de
+  // cancelarPorNoCobertura solo toca nuevo/preparando/listo).
+  if (Number.isFinite(buscandoDesdeMs) && buscandoDesdeMs > MAX_ESPERA_MIN * 60 * 1000) {
+    return await cancelarPorNoCobertura('no_cubierto_tiempo_maximo')
+  }
+
+  // v58: SUELO DE BUSQUEDA. Dentro de los primeros MIN_BUSQUEDA_MIN minutos el pedido NO se
+  // cancela por no-cobertura: se deja en busqueda (no_rider) y el cron dispatcher-cada-minuto
+  // lo vuelve a intentar, por si se conecta un socio o vence el cooldown de un rechazo.
+  // Si no hay referencia temporal fiable (refMs NaN) se cancela como antes: no inventamos
+  // una espera sobre un dato que no tenemos.
+  const dentroVentanaMinima = () =>
+    Number.isFinite(buscandoDesdeMs) && buscandoDesdeMs < MIN_BUSQUEDA_MIN * 60 * 1000
+  async function terminarOEsperar(motivo: string) {
+    if (dentroVentanaMinima()) {
+      const quedanSeg = Math.max(0, Math.round((MIN_BUSQUEDA_MIN * 60 * 1000 - buscandoDesdeMs) / 1000))
+      console.log('[dispatch] en ventana de busqueda', pedido.codigo, motivo, `faltan ${quedanSeg}s`)
+      return await marcarNoRider(motivo, { buscando: true, faltan_seg: quedanSeg })
     }
+    return await cancelarPorNoCobertura(motivo)
   }
 
   if (est?.latitud == null || est?.longitud == null) {
@@ -337,30 +380,38 @@ Deno.serve(async (req) => {
   } catch (_) { /* si falla, carga 0 para todos */ }
   for (const c of elegibles as any[]) c.score = c.dist + (cargaPorRider.get(c.rider.id) || 0) * CARGA_PESO_METROS
 
-  // 5d. ROUND-ROBIN (v51) + RECHAZO DEFINITIVO (v55).
+  // 5d. ROUND-ROBIN (v51) + RECHAZO CON COOLDOWN (v55 -> v58).
   const offersByRider = new Map<string, number>()
   for (const p of (prev || []) as any[]) {
     offersByRider.set(p.rider_account_id, (offersByRider.get(p.rider_account_id) || 0) + 1)
   }
 
-  // v55: un rechazo EXPLICITO del rider es DEFINITIVO — no se le vuelve a ofrecer el mismo
-  // pedido en las vueltas siguientes. Los TIMEOUT si vuelven:
-  // no ver el movil a tiempo no es lo mismo que decir que no.
-  const rechazoExplicito = new Set<string>()
+  // v58: el rechazo EXPLICITO deja de ser definitivo para siempre y pasa a ser un COOLDOWN de
+  // RECHAZO_COOLDOWN_MS. Mientras el cooldown corre, a ese rider no se le vuelve a ofrecer el
+  // pedido; despues vuelve a la rueda, pero con sus ofertas ya gastadas, asi que el
+  // round-robin lo pone el ULTIMO: solo le suena de nuevo si no hay ningun otro elegible.
+  // Los TIMEOUT nunca han bloqueado: no ver el movil a tiempo no es decir que no.
+  const bloqueadoPorRechazo = new Set<string>()
   for (const p of (prev || []) as any[]) {
     if (p.estado === 'rechazado' && p.motivo_rechazo && p.motivo_rechazo !== 'timeout') {
-      rechazoExplicito.add(p.rider_account_id)
+      const tRaw = p.resolved_at || p.created_at
+      const t = tRaw ? new Date(tRaw).getTime() : NaN
+      // Sin fecha fiable se mantiene el comportamiento conservador de v55 (definitivo).
+      if (!Number.isFinite(t) || (Date.now() - t) < RECHAZO_COOLDOWN_MS) {
+        bloqueadoPorRechazo.add(p.rider_account_id)
+      }
     }
   }
-  const noRechazados = (elegibles as any[]).filter((c) => !rechazoExplicito.has(c.rider.id))
+  const noRechazados = (elegibles as any[]).filter((c) => !bloqueadoPorRechazo.has(c.rider.id))
   if (!noRechazados.length) {
-    // Todos los elegibles lo han rechazado a mano => no hay a quien ofrecerselo.
-    return await cancelarPorNoCobertura('no_cubierto_todos_rechazaron')
+    // Todos los elegibles lo han rechazado a mano y siguen en cooldown. Dentro de la ventana
+    // minima esto NO cancela: se espera a que venza el cooldown o entre otro socio.
+    return await terminarOEsperar('no_cubierto_todos_rechazaron')
   }
 
   const conOffers = noRechazados.map((c) => ({ ...c, offers: offersByRider.get(c.rider.id) || 0 }))
   const minOffers = Math.min(...conOffers.map((c) => c.offers))
-  if (minOffers >= MAX_VUELTAS) return await cancelarPorNoCobertura('no_cubierto_vueltas_agotadas')
+  if (minOffers >= MAX_VUELTAS) return await terminarOEsperar('no_cubierto_vueltas_agotadas')
   const porScore = (a: any, b: any) => a.score - b.score
   const elegido = conOffers.filter((c) => c.offers === minOffers).slice().sort(porScore)[0]
   const vueltaRider = elegido.offers + 1
@@ -414,7 +465,7 @@ Deno.serve(async (req) => {
     user_type: 'socio',
     title: `Nuevo pedido · ${est?.nombre || ''}`,
     body: `${prefijoTel}#${pedido.codigo}${elegido.dist != null ? ` · ${(elegido.dist / 1000).toFixed(1)} km` : ''} — acepta en 2:30${sufijo}`,
-    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion?.id, urgente: true, vuelta: vueltaRider, es_responsable: esResponsable, telefonico: esTelefonicoPed, loop_sound: '1', codigo: pedido.codigo },
+    data: { tipo: 'nueva_asignacion', pedido_id: pedido.id, asignacion_id: asignacion?.id, urgente: true, vuelta: vueltaRider, es_responsable: esResponsable, telefonico: esTelefonicoPed },
   })
 
   return json({ ok: true, pedido_id: pedido.id, rider_account_id: elegido.rider.id, socio_id: elegido.socio.id, intento, vuelta: vueltaRider, es_responsable: esResponsable, ultima_vuelta: esUltimaVuelta, distancia_metros: elegido.dist, carga_previa: cargaPorRider.get(elegido.rider.id) || 0, marketplace_socio: esMarketplaceSocio })
