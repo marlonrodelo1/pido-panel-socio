@@ -15,6 +15,7 @@ import { supabase, FUNCTIONS_URL } from './supabase'
 import { isNativePlatform, getDeviceId } from './capacitor'
 
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 
 async function invoke(fnName, body = {}) {
   const t0 = Date.now()
@@ -40,22 +41,70 @@ async function invoke(fnName, body = {}) {
 // para esquivar el throttling del WebView en segundo plano. En web cae al invoke
 // normal de supabase-js (que en foreground funciona perfecto). Si el envío nativo
 // falla por lo que sea, también cae al invoke normal como red de seguridad.
+// Renueva la sesión POR VÍA NATIVA (CapacitorHttp), no con supabase.auth.refreshSession().
+//
+// POR QUÉ (1-ago-2026, causa DEMOSTRADA del "me desconecto a las 2 horas"):
+// el POST del latido ya salía por CapacitorHttp para esquivar el estrangulamiento que
+// Android aplica al WebView en segundo plano... pero el REFRESCO del token se hacía con
+// supabase.auth.refreshSession(), que usa el fetch DEL WEBVIEW — justo el canal
+// estrangulado que motivó usar CapacitorHttp. Así que en background el token caducaba y
+// no se podía renovar: los latidos empezaban a dar 401, `socios.last_location_at` se
+// congelaba y 60 min después el cron auto-offline apagaba al socio.
+// Medido en producción sobre 3 socios reales: la señal GPS moría 51,9 / 51,8 / 22,4 min
+// después del último refresco de sesión (≈ lo que le quedaba de vida al token), y la media
+// entre refrescos era de 3,5-5 h, es decir, solo se renovaba al abrir la app.
+// Renovando por la capa nativa el latido sobrevive con la app minimizada.
+async function refreshSessionNative() {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    const refreshToken = session?.refresh_token
+    if (!refreshToken) return null
+    const { CapacitorHttp } = await import('@capacitor/core')
+    const res = await CapacitorHttp.post({
+      url: `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
+      headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY },
+      data: { refresh_token: refreshToken },
+    })
+    if (res.status < 200 || res.status >= 300) {
+      logDebug('auth_refresh', 'native_refresh_error', { status: res.status })
+      return null
+    }
+    const d = res.data || {}
+    if (!d.access_token || !d.refresh_token) return null
+    // Persistir la sesión nueva para que el resto de la app (y el próximo latido) la use.
+    // Si esto fallara por ir vía WebView, seguimos devolviendo el token: la petición en
+    // curso no debe perderse por no haber podido guardar la sesión.
+    try { await supabase.auth.setSession({ access_token: d.access_token, refresh_token: d.refresh_token }) } catch (_) {}
+    return d.access_token
+  } catch (e) {
+    logDebug('auth_refresh', 'native_refresh_exception', { error: e?.message })
+    return null
+  }
+}
+
 async function invokeNative(fnName, body = {}) {
   const t0 = Date.now()
   try {
     if (await isNativePlatform()) {
       let { data: { session } } = await supabase.auth.getSession()
-      // Refrescar el token si falta o está a <60s de caducar: en segundo plano el
-      // autoRefresh del WebView puede no haber disparado, y la edge (verify_jwt)
-      // devolvería 401 justo cuando más falta hace el latido.
+      // Refrescar el token si falta o está a <60s de caducar. El refresco va por la capa
+      // NATIVA (ver refreshSessionNative): con la app en segundo plano, hacerlo por el
+      // WebView es exactamente lo que dejaba al socio sin latido y acababa apagándolo.
       const expSoonMs = session?.expires_at ? session.expires_at * 1000 - Date.now() : 0
+      let token = session?.access_token
       if (!session || expSoonMs < 60_000) {
-        try {
-          const r = await supabase.auth.refreshSession()
-          if (r?.data?.session) session = r.data.session
-        } catch (_) {}
+        const fresh = await refreshSessionNative()
+        if (fresh) {
+          token = fresh
+        } else {
+          // La vía nativa no pudo renovar (sin red, o refresh token revocado) → último
+          // intento por supabase-js, que en primer plano sí funciona.
+          try {
+            const r = await supabase.auth.refreshSession()
+            if (r?.data?.session) token = r.data.session.access_token
+          } catch (_) {}
+        }
       }
-      const token = session?.access_token
       if (!token) {
         // Sin token utilizable: caer a la vía supabase-js, que refresca por su cuenta.
         logDebug(fnName, 'native_no_session_fallback', { body })
@@ -76,9 +125,27 @@ async function invokeNative(fnName, body = {}) {
       if (!ok) {
         console.warn(`[riderApi] ${fnName} native (${ms}ms) http ${res.status}`)
         logDebug(fnName, 'native_error', { status: res.status, body, ms })
-        // 401/403 = token rechazado: reintentar por supabase-js, que refresca el
-        // token internamente. Así un beat en background no se pierde por caducidad.
-        if (res.status === 401 || res.status === 403) return invoke(fnName, body)
+        // 401/403 = token rechazado. Primero se reintenta renovando POR VÍA NATIVA y
+        // repitiendo el POST nativo: en segundo plano es el único camino que sobrevive
+        // al estrangulamiento del WebView. Solo si eso falla se cae a supabase-js.
+        if (res.status === 401 || res.status === 403) {
+          const fresh = await refreshSessionNative()
+          if (fresh) {
+            const retry = await CapacitorHttp.post({
+              url: `${FUNCTIONS_URL}/${fnName}`,
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${fresh}`, 'apikey': ANON_KEY },
+              data: body,
+            })
+            if (retry.status >= 200 && retry.status < 300) {
+              return { ok: true, data: retry.data ?? null, error: null }
+            }
+            logDebug(fnName, 'native_retry_error', { status: retry.status })
+            // 409 (sesión superada) es una respuesta de negocio, no un problema de token:
+            // devolverla tal cual para que el caller la trate (no reintentar por WebView).
+            if (retry.status === 409) return { ok: false, error: 'http_409', data: retry.data ?? null }
+          }
+          return invoke(fnName, body)
+        }
         return { ok: false, error: `http_${res.status}`, data: res.data ?? null }
       }
       return { ok: true, data: res.data ?? null, error: null }
