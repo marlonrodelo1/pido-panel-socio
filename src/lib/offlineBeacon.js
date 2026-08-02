@@ -16,6 +16,7 @@
 import { registerPlugin } from '@capacitor/core'
 import { isNativePlatform } from './capacitor'
 import { supabase, FUNCTIONS_URL } from './supabase'
+import { riderPresenceToken } from './riderApi'
 
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const OfflineBeacon = registerPlugin('OfflineBeacon')
@@ -54,4 +55,40 @@ export async function disarmOfflineBeacon() {
 export async function requestBatteryExemption() {
   if (!(await isNativePlatform())) return
   try { await OfflineBeacon.requestBatteryExemption() } catch (_) {}
+}
+
+// ─── v300: LATIDO NATIVO DE PRESENCIA (PresenceBeatService) ───
+//
+// El latido de JS (timer de RiderContext + callback del watcher) muere cuando Android
+// congela el WebView en segundo plano → el socio quedaba "En línea" pero mudo y el
+// cliente veía "no hay repartidores" (caso Edinson/Misael, 2-ago). El servicio nativo
+// late cada 60s EN JAVA con una LLAVE DE PRESENCIA que no caduca con la sesión.
+// Solo se para al pulsar "Salir de línea", al cerrar la app del todo (onTaskRemoved,
+// que además manda el offline con la llave — ya no muere por JWT caducado) o al ser
+// superado por otro dispositivo (la llave rota → 401 → el servicio se apaga solo).
+// En iOS/web el plugin no existe → no-op silencioso (allí sigue el watcher + red de
+// seguridad de siempre).
+
+// Armar al ponerse EN SERVICIO: emite/rota la llave y arranca el servicio.
+export async function armPresenceBeat() {
+  if (!(await isNativePlatform())) return
+  try {
+    const res = await riderPresenceToken('emitir')
+    const presenceToken = res?.data?.presence_token
+    if (!presenceToken) return
+    await OfflineBeacon.armPresence({ presenceToken, functionsUrl: FUNCTIONS_URL, anonKey: ANON_KEY })
+  } catch (_) {}
+}
+
+// Desarmar: desconexión manual, logout, sesión muerta o dispositivo superado.
+export async function disarmPresenceBeat() {
+  if (!(await isNativePlatform())) return
+  try { await OfflineBeacon.disarmPresence() } catch (_) {}
+}
+
+// Estado de los requisitos del latido de fondo (permiso "siempre" + batería).
+// Devuelve null en web/iOS o si el plugin no está (APK vieja con bundle OTA nuevo).
+export async function checkPresencePrereqs() {
+  if (!(await isNativePlatform())) return null
+  try { return await OfflineBeacon.checkPrereqs() } catch (_) { return null }
 }

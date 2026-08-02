@@ -244,6 +244,15 @@ export async function riderHeartbeat({ latitud, longitud } = {}) {
   return invokeNative('rider-heartbeat', { latitud, longitud, device_id })
 }
 
+// v300: LLAVE DE PRESENCIA para el latido del servicio nativo (PresenceBeatService).
+// 'emitir' la ROTA (cada online): el servicio del dispositivo anterior recibe 401 y se
+// apaga solo. 'revocar' la borra (desconexión manual). La llave no caduca con la sesión:
+// es lo que hace al latido nativo inmune a la rotación del JWT y al WebView congelado.
+export async function riderPresenceToken(accion) {
+  const device_id = await getDeviceId()
+  return callEdgeAuthed('rider-presence-token', { accion, device_id })
+}
+
 // ────────────────────────────────────────────────────────────
 // ASIGNACIONES
 // ────────────────────────────────────────────────────────────

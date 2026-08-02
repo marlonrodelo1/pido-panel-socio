@@ -17,10 +17,10 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useSocio } from './SocioContext'
-import { riderOnline, riderOffline, riderHeartbeat } from '../lib/riderApi'
+import { riderOnline, riderOffline, riderHeartbeat, riderPresenceToken } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
-import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption } from '../lib/offlineBeacon'
+import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs } from '../lib/offlineBeacon'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
 import { installPedidoSoundUnlock } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
@@ -89,6 +89,7 @@ export function RiderProvider({ children }) {
         claimPendingRef.current = true
         setIsOnline(true)
         armOfflineBeacon() // Parte B: re-armar el beacon de cierre al reanudar turno
+        armPresenceBeat()  // v300: re-armar el latido nativo (rota la llave de presencia)
         riderOnline({})
           .then((res) => {
             // Éxito → este dispositivo ya es active_device_id. Un fallo de SESIÓN muerta lo
@@ -120,6 +121,7 @@ export function RiderProvider({ children }) {
       setNeedsLocation(false)
       stopTracking()
       disarmOfflineBeacon()
+      disarmPresenceBeat() // v300: apagar también el latido nativo
       lastPosRef.current = null
     }
   }, [socio?.id, socio?.en_servicio, handleWatcherError])
@@ -194,9 +196,26 @@ export function RiderProvider({ children }) {
             startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
             captureAndPush()
           }
-          // Parte B: armar el beacon de cierre + pedir exención de batería una sola vez.
+          // Parte B: armar el beacon de cierre. v300: armar el latido nativo de presencia.
           armOfflineBeacon()
-          try { if (localStorage.getItem('pidoo_batt_asked') !== '1') { localStorage.setItem('pidoo_batt_asked', '1'); requestBatteryExemption() } } catch (_) {}
+          armPresenceBeat()
+          // v300: chequeo PROACTIVO de requisitos de fondo. Antes esperábamos al fallo
+          // asíncrono del watcher para enterarnos; ahora, al ponerse online:
+          //  - sin "Permitir siempre" → banner de ubicación al momento (las
+          //    actualizaciones de Play a veces resetean ese permiso);
+          //  - sin exención de batería → abrir ajustes, máx. 1 vez al día (si insistimos
+          //    en cada toggle, el socio deja de leer).
+          try {
+            const pre = await checkPresencePrereqs()
+            if (pre && pre.bgLocation === false) setNeedsLocation(true)
+            if (pre && pre.batteryExempt === false) {
+              const last = Number(localStorage.getItem('pidoo_batt_asked_at') || 0)
+              if (Date.now() - last > 86_400_000) {
+                localStorage.setItem('pidoo_batt_asked_at', String(Date.now()))
+                requestBatteryExemption()
+              }
+            }
+          } catch (_) {}
           refreshSocio?.()
         } finally {
           claimPendingRef.current = false
@@ -223,6 +242,7 @@ export function RiderProvider({ children }) {
             if (res.sessionDead) {
               stopTracking()
               disarmOfflineBeacon()
+              disarmPresenceBeat() // v300
               lastPosRef.current = null
               setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
               try { await supabase.auth.signOut() } catch (_) {}
@@ -235,6 +255,8 @@ export function RiderProvider({ children }) {
           }
           stopTracking()
           disarmOfflineBeacon() // Parte B: desconexión manual -> desarmar beacon
+          disarmPresenceBeat()  // v300: parar el latido nativo
+          riderPresenceToken('revocar').catch(() => {}) // higiene: la llave deja de valer
           lastPosRef.current = null
           setNeedsLocation(false)
           refreshSocio?.()
@@ -273,6 +295,7 @@ export function RiderProvider({ children }) {
     setIsOnline(false)
     stopTracking()
     disarmOfflineBeacon()
+    disarmPresenceBeat() // v300: el otro dispositivo ya rotó la llave; paramos el servicio
     lastPosRef.current = null
     setActionError('Se inició sesión en otro dispositivo. Este teléfono se ha desconectado.')
     // Logout LOCAL a propósito: NO usamos logout() del SocioContext porque llama a
@@ -472,6 +495,7 @@ export function RiderProvider({ children }) {
           setIsOnline(false)
           stopTracking()
           disarmOfflineBeacon()
+          disarmPresenceBeat() // v300
           lastPosRef.current = null
           setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión para seguir recibiendo pedidos.')
           try { await supabase.auth.signOut() } catch (_) {}
@@ -513,7 +537,7 @@ export function RiderProvider({ children }) {
   // Cleanup global: al desmontar el provider (logout, cambio de árbol) paramos el
   // tracking nativo. Es estado de módulo en riderGeo, así que sin esto el foreground
   // service y el GPS seguirían vivos tras cerrar sesión.
-  useEffect(() => () => { stopTracking(); disarmOfflineBeacon() }, [])
+  useEffect(() => () => { stopTracking(); disarmOfflineBeacon(); disarmPresenceBeat() }, [])
 
   const value = useMemo(() => ({
     socio,

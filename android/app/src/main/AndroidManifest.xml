@@ -8,6 +8,11 @@
          tipo shortService (tarea corta <=3 min). No requiere permiso de tipo específico
          más allá de FOREGROUND_SERVICE. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- v300 (2-ago-2026): PresenceBeatService late cada 60s como foreground service tipo
+         location (Android 14+ exige declarar el permiso del tipo). El plugin de
+         background-geolocation ya lo aporta por manifest-merge; se declara explícito
+         porque nuestro servicio propio también lo usa. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- Geolocation. Primer plano: ACCESS_FINE/COARSE. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -87,6 +92,16 @@
             android:name=".OfflineBeaconService"
             android:exported="false"
             android:stopWithTask="false" />
+
+        <!-- v300 (2-ago-2026): LATIDO NATIVO DE PRESENCIA. Foreground service (type location)
+             que late cada 60s en Java con la llave de presencia — inmune a la congelación
+             del WebView que dejaba al socio "En línea" pero mudo (caso Edinson/Misael).
+             stopWithTask=false para que onTaskRemoved mande el offline al cerrar la app. -->
+        <service
+            android:name=".PresenceBeatService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="location" />
 
         <!-- 23-jul-2026: SONIDO EN BUCLE del pedido con la app minimizada.
              1) Nuestro MessagingService (extiende el de Capacitor) intercepta el push de
