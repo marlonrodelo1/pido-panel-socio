@@ -586,7 +586,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
                 <span style={{ fontWeight: 600, color: colors.text, fontFamily: type.mono }}>{p.codigo}</span>
                 <span>{new Date(p.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                 <span><span style={b}>{b._label}</span></span>
-                <span style={{ fontSize: 11, textTransform: 'uppercase', color: colors.textMute }}>{p.metodo_pago || '—'}</span>
+                <span style={{ fontSize: 11, textTransform: 'uppercase', color: colors.textMute }}>{etiquetaPago(p.metodo_pago)}</span>
                 <span style={{ fontWeight: 600, color: colors.text, fontVariantNumeric: 'tabular-nums' }}>{euro(p.total)}</span>
               </TableRow>
             )

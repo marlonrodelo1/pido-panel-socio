@@ -14,6 +14,7 @@ import { useRider } from '../../context/RiderContext'
 import { isNativeSync } from '../../lib/capacitor'
 import { colors } from '../../lib/uiStyles'
 import { calcGanancia } from '../../lib/ganancia'
+import { textoPago, hayQueCobrar } from '../../lib/metodoPago'
 
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
@@ -358,11 +359,16 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
             </span>
           </div>
 
+          {/* Si hay que cobrar, se avisa en rojo: es lo último que mira el
+              repartidor antes de llamar al timbre. */}
           <div style={{
             marginTop: 10, padding: '8px 12px', borderRadius: 8,
-            background: colors.cream2, fontSize: 11, color: colors.stone, fontWeight: 600,
+            background: hayQueCobrar(pedido.metodo_pago) ? colors.warningSoft : colors.cream2,
+            fontSize: 11,
+            color: hayQueCobrar(pedido.metodo_pago) ? '#8B6126' : colors.stone,
+            fontWeight: 700,
           }}>
-            Pago: {pedido.metodo_pago === 'efectivo' ? '💵 Efectivo (cobra al cliente)' : pedido.metodo_pago === 'pagado_local' ? '✅ Ya pagado (solo entregar)' : '💳 Tarjeta (ya pagado)'}
+            Pago: {textoPago(pedido.metodo_pago)}
           </div>
         </Card>
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
+import { hayQueCobrar, etiquetaPago } from '../lib/metodoPago'
 
 const RANGOS = [
   { id: 'hoy', label: 'Hoy' },
@@ -22,13 +23,12 @@ const PAGOS = [
   { id: 'todos', label: 'Todos' },
   { id: 'tarjeta', label: 'Tarjeta' },
   { id: 'efectivo', label: 'Efectivo' },
+  { id: 'datafono', label: 'Datáfono' },
 ]
 
-// Métodos: tarjeta (pagado online), efectivo (cobrar al cliente) o
-// 'pagado_local' (pedido telefónico ya cobrado por el restaurante: NO cobrar).
-// Cualquier valor legacy (p.ej. 'datafono') se trata como cobro en persona.
-const esPagadoOnline = (m) => m === 'tarjeta' || m === 'pagado_local'
-const metodoPagoLabel = (m) => (m === 'tarjeta' ? 'Tarjeta' : m === 'pagado_local' ? 'Ya pagado' : 'Efectivo')
+// Un solo sitio decide qué está cobrado y qué no: lib/metodoPago.js
+const esPagadoOnline = (m) => !hayQueCobrar(m)
+const metodoPagoLabel = etiquetaPago
 
 // Origen del pedido para el socio.
 const origenLabel = (o) => {
