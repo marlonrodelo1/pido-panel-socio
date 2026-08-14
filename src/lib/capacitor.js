@@ -28,11 +28,18 @@ export async function isNativePlatform() {
 }
 
 /**
- * Detección síncrona (asume que ya se cargó Capacitor). Para condicionales en
- * render. Si no está cargado todavía, devuelve false (web fallback).
+ * Detección síncrona, para condicionales en render.
+ *
+ * Mira `window.Capacitor` además de la copia cacheada: en la app nativa el puente
+ * se inyecta en el WebView ANTES de que corra el bundle, así que esto es fiable ya
+ * en el primer render. Con solo la variable cacheada (que se rellena tras un
+ * `await import(...)`) el primer pintado devolvía false DENTRO del móvil, y las
+ * pantallas que se ocultan en nativo —la suscripción, el registro— asomaban un
+ * instante. En web sigue devolviendo false.
  */
 export function isNativeSync() {
-  return !!(_Capacitor && _Capacitor.isNativePlatform && _Capacitor.isNativePlatform())
+  const C = _Capacitor || (typeof window !== 'undefined' ? window.Capacitor : null)
+  return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform())
 }
 
 /**
