@@ -4,6 +4,10 @@ import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
 import StatCard from '../components/StatCard'
 import { formatTarifa, tarifaCampos, fmtPct, formatFechaCorta } from '../lib/tarifas'
+// Faltaba: la lista de pedidos llama a etiquetaPago() y sin este import la pantalla
+// entera muere con "etiquetaPago is not defined". Solo se notaba en los restaurantes
+// CON pedidos (la linea se pinta por pedido), asi que los que tenian 0 abrian bien.
+import { etiquetaPago } from '../lib/metodoPago'
 import { getPlugin } from '../lib/capacitor'
 import { Bike } from 'lucide-react'
 import { ModalProponer } from './Restaurantes'

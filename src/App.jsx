@@ -154,11 +154,15 @@ function AdminViewRider({ view, estId, onOpenRestaurante, onCloseRestaurante, on
     ganancias:            <Ganancias />,
     pedidos:              <Pedidos />,
     clientes:             <Clientes />,
-    suscripcion:          <MiSuscripcion />,
-    configuracion:        <Configuracion />,
+    // 'suscripcion' NO existe en este shell. Este es el que renderiza la app que se
+    // descarga el socio, y dentro de la app no puede haber NADA que lleve a pagar un
+    // servicio fuera del sistema de Apple/Google: es rechazo directo (App Store 3.1.1)
+    // y ademas se llevarian entre el 15 y el 30 %. El plan se contrata en socio.pidoo.es.
+    // No se gatea por "soy movil": aqui la pantalla simplemente no esta.
+    configuracion:        <Configuracion enApp />,
     soporte:              <Soporte />,
     'eliminar-cuenta':    <EliminarCuenta onBack={onBack} />,
-  }[view] || <Configuracion />
+  }[view] || <Configuracion enApp />
 
   // En restaurante-detalle el "Volver" regresa al listado (no a la vista rider)
   const headerBack = (view === 'restaurante-detalle') ? onCloseRestaurante : onBack

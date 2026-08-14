@@ -19,7 +19,9 @@ const FISCAL_INIT = (socio) => ({
   iban: socio?.iban || '',
 })
 
-export default function Configuracion() {
+// `enApp` = se está pintando dentro del shell de repartidor, que es lo que
+// renderiza la app descargable. Ahí no se enseña nada de suscripción.
+export default function Configuracion({ enApp = false }) {
   const { socio, updateSocio, logout } = useSocio()
   const [form, setForm] = useState({
     nombre: socio?.nombre || '',
@@ -89,10 +91,11 @@ export default function Configuracion() {
         {/* Mi cuenta: qué correo tiene la sesión abierta y cómo cambiar la contraseña. */}
         <MiCuentaCard />
 
-        {/* Mi suscripción Pidoo — SOLO en web. En la app nativa no puede haber ningún
-            camino hacia un cobro fuera del sistema de Apple/Google: es motivo de rechazo
-            directo (App Store 3.1.1). El plan se gestiona en socio.pidoo.es. */}
-        {!isNativeSync() && <SuscripcionAccesoCard />}
+        {/* Mi suscripción Pidoo — SOLO en el panel web. Dentro de la app no puede haber
+            ningún camino hacia un cobro fuera del sistema de Apple/Google: es rechazo
+            directo (App Store 3.1.1). Doble condición a propósito: el shell de la app
+            (enApp) y la plataforma nativa. El plan se gestiona en socio.pidoo.es. */}
+        {!enApp && !isNativeSync() && <SuscripcionAccesoCard />}
 
         {/* Datos personales */}
         <Card>
