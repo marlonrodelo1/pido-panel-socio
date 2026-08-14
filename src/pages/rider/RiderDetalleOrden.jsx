@@ -49,7 +49,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
       // Re-cargamos el pedido completo (el objeto entrante puede venir parcial).
       const [pedRes, itemsRes] = await Promise.all([
         supabase.from('pedidos')
-          .select('id, codigo, estado, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, cliente_telefono, guest_telefono, guest_nombre')
+          .select('id, codigo, estado, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, cliente_telefono, guest_telefono, guest_nombre, notas')
           .eq('id', pedido.id).maybeSingle(),
         supabase.from('pedido_items').select('*').eq('pedido_id', pedido.id),
       ])
@@ -71,8 +71,10 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
         ped.establecimiento_id
           ? supabase.from('establecimientos').select('nombre, direccion, telefono, logo_url, latitud, longitud').eq('id', ped.establecimiento_id).maybeSingle()
           : Promise.resolve({ data: null }),
+        // Vista, no la tabla `usuarios`: el socio solo puede ver el contacto de los
+        // clientes de sus pedidos, y solo las columnas que se pintan aquí.
         ped.usuario_id
-          ? supabase.from('usuarios').select('nombre, apellido, telefono').eq('id', ped.usuario_id).maybeSingle()
+          ? supabase.from('v_clientes_de_mis_pedidos').select('nombre, apellido, telefono').eq('id', ped.usuario_id).maybeSingle()
           : Promise.resolve({ data: null }),
       ])
       if (cancel) return
@@ -302,6 +304,17 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
           {!isDelivery && (
             <div style={{ fontSize: 14, fontWeight: 700, color: colors.ink, marginBottom: 8 }}>{nombreCliente}</div>
           )}
+          {/* Indicaciones del cliente ("portal 3, el timbre no va"). Es la pantalla que
+              el socio mira en la puerta, así que van aquí y no enterradas en el pedido. */}
+          {pedido.notas && (
+            <div style={{
+              marginBottom: 10, padding: '9px 11px', borderRadius: 10,
+              background: colors.cream2, border: `1px solid ${colors.border}`,
+              fontSize: 12.5, color: colors.ink, lineHeight: 1.4,
+            }}>
+              <strong>Indicaciones:</strong> {pedido.notas}
+            </div>
+          )}
           {telefonoCliente ? (
             <div style={{ display: 'flex', gap: 8 }}>
               <a href={`tel:${telefonoCliente}`} style={contactBtn(colors.sageSoft, colors.sage2)}>
@@ -332,7 +345,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                 fontSize: 13, color: colors.ink,
               }}>
                 <span>
-                  {it.cantidad}× <strong>{it.nombre}</strong>
+                  {it.cantidad}× <strong>{it.nombre_producto || 'Producto'}</strong>
                   {it.tamano && <span style={{ color: colors.stone }}> · {it.tamano}</span>}
                 </span>
                 <span style={{ color: colors.stone, fontFamily: 'ui-monospace, monospace' }}>

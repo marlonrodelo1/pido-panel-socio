@@ -337,6 +337,7 @@ function DetalleModal({ pedidoId, onClose }) {
   const { socio } = useSocio()
   const [pedido, setPedido] = useState(null)
   const [items, setItems] = useState([])
+  const [cliente, setCliente] = useState(null)
   const [comisionPct, setComisionPct] = useState(10)
   const [tarifaPacto, setTarifaPacto] = useState({ tarifa_modo: null, tarifa_fija: null })
   const [loading, setLoading] = useState(true)
@@ -347,7 +348,10 @@ function DetalleModal({ pedidoId, onClose }) {
       const [pedRes, itemsRes] = await Promise.all([
         supabase
           .from('pedidos')
-          .select('*, establecimiento:establecimientos(nombre, telefono, direccion), usuario:usuarios(nombre, apellido, telefono, direccion, latitud, longitud)')
+          // El contacto del cliente NO se embebe desde `usuarios`: el socio no tiene
+          // acceso a esa tabla (le daria la ficha entera: email, GPS, metodo de pago).
+          // Va por la vista `v_clientes_de_mis_pedidos`, que expone solo lo que se pinta.
+          .select('*, establecimiento:establecimientos(nombre, telefono, direccion)')
           .eq('id', pedidoId)
           .maybeSingle(),
         supabase
@@ -358,6 +362,18 @@ function DetalleModal({ pedidoId, onClose }) {
       const ped = pedRes.data || null
       setPedido(ped)
       setItems(itemsRes.data || [])
+      // Contacto del cliente registrado. En los pedidos sin cuenta no hay fila: el
+      // nombre y el teléfono viven en el propio pedido (guest_*).
+      if (ped?.usuario_id) {
+        const { data: cli } = await supabase
+          .from('v_clientes_de_mis_pedidos')
+          .select('nombre, apellido, telefono, direccion, latitud, longitud')
+          .eq('id', ped.usuario_id)
+          .maybeSingle()
+        setCliente(cli || null)
+      } else {
+        setCliente(null)
+      }
       // Comisión REAL del socio para este restaurante (para el desglose de ganancia,
       // en vez de asumir 10%). Si no hay vinculación, queda el default 10%.
       if (ped?.establecimiento_id && socio?.id) {
@@ -374,11 +390,26 @@ function DetalleModal({ pedidoId, onClose }) {
     })()
   }, [pedidoId, socio?.id])
 
-  const coords = pedido?.usuario?.latitud && pedido?.usuario?.longitud
-    ? { lat: pedido.usuario.latitud, lng: pedido.usuario.longitud }
-    : null
+  // Punto de entrega: primero el del propio pedido (es el que se pactó al pedir), y
+  // solo si falta, la dirección guardada del cliente.
+  const coords = pedido?.lat_entrega && pedido?.lng_entrega
+    ? { lat: pedido.lat_entrega, lng: pedido.lng_entrega }
+    : (cliente?.latitud && cliente?.longitud ? { lat: cliente.latitud, lng: cliente.longitud } : null)
 
-  const subtotal = items.reduce((a, it) => a + Number(it.subtotal || it.precio * (it.cantidad || 1) || 0), 0)
+  // Cliente registrado, invitado o (si aún no cargó) el literal 'Cliente'. Misma cadena
+  // que usa la pantalla de reparto, para que no digan cosas distintas del mismo pedido.
+  const nombreCliente = [cliente?.nombre, cliente?.apellido].filter(Boolean).join(' ').trim()
+    || pedido?.guest_nombre || null
+  const telefonoCliente = pedido?.cliente_telefono || cliente?.telefono || pedido?.guest_telefono || null
+
+  // Manda `pedidos.subtotal`, que es la cifra con la que calcula el backend (la mantiene
+  // trg_recalculate_subtotal). La suma por líneas queda de respaldo para los pedidos sin
+  // items — telefónicos, por ejemplo, donde el trigger nunca llega a dispararse.
+  // (Antes leía it.subtotal / it.precio, columnas que no existen: daba SIEMPRE 0.)
+  const subtotal = pedido?.subtotal != null
+    ? Number(pedido.subtotal)
+    : items.reduce((a, it) => a + Number(it.precio_unitario || 0) * (it.cantidad || 1), 0)
+  const descuento = Number(pedido?.descuento || 0)
   const envio = Number(pedido?.coste_envio || pedido?.precio_envio || 0)
   const propina = Number(pedido?.propina || 0)
   const badge = pedido?.estado ? stateBadge(pedido.estado) : null
@@ -386,6 +417,7 @@ function DetalleModal({ pedidoId, onClose }) {
   // (socio_liq_*), se usa esa (respeta la tarifa pactada: fija = solo el fijo, sin
   // comisión). Si no, se estima con el pacto vigente (misma regla que calc_ganancia_socio).
   const esReparto = pedido?.modo_entrega === 'delivery' || envio > 0
+  const esEntregado = pedido?.estado === 'entregado'
   const tieneSnap = pedido?.socio_liq_total != null
   const esFijaPacto = tarifaPacto.tarifa_modo === 'fija'
   const esTelef = pedido?.origen_pedido === 'telefonico'
@@ -454,10 +486,10 @@ function DetalleModal({ pedidoId, onClose }) {
             </Section>
 
             <Section title="Cliente">
-              <Row k="Nombre" v={`${pedido.usuario?.nombre || ''} ${pedido.usuario?.apellido || ''}`.trim() || '—'} />
-              {pedido.usuario?.telefono && <Row k="Teléfono" v={pedido.usuario.telefono} />}
-              {(pedido.direccion_entrega || pedido.usuario?.direccion) && (
-                <Row k="Dirección" v={pedido.direccion_entrega || pedido.usuario?.direccion} />
+              <Row k="Nombre" v={nombreCliente || '—'} />
+              {telefonoCliente && <Row k="Teléfono" v={telefonoCliente} />}
+              {(pedido.direccion_entrega || cliente?.direccion) && (
+                <Row k="Dirección" v={pedido.direccion_entrega || cliente?.direccion} />
               )}
               {coords && (
                 <div style={{ marginTop: 8 }}>
@@ -487,8 +519,11 @@ function DetalleModal({ pedidoId, onClose }) {
                         display: 'flex', justifyContent: 'space-between', gap: 8,
                         fontSize: type.sm, fontWeight: 700, color: colors.text,
                       }}>
-                        <span>{it.cantidad || 1}× {it.nombre || it.producto_nombre || 'Producto'}</span>
-                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number(it.subtotal || it.precio * (it.cantidad || 1) || 0).toFixed(2)} €</span>
+                        <span>
+                          {it.cantidad || 1}× {it.nombre_producto || 'Producto'}
+                          {it.tamano ? <span style={{ color: colors.textMute, fontWeight: 600 }}> · {it.tamano}</span> : null}
+                        </span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{(Number(it.precio_unitario || 0) * (it.cantidad || 1)).toFixed(2)} €</span>
                       </div>
                       {Array.isArray(it.extras) && it.extras.length > 0 && (
                         <div style={{ marginTop: 6, fontSize: 11, color: colors.textMute }}>
@@ -506,10 +541,13 @@ function DetalleModal({ pedidoId, onClose }) {
               )}
             </Section>
 
-            {pedido.notas_cliente && (
+            {/* La nota del cliente vive en `pedidos.notas`. El guard leía `notas_cliente`,
+                columna que NO existe, así que esta sección no se ha visto nunca: el socio
+                no llegaba a leer cosas como "portal 3, el timbre no va". */}
+            {pedido.notas && (
               <Section title="Notas del cliente">
                 <div style={{ fontSize: type.sm, color: colors.textDim, fontStyle: 'italic' }}>
-                  {pedido.notas_cliente}
+                  {pedido.notas}
                 </div>
               </Section>
             )}
@@ -518,17 +556,24 @@ function DetalleModal({ pedidoId, onClose }) {
               <Row k="Subtotal" v={`${subtotal.toFixed(2)} €`} />
               {envio > 0 && <Row k="Coste envío" v={`${envio.toFixed(2)} €`} />}
               {propina > 0 && <Row k="Propina" v={`${propina.toFixed(2)} €`} />}
+              {/* Sin esta fila las líneas no sumaban el total y parecía un error de cuentas. */}
+              {descuento > 0 && <Row k="Descuento" v={`−${descuento.toFixed(2)} €`} />}
               <Row k="Total pagado" v={`${Number(pedido.total || 0).toFixed(2)} €`} highlight />
             </Section>
 
-            {esReparto && (
-              <Section title="Tu ganancia por este pedido">
+            {/* Un pedido cancelado NO se cobra: pintar aquí "Total para ti 7,30 €" es
+                prometer dinero que no llega. Entregado = cifra real; en curso = estimación
+                declarada como tal; cancelado/fallido = no se muestra. */}
+            {esReparto && !['cancelado', 'fallido'].includes(pedido.estado) && (
+              <Section title={esEntregado ? 'Tu ganancia por este pedido' : 'Tu ganancia estimada'}>
                 <Row k={esFijaPacto ? 'Tarifa fija' : 'Envío'} v={`${gEnvio.toFixed(2)} €`} />
                 {comisionSocio > 0 && <Row k={`Comisión (${comisionPct}% del subtotal)`} v={`${comisionSocio.toFixed(2)} €`} />}
                 {gPropina > 0 && <Row k="Propina (100% para ti)" v={`${gPropina.toFixed(2)} €`} />}
-                <Row k="Total para ti" v={`${gananciaSocio.toFixed(2)} €`} highlight />
+                <Row k={esEntregado ? 'Total para ti' : 'Total si se entrega'} v={`${gananciaSocio.toFixed(2)} €`} highlight />
                 <div style={{ fontSize: 11, color: colors.textMute, marginTop: 8, lineHeight: 1.4 }}>
-                  Cifra orientativa según tu tarifa con este restaurante. El importe que cobras es el de tus facturas / lo que tienes por cobrar.
+                  {esEntregado
+                    ? 'Cifra orientativa según tu tarifa con este restaurante. El importe que cobras es el de tus facturas / lo que tienes por cobrar.'
+                    : 'Todavía no está entregado: esta cifra es una estimación y solo se cobra si el reparto se completa.'}
                 </div>
               </Section>
             )}

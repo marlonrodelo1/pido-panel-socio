@@ -22,6 +22,8 @@ export default function ModalPedidoEntrante() {
   const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECONDS)
   const [busy, setBusy] = useState(null) // 'accept' | 'reject' | null
   const [pedidoFull, setPedidoFull] = useState(null) // pedido completo (mapa + ganancia)
+  const [items, setItems] = useState([])             // qué lleva el pedido (se ve ANTES de aceptar)
+  const [cliente, setCliente] = useState(null)       // nombre del cliente (vista, no tabla usuarios)
   const [pacto, setPacto] = useState(null)           // tarifa pactada con ese restaurante
   const audioRef = useRef(null)
   const intervalRef = useRef(null)
@@ -118,17 +120,37 @@ export default function ModalPedidoEntrante() {
   useEffect(() => {
     setPedidoFull(null)
     setPacto(null)
+    setItems([])
+    setCliente(null)
     const pedidoId = asignacionPendiente?.pedido_id
     if (!pedidoId) return
     let cancel = false
     ;(async () => {
-      const { data } = await supabase
-        .from('pedidos')
-        .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,origen_pedido,metodo_pago,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimiento_id,establecimientos(nombre,direccion,latitud,longitud)')
-        .eq('id', pedidoId)
-        .maybeSingle()
-      if (cancel || !data) return
+      // El dispatcher escribe pedidos.socio_id AL OFRECER (no al aceptar), así que la
+      // RLS ya deja leer items y cliente en la propia oferta.
+      const [{ data }, itemsRes] = await Promise.all([
+        supabase
+          .from('pedidos')
+          .select('id,codigo,total,subtotal,coste_envio,propina,modo_entrega,origen_pedido,metodo_pago,direccion_entrega,lat_entrega,lng_entrega,cliente_telefono,guest_telefono,guest_nombre,usuario_id,establecimiento_id,notas,establecimientos(nombre,direccion,latitud,longitud)')
+          .eq('id', pedidoId)
+          .maybeSingle(),
+        supabase
+          .from('pedido_items')
+          .select('id,nombre_producto,tamano,cantidad,precio_unitario,extras,notas')
+          .eq('pedido_id', pedidoId),
+      ])
+      if (cancel) return
+      setItems(itemsRes.data || [])
+      if (!data) return
       setPedidoFull(data)
+
+      // Nombre del cliente por la vista (el socio no tiene acceso a `usuarios`). Va
+      // aparte y sin bloquear: si falla, el modal se pinta igual con 'Cliente'.
+      if (data.usuario_id) {
+        supabase.from('v_clientes_de_mis_pedidos').select('nombre, apellido')
+          .eq('id', data.usuario_id).maybeSingle()
+          .then(({ data: cli }) => { if (!cancel && cli) setCliente(cli) }, () => {})
+      }
 
       // socio del CONTEXTO: la asignación recuperada al recargar (refreshAsignaciones)
       // no trae socio_id en su select, solo la que llega por realtime.
@@ -169,6 +191,10 @@ export default function ModalPedidoEntrante() {
   // Cae al objeto parcial mientras carga el completo.
   const pedido = pedidoFull || asignacionPendiente.pedidos || {}
   const est = pedido.establecimientos || {}
+  // Cliente registrado (embed de usuarios) o invitado. Si aún carga el pedido completo,
+  // cae a 'Cliente' igual que la pantalla de detalle.
+  const nombreCliente = [cliente?.nombre, cliente?.apellido].filter(Boolean).join(' ').trim()
+    || pedido.guest_nombre || 'Cliente'
   const total = Number(pedido.total || 0)
   const ganancia = calcGanancia(pedido, pacto)
   const isDelivery = pedido.modo_entrega === 'delivery'
@@ -262,6 +288,11 @@ export default function ModalPedidoEntrante() {
         background: colors.paper, borderRadius: 22,
         padding: 24, marginBottom: 16,
         flex: 1, display: 'flex', flexDirection: 'column', gap: 16,
+        // Con la lista de productos el contenido puede pasar de la altura de la
+        // pantalla: scroll DENTRO de la tarjeta para que Aceptar/Rechazar (que van
+        // fuera, abajo) no se salgan nunca de la vista. minHeight:0 es obligatorio,
+        // sin él un flex item no baja de su min-content y desborda igual.
+        minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
         animation: 'slideUp 0.25s ease',
       }}>
         <style>{`@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
@@ -326,7 +357,9 @@ export default function ModalPedidoEntrante() {
         {/* MINI-MAPA: recogida (terracotta) + entrega (verde). Oculto si falta key/coords. */}
         {mapaUrl && (
           <div style={{
-            width: '100%', height: 130, borderRadius: 14, overflow: 'hidden',
+            // flexShrink:0 o el mapa se aplasta a cero al crecer la lista de productos:
+            // en un flex column, un hijo con overflow:hidden puede encogerse hasta 0.
+            width: '100%', height: 130, flexShrink: 0, borderRadius: 14, overflow: 'hidden',
             border: `1px solid ${colors.border}`, background: colors.cream2,
           }}>
             <img
@@ -357,16 +390,19 @@ export default function ModalPedidoEntrante() {
           )}
         </div>
 
-        <div style={{ height: 1, background: colors.border }} />
+        <div style={{ height: 1, background: colors.border, flexShrink: 0 }} />
 
         <div>
           <div style={{
             fontSize: 11, color: colors.stone, fontWeight: 700,
             letterSpacing: '0.06em', textTransform: 'uppercase',
           }}>Entregar en</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: colors.ink, marginTop: 4 }}>
+            {nombreCliente}
+          </div>
           <div style={{
             display: 'flex', alignItems: 'flex-start', gap: 5,
-            fontSize: 14, color: colors.ink, marginTop: 4, fontWeight: 600,
+            fontSize: 14, color: colors.ink, marginTop: 2, fontWeight: 600,
           }}>
             <MapPin size={14} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 2, color: colors.terracotta }} />
             <span>{pedido.direccion_entrega || '—'}</span>
@@ -387,7 +423,7 @@ export default function ModalPedidoEntrante() {
           )}
         </div>
 
-        <div style={{ height: 1, background: colors.border }} />
+        <div style={{ height: 1, background: colors.border, flexShrink: 0 }} />
 
         {/* Total del pedido = lo que cobra al cliente */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -418,6 +454,48 @@ export default function ModalPedidoEntrante() {
             {ganancia.total.toFixed(2).replace('.', ',')} €
           </div>
         </div>
+
+        {/* Qué lleva el pedido. Va DESPUÉS del dinero a propósito: es lo único que puede
+            crecer sin límite, y si va antes empuja "Tu ganancia" fuera de la pantalla
+            mientras "Aceptar" sigue ahí abajo, pulsable. Los telefónicos no tienen líneas
+            (son solo envío), así que el bloque no se pinta en vez de enseñar un "(0)". */}
+        {items.length > 0 && (
+          <>
+            <div style={{ height: 1, background: colors.border, flexShrink: 0 }} />
+            <div>
+              <div style={{
+                fontSize: 11, color: colors.stone, fontWeight: 700,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+              }}>Qué llevas ({items.reduce((n, it) => n + (it.cantidad || 1), 0)})</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                {items.map((it) => (
+                  <div key={it.id} style={{ fontSize: 13, color: colors.ink, lineHeight: 1.35 }}>
+                    <span style={{ fontWeight: 700 }}>{it.cantidad || 1}× {it.nombre_producto || 'Producto'}</span>
+                    {it.tamano ? <span style={{ color: colors.stone }}> · {it.tamano}</span> : null}
+                    {Array.isArray(it.extras) && it.extras.length > 0 && (
+                      <div style={{ fontSize: 11, color: colors.stone }}>{it.extras.join(' · ')}</div>
+                    )}
+                    {it.notas && (
+                      <div style={{ fontSize: 11, color: colors.stone, fontStyle: 'italic' }}>{it.notas}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Indicaciones del cliente: útiles ANTES de aceptar (un 4º sin ascensor no es
+            el mismo reparto que un bajo). */}
+        {pedido.notas && (
+          <div style={{
+            borderRadius: 10, padding: '9px 11px', flexShrink: 0,
+            background: colors.cream2, border: `1px solid ${colors.border}`,
+            fontSize: 12.5, color: colors.ink, lineHeight: 1.4,
+          }}>
+            <strong>Indicaciones:</strong> {pedido.notas}
+          </div>
+        )}
       </div>
 
       {/* Countdown */}
