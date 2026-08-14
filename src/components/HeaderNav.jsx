@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useSocio } from '../context/SocioContext'
+import { isNativeSync } from '../lib/capacitor'
 import { colors, type } from '../lib/uiStyles'
 import SocioAvatar from './SocioAvatar'
 
@@ -12,8 +13,10 @@ const NAV = [
   { id: 'configuracion', label: 'Configuración',  icon: 'settings' },
 ]
 
+// 'suscripcion' NO aparece en la app nativa: cualquier camino hacia un cobro que no
+// pase por Apple/Google es rechazo directo (App Store 3.1.1). Se gestiona en la web.
 const NAV_SECONDARY = [
-  { id: 'suscripcion',   label: 'Mi suscripción', icon: 'card' },
+  { id: 'suscripcion',   label: 'Mi suscripción', icon: 'card', soloWeb: true },
   { id: 'soporte',       label: 'Soporte',        icon: 'help' },
 ]
 
@@ -230,7 +233,7 @@ export default function HeaderNav({ section, setSection, variant = 'sidebar' }) 
 
         <div style={{ height: 1, background: colors.border, margin: '14px 6px' }} />
 
-        {NAV_SECONDARY.map(n => {
+        {NAV_SECONDARY.filter(n => !(n.soloWeb && isNativeSync())).map(n => {
           const a = active === n.id
           return (
             <button key={n.id} onClick={() => setSection(n.id)} style={navBtnStyle(a)}>

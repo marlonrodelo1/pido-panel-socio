@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { loginEmail, registerEmail, resetPassword, loginGoogle, loginApple } from '../lib/auth'
+import { isNativeSync } from '../lib/capacitor'
 import { colors, ds, type } from '../lib/uiStyles'
 
 function ErrorBox({ msg }) {
@@ -198,7 +199,11 @@ export default function Login({ onBack }) {
                 {modo === 'login' ? 'Accede a tu panel de socio Pidoo.' : 'Empieza a recibir pedidos hoy.'}
               </p>
 
-              {/* Segmented tabs */}
+              {/* Segmented tabs. En la app nativa NO se crea cuenta: el alta de socio
+                  se hace en socio.pidoo.es (lleva datos fiscales, verificación y firma).
+                  Una app que solo permite entrar es aceptable para Apple si se explica
+                  en las notas de revisión y se les da un usuario de prueba. */}
+              {!isNativeSync() && (
               <div style={{
                 display: 'flex', background: colors.surface2,
                 borderRadius: 999, padding: 3, marginBottom: 20, gap: 3,
@@ -220,6 +225,7 @@ export default function Login({ onBack }) {
                   )
                 })}
               </div>
+              )}
 
               <Field type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
               <Field type="password" placeholder="Contraseña" value={password} onChange={e => setPassword(e.target.value)}

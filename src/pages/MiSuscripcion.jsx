@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
+import { isNativeSync } from '../lib/capacitor'
 import { colors, ds, type } from '../lib/uiStyles'
 import { supabase, FUNCTIONS_URL } from '../lib/supabase'
 
@@ -62,6 +63,23 @@ export default function MiSuscripcion() {
   const estado = sub?.estado || 'none'
   const activa = ['active', 'trialing'].includes(estado)
   const info = ESTADOS[estado]
+
+  // En la app nativa no se enseña ni se contrata nada de pago: cobrar fuera del
+  // sistema de Apple/Google es rechazo directo (App Store 3.1.1). Hoy ninguna
+  // pantalla enlaza aquí en nativo; esto es el cierre por si alguien lo enlaza.
+  // Va DESPUÉS de todos los hooks a propósito (un return antes de un hook tumba
+  // la pantalla con el error 300 de React, como pasó en el carrito del cliente).
+  if (isNativeSync()) {
+    return (
+      <div style={{ maxWidth: 640 }}>
+        <h1 style={ds.h1}>Mi suscripción</h1>
+        <p style={{ color: colors.textMute, fontSize: type.sm, marginTop: 4, marginBottom: 22 }}>
+          Tu plan se gestiona desde el navegador, en <strong>socio.pidoo.es</strong>, dentro de
+          Configuración. Desde la app no se puede contratar ni pagar.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div style={{ maxWidth: 640 }}>

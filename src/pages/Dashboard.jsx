@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
+import { isNativeSync } from '../lib/capacitor'
 import { colors, ds, type } from '../lib/uiStyles'
 import StatCard from '../components/StatCard'
 
@@ -124,8 +125,10 @@ export default function Dashboard({ setSection, openRestaurante }) {
         </p>
       </div>
 
-      {/* Banner aviso 7 días — solo si NO hay suscripción activa/trial */}
-      {subActiva === false && (
+      {/* Banner aviso 7 días — solo si NO hay suscripción activa/trial.
+          En la app nativa no se pinta: lleva a un cobro fuera de Apple/Google y eso
+          es rechazo directo en la App Store. El plan se gestiona en socio.pidoo.es. */}
+      {subActiva === false && !isNativeSync() && (
         <div style={{
           background: colors.warningSoft, color: colors.warning,
           border: `1px solid ${colors.warning}`,
@@ -203,6 +206,8 @@ export default function Dashboard({ setSection, openRestaurante }) {
           </button>
         </div>
 
+        {/* Tarjeta de suscripción: fuera de la app nativa (App Store 3.1.1). */}
+        {!isNativeSync() && (
         <div style={{ ...ds.card, padding: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
@@ -235,6 +240,7 @@ export default function Dashboard({ setSection, openRestaurante }) {
             Ver suscripción
           </button>
         </div>
+        )}
       </div>
 
       {/* Top restaurantes por cobrar */}

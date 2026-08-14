@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useSocio } from '../context/SocioContext'
+import { supabase } from '../lib/supabase'
+import { isNativeSync } from '../lib/capacitor'
 import { colors, ds, type } from '../lib/uiStyles'
 
 // Campos fiscales obligatorios para poder emitir facturas a los restaurantes
@@ -84,8 +86,13 @@ export default function Configuracion() {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {/* Mi suscripción Pidoo — acceso accesible también en móvil */}
-        <SuscripcionAccesoCard />
+        {/* Mi cuenta: qué correo tiene la sesión abierta y cómo cambiar la contraseña. */}
+        <MiCuentaCard />
+
+        {/* Mi suscripción Pidoo — SOLO en web. En la app nativa no puede haber ningún
+            camino hacia un cobro fuera del sistema de Apple/Google: es motivo de rechazo
+            directo (App Store 3.1.1). El plan se gestiona en socio.pidoo.es. */}
+        {!isNativeSync() && <SuscripcionAccesoCard />}
 
         {/* Datos personales */}
         <Card>
@@ -225,6 +232,71 @@ export default function Configuracion() {
 
 function Card({ children, style }) {
   return <div style={{ ...ds.card, padding: 20, ...style }}>{children}</div>
+}
+
+// Mi cuenta — el socio no tenía dónde ver con qué correo ha entrado ni cómo
+// cambiar su contraseña. La contraseña NO se cambia aquí a mano: se manda el
+// correo de recuperación, que es el único camino que funciona igual tanto si
+// entró con email como si entró con Google o Apple.
+function MiCuentaCard() {
+  const { user, socio } = useSocio()
+  const email = user?.email || socio?.email || null
+  // Con qué entró: si la cuenta solo tiene Google/Apple, no hay contraseña que cambiar
+  // hasta que se cree una, y eso es exactamente lo que hace el correo de recuperación.
+  const proveedores = (user?.app_metadata?.providers || []).filter(Boolean)
+  const [estado, setEstado] = useState(null) // null | 'enviando' | 'enviado' | 'error'
+
+  async function cambiarPassword() {
+    if (!email) return
+    setEstado('enviando')
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+      setEstado(error ? 'error' : 'enviado')
+    } catch (_) {
+      setEstado('error')
+    }
+  }
+
+  return (
+    <Card>
+      <h2 style={{ ...ds.h2, marginBottom: 14 }}>Mi cuenta</h2>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div>
+          <div style={{ fontSize: type.xs, color: colors.textMute }}>Correo de acceso</div>
+          <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text, wordBreak: 'break-all' }}>
+            {email || '—'}
+          </div>
+          {proveedores.length > 0 && (
+            <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2 }}>
+              Entras con: {proveedores.map(p => ({ email: 'correo y contraseña', google: 'Google', apple: 'Apple' }[p] || p)).join(' · ')}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            onClick={cambiarPassword}
+            disabled={!email || estado === 'enviando'}
+            style={{ ...ds.secondaryBtn, opacity: (!email || estado === 'enviando') ? 0.6 : 1 }}
+          >
+            {estado === 'enviando' ? 'Enviando…' : 'Cambiar contraseña'}
+          </button>
+          {estado === 'enviado' && (
+            <span style={{ fontSize: type.xs, color: colors.text }}>
+              Te hemos enviado un correo a {email}. Ábrelo para poner la nueva contraseña.
+            </span>
+          )}
+          {estado === 'error' && (
+            <span style={{ fontSize: type.xs, color: colors.danger }}>
+              No se pudo enviar el correo. Inténtalo de nuevo en un momento.
+            </span>
+          )}
+        </div>
+      </div>
+    </Card>
+  )
 }
 
 // Acceso a la página de suscripción. En desktop existe en el menú lateral,
