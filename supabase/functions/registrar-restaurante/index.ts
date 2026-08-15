@@ -24,6 +24,35 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Un paso de rollback NUNCA debe tumbar el rollback entero ni tapar el error
+// original que lo provoco.
+//
+// ⚠️ POR QUE EXISTE ESTA FUNCION (bug real, 15 ago 2026): aqui habia
+//   `await admin.from('usuarios').delete().eq('id', uid).catch(...)`
+// y `.catch()` NO EXISTE en el builder de supabase-js. `.from().delete().eq()`
+// devuelve un PostgrestFilterBuilder, que es un *thenable* (solo implementa
+// `then`), no una Promise. Comprobado ejecutandolo: `typeof builder.catch` es
+// `undefined` y llamarlo lanza `TypeError: ...catch is not a function` de forma
+// SINCRONA. Resultado: el rollback moria en su primera linea, el usuario auth
+// quedaba huerfano, y al reintentar con el mismo email saltaba `email_ya_existe`
+// obligando a limpiar a mano. Ademas el mensaje devuelto al usuario ya ni
+// mencionaba la causa real: decia ".catch is not a function".
+// Mismo fallo que mordio el 13 ago en otro sitio: `.insert().catch()`.
+//
+// Aqui se envuelve en try/catch de verdad Y se lee el `{ error }` que devuelve
+// supabase-js, que es la otra mitad del problema: sin `.throwOnError()` un
+// borrado fallido NO rechaza, solo devuelve `{ error }`, asi que un rollback
+// que no comprueba nada tampoco se entera de que no ha borrado.
+async function pasoRollback(etiqueta: string, fn: () => unknown) {
+  try {
+    const res = await (fn() as Promise<{ error?: unknown } | unknown>);
+    const err = (res as { error?: unknown } | null)?.error;
+    if (err) console.error(`[registrar-restaurante] rollback ${etiqueta} devolvio error`, err);
+  } catch (e) {
+    console.error(`[registrar-restaurante] rollback ${etiqueta} lanzo excepcion`, e);
+  }
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASS_RE = /^(?=.*[A-Z])(?=.*\d).{8,}$/;
 const TENERIFE = { lat: 28.4139, lng: -16.5474 };
@@ -101,8 +130,8 @@ Deno.serve(async (req) => {
     if (estErr || !estRow) {
       // Rollback real: borrar usuarios + auth user (evita cuentas a medias)
       console.error('[registrar-restaurante] establecimiento insert failed, rollback', estErr);
-      await admin.from('usuarios').delete().eq('id', uid).catch((e) => console.error('rollback usuarios', e));
-      await admin.auth.admin.deleteUser(uid).catch((e) => console.error('rollback deleteUser', e));
+      await pasoRollback('usuarios', () => admin.from('usuarios').delete().eq('id', uid));
+      await pasoRollback('deleteUser', () => admin.auth.admin.deleteUser(uid));
       return json({ ok: false, message: estErr?.message || 'No se pudo crear el establecimiento.' }, 500);
     }
 

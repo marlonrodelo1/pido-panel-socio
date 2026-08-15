@@ -17,6 +17,32 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Un paso de rollback NUNCA debe tumbar el rollback entero ni tapar el error
+// original que lo provoco.
+//
+// POR QUE EXISTE ESTA FUNCION (bug real, 15 ago 2026): aqui habia
+//   await admin.from('usuarios').delete().eq('id', newUserId).catch(...)
+// y `.catch()` NO EXISTE en el builder de supabase-js: `.from().delete().eq()`
+// devuelve un PostgrestFilterBuilder, que es un *thenable* (solo implementa
+// `then`), no una Promise. Comprobado ejecutandolo: `typeof builder.catch` es
+// `undefined` y llamarlo lanza `TypeError: ...catch is not a function` de forma
+// SINCRONA, asi que el rollback moria en su primera linea y dejaba el usuario
+// auth huerfano; al reintentar con el mismo email saltaba `email_ya_existe`.
+// Mismo fallo que mordio el 13 ago en otro sitio: `.insert().catch()`.
+//
+// Ademas se lee el `{ error }`: sin `.throwOnError()`, supabase-js no rechaza
+// cuando el borrado falla, solo lo devuelve, y un rollback que no lo mira no se
+// entera de que no ha borrado nada.
+async function pasoRollback(etiqueta: string, fn: () => unknown) {
+  try {
+    const res = await (fn() as Promise<{ error?: unknown } | unknown>);
+    const err = (res as { error?: unknown } | null)?.error;
+    if (err) console.error(`[admin-crear-restaurante] rollback ${etiqueta} devolvio error`, err);
+  } catch (e) {
+    console.error(`[admin-crear-restaurante] rollback ${etiqueta} lanzo excepcion`, e);
+  }
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function generarPassword(length = 12): string {
@@ -117,7 +143,7 @@ Deno.serve(async (req) => {
       .eq('id', newUserId);
     if (usuariosErr) {
       console.error('[admin-crear-restaurante] usuarios update failed, rolling back auth user', usuariosErr);
-      await admin.auth.admin.deleteUser(newUserId).catch(e => console.error('rollback deleteUser failed', e));
+      await pasoRollback('deleteUser', () => admin.auth.admin.deleteUser(newUserId));
       return json({ error: 'usuarios_update_failed', message: usuariosErr.message }, 500);
     }
 
@@ -144,8 +170,8 @@ Deno.serve(async (req) => {
 
     if (estErr || !estRow) {
       console.error('[admin-crear-restaurante] establecimiento insert failed, rolling back', estErr);
-      await admin.from('usuarios').delete().eq('id', newUserId).catch(e => console.error('rollback usuarios failed', e));
-      await admin.auth.admin.deleteUser(newUserId).catch(e => console.error('rollback deleteUser failed', e));
+      await pasoRollback('usuarios', () => admin.from('usuarios').delete().eq('id', newUserId));
+      await pasoRollback('deleteUser', () => admin.auth.admin.deleteUser(newUserId));
       return json({ error: 'establecimiento_insert_failed', message: estErr?.message || 'No se pudo crear el establecimiento' }, 500);
     }
 
