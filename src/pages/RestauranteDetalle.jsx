@@ -8,11 +8,38 @@ import { formatTarifa, tarifaCampos, fmtPct, formatFechaCorta } from '../lib/tar
 // entera muere con "etiquetaPago is not defined". Solo se notaba en los restaurantes
 // CON pedidos (la linea se pinta por pedido), asi que los que tenian 0 abrian bien.
 import { etiquetaPago } from '../lib/metodoPago'
+import { calcGanancia } from '../lib/ganancia'
 import { getPlugin } from '../lib/capacitor'
 import { Bike } from 'lucide-react'
 import { ModalProponer } from './Restaurantes'
 
 function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
+
+// Lo que el socio cobra por un pedido. FUENTE ÚNICA = el snapshot socio_liq_* congelado al
+// entregar, que es EXACTAMENTE lo que factura generar-factura-socio-restaurante v10 y lo que
+// devuelven las RPC get_*_por_cobrar_socio. Si el pedido no lo tiene (entregados antes del
+// trigger congelar_ganancia_socio), se recalcula con calcGanancia, la réplica JS de
+// calc_ganancia_socio() en BD.
+//
+// 15-ago-2026: esta pantalla sumaba coste_envio — lo que paga el CLIENTE — en el "por cobrar",
+// en la previsualización de la factura y en la tabla del mes. En los pactos de TARIFA FIJA eso
+// no es lo que cobra el socio: Café Bar Australia cobra 2,50 € al cliente y tiene pactados
+// 5,00 € con Deli Santana y con deltafood, así que el modal "Revisar factura" enseñaba 2,50 €
+// y luego emitía 5,00 €. En los pactos por distancia coincidían y por eso pasó desapercibido.
+function liqSocio(pedido, pacto) {
+  if (pedido?.socio_liq_total != null) {
+    return {
+      envio: Number(pedido.socio_liq_envio || 0),
+      comision: Number(pedido.socio_liq_comision || 0),
+      propina: Number(pedido.socio_liq_propina || 0),
+      total: Number(pedido.socio_liq_total || 0),
+    }
+  }
+  return calcGanancia(pedido, pacto)
+}
+
+// Las columnas del snapshot van en TODA query de esta pantalla que hable de dinero del socio.
+const COLS_LIQ = 'socio_liq_envio, socio_liq_comision, socio_liq_propina, socio_liq_total'
 
 // Abre un PDF: navegador nativo (Browser) dentro de la APK; en web cae a window.open.
 async function abrirPDF(url) {
@@ -76,9 +103,10 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
             .gte('created_at', desde7.toISOString())
             .order('created_at', { ascending: false }).limit(50),
-          // Pedidos ENTREGADOS este mes → ingresos del socio (envío + propina)
+          // Pedidos ENTREGADOS este mes → ingresos del socio (según el pacto, no según lo
+          // que pagó el cliente: en tarifa fija son cifras distintas).
           supabase.from('pedidos')
-            .select('id, codigo, coste_envio, propina, subtotal, entregado_at')
+            .select(`id, codigo, modo_entrega, origen_pedido, coste_envio, propina, subtotal, entregado_at, ${COLS_LIQ}`)
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
             .eq('estado', 'entregado')
             .gte('entregado_at', inicioMes.toISOString())
@@ -115,10 +143,10 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
     () => historicoFacturas.filter(f => f.estado !== 'pagada').reduce((s, r) => s + Number(r.total || 0), 0),
     [historicoFacturas]
   )
-  // "Lo enviado este mes" = ingresos del socio (envío + propina) de pedidos entregados este mes.
+  // "Lo enviado este mes" = lo que cobra el socio por esos pedidos, según el pacto vigente.
   const ingresosMes = useMemo(
-    () => pedidosMes.reduce((s, p) => s + Number(p.coste_envio || 0) + Number(p.propina || 0), 0),
-    [pedidosMes]
+    () => pedidosMes.reduce((s, p) => s + liqSocio(p, vinculacion).total, 0),
+    [pedidosMes, vinculacion]
   )
   const totalPorCobrar = Number(resumenCobro?.total_neto || 0)
   const pedidosPendientesFactura = Number(resumenCobro?.pedidos_count || 0)
@@ -264,7 +292,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
     setCargandoPreview(true); setMsg(null)
     try {
       const { data: peds, error } = await supabase.from('pedidos')
-        .select('id, modo_entrega, origen_pedido, subtotal, coste_envio, propina, entregado_at, created_at')
+        .select(`id, modo_entrega, origen_pedido, subtotal, coste_envio, propina, entregado_at, created_at, ${COLS_LIQ}`)
         .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
         .eq('estado', 'entregado').is('factura_socio_id', null)
         .or('modo_entrega.eq.delivery,and(modo_entrega.eq.recogida,origen_pedido.eq.marketplace_socio)')
@@ -275,14 +303,13 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
         return
       }
       const pct = Number(vinculacion?.comision_pct ?? 10)
+      // Mismo desglose, pedido a pedido, que la edge generar-factura-socio-restaurante v10:
+      // el snapshot socio_liq_* manda. Reimplementar aquí la fórmula fue justo lo que hizo
+      // que esta pantalla y la factura emitida dijeran cifras distintas.
       let comision = 0, envios = 0, propinas = 0
       for (const p of peds) {
-        const del = p.modo_entrega === 'delivery'
-        // Telefónico: solo envío + propina, sin % del subtotal (igual que la edge v8)
-        if (p.origen_pedido !== 'telefonico') {
-          comision += +(Number(p.subtotal || 0) * pct / 100).toFixed(2) // redondeo por pedido (igual que la edge)
-        }
-        if (del) { envios += Number(p.coste_envio || 0); propinas += Number(p.propina || 0) }
+        const g = liqSocio(p, vinculacion)
+        comision += g.comision; envios += g.envio; propinas += g.propina
       }
       comision = +comision.toFixed(2); envios = +envios.toFixed(2); propinas = +propinas.toFixed(2)
       // El total es el precio final: comisión + envíos + propinas, con el IGIC ya dentro.
@@ -342,7 +369,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
               .order('fecha_emision', { ascending: false }).limit(20),
             supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
             supabase.from('pedidos')
-              .select('id, codigo, coste_envio, propina, subtotal, entregado_at')
+              .select(`id, codigo, modo_entrega, origen_pedido, coste_envio, propina, subtotal, entregado_at, ${COLS_LIQ}`)
               .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
               .eq('estado', 'entregado')
               .gte('entregado_at', inicioMes.toISOString())
@@ -605,26 +632,32 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
           Sin pedidos entregados este mes.
         </div>
       ) : (
-        <Table head={['Código', 'Entregado', 'Envío', 'Propina', 'Tu ingreso']}
-          cols="110px 1fr 90px 90px 100px">
-          {pedidosMes.map(p => (
-            <TableRow key={p.id} cols="110px 1fr 90px 90px 100px">
+        <Table head={['Código', 'Entregado', 'Envío', 'Com.', 'Propina', 'Tu ingreso']}
+          cols="110px 1fr 80px 80px 80px 100px">
+          {pedidosMes.map(p => {
+            // "Envío" aquí es lo que cobra el SOCIO por llevarlo (el pacto), no lo que pagó
+            // el cliente. Con tarifa fija son dos cifras distintas y la que importa es esta.
+            const g = liqSocio(p, vinculacion)
+            return (
+            <TableRow key={p.id} cols="110px 1fr 80px 80px 80px 100px">
               <span style={{ fontWeight: 600, color: colors.text, fontFamily: type.mono }}>{p.codigo}</span>
               <span>{p.entregado_at ? new Date(p.entregado_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(p.coste_envio)}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(p.propina)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(g.envio)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(g.comision)}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{euro(g.propina)}</span>
               <span style={{ fontWeight: 700, color: colors.sage2, fontVariantNumeric: 'tabular-nums' }}>
-                {euro(Number(p.coste_envio || 0) + Number(p.propina || 0))}
+                {euro(g.total)}
               </span>
             </TableRow>
-          ))}
+            )
+          })}
           <div className="pd-rtotal" style={{
-            display: 'grid', gridTemplateColumns: '110px 1fr 90px 90px 100px', gap: 10,
+            display: 'grid', gridTemplateColumns: '110px 1fr 80px 80px 80px 100px', gap: 10,
             padding: '12px 16px', alignItems: 'center',
             borderTop: `1px solid ${colors.borderStrong}`, background: colors.surface2,
             fontSize: type.sm,
           }}>
-            <span style={{ fontWeight: 700, color: colors.text, gridColumn: '1 / 5' }}>Total enviado este mes</span>
+            <span style={{ fontWeight: 700, color: colors.text, gridColumn: '1 / 6' }}>Total enviado este mes</span>
             <span style={{ fontWeight: 800, color: colors.sage2, fontVariantNumeric: 'tabular-nums' }}>{euro(ingresosMes)}</span>
           </div>
         </Table>
