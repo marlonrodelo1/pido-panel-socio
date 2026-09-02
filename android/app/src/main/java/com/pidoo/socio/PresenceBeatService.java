@@ -84,6 +84,38 @@ public class PresenceBeatService extends Service {
         }
     };
 
+    /**
+     * v303 (2-sep-2026) — Rearrancar el latido si el socio sigue EN SERVICIO (presence_armed).
+     * Lo llama PidooMessagingService al recibir el ping de presencia (FCM prioridad alta):
+     * la ventana de ejecucion que concede ese push permite arrancar un foreground service
+     * desde segundo plano. Si el socio se desconecto o cerro la app (presence_armed=false),
+     * no hace nada — el ping no resucita a quien no debe estar En linea.
+     *
+     * La llave de presencia sobrevive en SharedPreferences a la muerte del proceso, asi que
+     * el servicio revive latiendo con la misma llave, sin necesitar JS ni sesion Supabase.
+     */
+    public static void reviveSiArmado(Context ctx) {
+        try {
+            SharedPreferences prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            if (!prefs.getBoolean("presence_armed", false)) return;
+            if (prefs.getString("presence_token", null) == null) return;
+            Intent i = new Intent(ctx, PresenceBeatService.class);
+            boolean fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            // Mismo criterio que OfflineBeaconPlugin.armPresence: startForegroundService solo
+            // si el servicio va a poder llamar a startForeground (permiso fine); si no,
+            // startService normal dentro de la ventana del push de alta prioridad.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && fine) {
+                ctx.startForegroundService(i);
+            } else {
+                ctx.startService(i);
+            }
+        } catch (Exception ignored) {
+            // Restriccion del OEM o ventana FCM agotada: el siguiente ping (cada ~3-4 min)
+            // lo reintenta; la red de seguridad (aviso 10 min / auto-offline) sigue detras.
+        }
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;

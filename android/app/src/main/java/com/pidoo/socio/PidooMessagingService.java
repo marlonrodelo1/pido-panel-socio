@@ -30,6 +30,15 @@ import java.util.Map;
  *
  * Registrado en AndroidManifest con el intent-filter MESSAGING_EVENT; el service del plugin
  * de Capacitor se elimina alli con tools:node="remove" para que FCM entregue solo a este.
+ *
+ * v303 (2-sep-2026) — RESUCITADOR DE PRESENCIA. El ping silencioso del backend
+ * (presencia-ping-silencioso, data.tipo == "presence_ping") ahora llega con prioridad
+ * ALTA tambien en Android: FCM despierta el proceso aunque el OEM lo haya matado (caso
+ * Edinson, Xiaomi: latido perfecto hasta que HyperOS mato proceso + servicio a la vez, y
+ * START_STICKY no basto para revivirlo). Aqui, si el socio seguia EN SERVICIO
+ * (presence_armed en prefs), rearrancamos PresenceBeatService, que late al instante.
+ * Si el socio se puso Fuera de linea o cerro la app del todo, presence_armed es false y
+ * el ping se ignora — se respeta la regla: cerrar la app = offline, no lo resucitamos.
  */
 public class PidooMessagingService extends MessagingService {
 
@@ -37,6 +46,10 @@ public class PidooMessagingService extends MessagingService {
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         try {
             Map<String, String> data = remoteMessage.getData();
+            // v303: ping de presencia -> revivir el latido nativo si el socio sigue En linea.
+            if (data != null && "presence_ping".equals(data.get("tipo"))) {
+                PresenceBeatService.reviveSiArmado(getApplicationContext());
+            }
             boolean esLoop = data != null && "1".equals(data.get("loop_sound"));
             boolean enPrimerPlano = MainActivity.appEnPrimerPlano;
             if (esLoop && !enPrimerPlano) {

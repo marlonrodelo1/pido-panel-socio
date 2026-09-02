@@ -87,8 +87,19 @@ export async function disarmPresenceBeat() {
 }
 
 // Estado de los requisitos del latido de fondo (permiso "siempre" + batería).
+// v303: incluye `autostartSospechoso` (Xiaomi/Huawei/Oppo/Vivo... — OEMs que matan el
+// proceso salvo que el usuario conceda su "Inicio automático" propietario).
 // Devuelve null en web/iOS o si el plugin no está (APK vieja con bundle OTA nuevo).
 export async function checkPresencePrereqs() {
   if (!(await isNativePlatform())) return null
   try { return await OfflineBeacon.checkPrereqs() } catch (_) { return null }
+}
+
+// v303: abre la pantalla de "Inicio automático" del fabricante. No es consultable por
+// API, así que solo se pide UNA vez (guard en el llamante). Caso Edinson (Xiaomi): el
+// sistema mató proceso + latido nativo a la hora de ponerse En línea; sin ese permiso
+// ni START_STICKY ni la exención de batería lo salvan.
+export async function openAutostartSettings() {
+  if (!(await isNativePlatform())) return
+  try { await OfflineBeacon.openAutostartSettings() } catch (_) {}
 }

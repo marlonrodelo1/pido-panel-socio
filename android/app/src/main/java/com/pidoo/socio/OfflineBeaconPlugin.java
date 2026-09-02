@@ -172,9 +172,68 @@ public class OfflineBeaconPlugin extends Plugin {
             out.put("fineLocation", fine);
             out.put("bgLocation", bg);
             out.put("batteryExempt", battery);
+            // v303: fabricantes que matan procesos aunque haya foreground service + exencion
+            // de bateria, salvo que el usuario conceda su "Inicio automatico" propietario
+            // (caso Edinson, Xiaomi HyperOS). No hay API para CONSULTAR ese permiso: solo
+            // se puede sospechar por fabricante y abrir su pantalla de ajustes.
+            out.put("autostartSospechoso", esFabricanteAsesino());
         } catch (Exception e) {
             out.put("error", e.getMessage());
         }
         call.resolve(out);
+    }
+
+    // ─── v303: "Inicio automatico" en OEMs que matan el latido ───
+
+    private static boolean esFabricanteAsesino() {
+        String m = (Build.MANUFACTURER == null ? "" : Build.MANUFACTURER).toLowerCase();
+        String b = (Build.BRAND == null ? "" : Build.BRAND).toLowerCase();
+        String[] asesinos = { "xiaomi", "redmi", "poco", "huawei", "honor", "oppo", "realme", "vivo", "oneplus" };
+        for (String a : asesinos) {
+            if (m.contains(a) || b.contains(a)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Abre la pantalla de "Inicio automatico" del fabricante (Xiaomi/Huawei/Oppo/Vivo...).
+     * Sin ese permiso, el OEM mata el proceso en segundo plano y ni START_STICKY ni la
+     * exencion de bateria lo salvan (medido con Edinson el 2-sep: proceso + servicio
+     * muertos a la hora de ponerse En linea). No es consultable: se abre la pantalla y
+     * se confia en el usuario. Fallback: ficha de la app en Ajustes.
+     */
+    @PluginMethod
+    public void openAutostartSettings(PluginCall call) {
+        Context ctx = getContext();
+        // Componentes conocidos de las pantallas de autostart por fabricante.
+        String[][] componentes = {
+                { "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity" }, // Xiaomi/MIUI/HyperOS
+                { "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity" },
+                { "com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity" },
+                { "com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity" }, // Oppo/Realme
+                { "com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity" },
+                { "com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity" },
+        };
+        for (String[] c : componentes) {
+            try {
+                Intent intent = new Intent();
+                intent.setClassName(c[0], c[1]);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(intent);
+                call.resolve();
+                return;
+            } catch (Exception ignored) {
+                // esa pantalla no existe en este SO: probar la siguiente
+            }
+        }
+        // Fallback universal: la ficha de la app (desde ahi se llega a batería/autostart).
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+        } catch (Exception ignored) {
+        }
+        call.resolve();
     }
 }

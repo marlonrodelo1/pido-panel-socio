@@ -20,7 +20,7 @@ import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat, riderPresenceToken } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
-import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs } from '../lib/offlineBeacon'
+import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs, openAutostartSettings } from '../lib/offlineBeacon'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
 import { installPedidoSoundUnlock } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
@@ -214,6 +214,15 @@ export function RiderProvider({ children }) {
                 localStorage.setItem('pidoo_batt_asked_at', String(Date.now()))
                 requestBatteryExemption()
               }
+            } else if (pre && pre.autostartSospechoso === true && !localStorage.getItem('pidoo_autostart_asked')) {
+              // v303: en Xiaomi/Huawei/Oppo/Vivo el sistema mata la app aunque haya
+              // foreground service + batería sin restricciones, salvo que el usuario
+              // conceda el "Inicio automático" propietario (caso Edinson, 2-sep). No es
+              // consultable por API → se pide UNA sola vez, y solo cuando la batería ya
+              // está resuelta (nunca dos pantallas de ajustes en el mismo online).
+              localStorage.setItem('pidoo_autostart_asked', '1')
+              alert('Último paso para no perder pedidos: en la pantalla que se abre ahora, busca "Pidoo Socio" y activa el Inicio automático. Sin esto, tu móvil desconecta la app a los pocos minutos de guardarlo.')
+              openAutostartSettings()
             }
           } catch (_) {}
           refreshSocio?.()
