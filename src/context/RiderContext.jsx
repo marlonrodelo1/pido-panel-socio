@@ -15,6 +15,7 @@
 //     setOnline(boolean), dismissPendiente(), refreshAsignaciones() }
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat, riderPresenceToken } from '../lib/riderApi'
@@ -498,6 +499,11 @@ export function RiderProvider({ children }) {
         const expSoonMs = session?.expires_at ? session.expires_at * 1000 - Date.now() : 0
         if (!session || expSoonMs < 60_000) {
           const r = await supabase.auth.refreshSession()
+          // Sin red (túnel, ascensor, parking) supabase-js NO lanza excepción: devuelve
+          // session null + AuthRetryableFetchError. Tomarlo por sesión caducada echaba al
+          // socio de la app y lo dejaba En línea en la BD sin nadie detrás. Sin red no es
+          // sesión muerta: se salta este latido y se reintenta en el siguiente.
+          if (!r?.data?.session && isAuthRetryableFetchError(r?.error)) return
           session = r?.data?.session || null
         }
         if (!session) {

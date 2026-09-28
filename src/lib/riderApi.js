@@ -11,6 +11,7 @@
 // CapacitorHttp sale por la capa nativa y no sufre ese throttling, así que el
 // socio sigue "vivo" para el cron de auto-offline aunque tenga la app de fondo.
 
+import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { supabase, FUNCTIONS_URL } from './supabase'
 import { isNativePlatform, getDeviceId } from './capacitor'
 
@@ -175,11 +176,19 @@ function logDebug(fn, level, payload) {
 // para que el caller fuerce re-login. Se usa en aceptar/rechazar (foreground), donde
 // hay que distinguir "sesión caducada" (401) de "ya lo tomó otro / expiró" (409).
 async function callEdgeAuthed(fnName, body = {}) {
+  // Si la renovación del token falla POR RED (túnel, ascensor, sin cobertura), la sesión
+  // no está muerta: supabase-js no lanza, devuelve un AuthRetryableFetchError. Tomarlo
+  // por sesión caducada echaba al socio de la app justo al aceptar o entregar un pedido.
+  let refreshSinRed = false
   async function getToken(forceRefresh) {
     let { data: { session } } = await supabase.auth.getSession()
     const expSoonMs = session?.expires_at ? session.expires_at * 1000 - Date.now() : 0
     if (forceRefresh || !session || expSoonMs < 60_000) {
-      try { const r = await supabase.auth.refreshSession(); if (r?.data?.session) session = r.data.session } catch (_) {}
+      try {
+        const r = await supabase.auth.refreshSession()
+        if (r?.data?.session) session = r.data.session
+        else if (isAuthRetryableFetchError(r?.error)) refreshSinRed = true
+      } catch (_) { refreshSinRed = true }
     }
     return session?.access_token || null
   }
@@ -190,12 +199,19 @@ async function callEdgeAuthed(fnName, body = {}) {
   })
   try {
     let token = await getToken(false)
-    if (!token) return { ok: false, status: 401, sessionDead: true, error: 'no_session', data: null }
+    if (!token) {
+      if (refreshSinRed) return { ok: false, status: 0, error: 'network', data: null }
+      return { ok: false, status: 401, sessionDead: true, error: 'no_session', data: null }
+    }
     let res = await post(token)
     if (res.status === 401 || res.status === 403) {
       token = await getToken(true)
       if (token) res = await post(token)
       if (res.status === 401 || res.status === 403) {
+        if (refreshSinRed) {
+          logDebug(fnName, 'refresh_sin_red', { status: res.status })
+          return { ok: false, status: 0, error: 'network', data: null }
+        }
         logDebug(fnName, 'session_dead', { status: res.status })
         return { ok: false, status: res.status, sessionDead: true, error: `http_${res.status}`, data: null }
       }
@@ -289,4 +305,20 @@ export function riderFailDelivery(pedidoId, motivo) {
 export async function riderEstado(pedidoId, accion, extra = {}) {
   const device_id = await getDeviceId()
   return callEdgeAuthed('rider-estado', { pedido_id: pedidoId, accion, device_id, ...extra })
+}
+
+// ────────────────────────────────────────────────────────────
+// COBRO CON EL MÓVIL (Tap to Pay de Stripe) — edge `socio-cobro-movil`
+// ────────────────────────────────────────────────────────────
+//
+// accion = 'config' | 'token' | 'crear' | 'confirmar' | 'cancelar'
+// El importe lo pone siempre el servidor (total del pedido). Ver src/lib/cobroMovil.js.
+export function socioCobroMovil(accion, payload = {}) {
+  return callEdgeAuthed('socio-cobro-movil', { accion, ...payload })
+}
+
+// Rastro de los fallos del lector (push_debug_logs, source 'riderApi.cobroMovil'): el plugin
+// solo da mensajes de texto y es lo único que queda para saber qué pasó en la calle.
+export function logCobroMovil(level, payload) {
+  logDebug('cobroMovil', level, payload)
 }

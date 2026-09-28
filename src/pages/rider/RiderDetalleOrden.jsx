@@ -7,7 +7,7 @@
 //   - En camino: "Entregado" → 'entregado'  +  "No se pudo entregar" → 'fallido' { motivo }
 //   - Entregado: cerrado, mensaje de éxito.
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Phone, MessageCircle, Package, Truck, CheckCircle2, Navigation } from 'lucide-react'
+import { ArrowLeft, Phone, MessageCircle, Package, Truck, CheckCircle2, Navigation, CreditCard } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { riderEstado } from '../../lib/riderApi'
 import { useRider } from '../../context/RiderContext'
@@ -15,6 +15,7 @@ import { isNativeSync } from '../../lib/capacitor'
 import { colors } from '../../lib/uiStyles'
 import { calcGanancia } from '../../lib/ganancia'
 import { textoPago, hayQueCobrar } from '../../lib/metodoPago'
+import { cobroMovilSoportado, configCobroMovil, prepararLector, cobrarPedido } from '../../lib/cobroMovil'
 
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
@@ -388,6 +389,13 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
         {/* TU GANANCIA — desglose de lo que gana el socio en este pedido */}
         <GananciaCard pedido={pedido} pacto={pacto} />
 
+        {/* COBRAR CON EL MÓVIL (Tap to Pay) — solo si este pedido se puede cobrar así */}
+        <CobroMovil
+          pedido={pedido}
+          paso={paso}
+          onCobrado={() => setPedido((p) => ({ ...p, metodo_pago: 'tarjeta' }))}
+        />
+
         {/* ACCIONES según estado */}
         {paso === 0 && (
           <button onClick={handleRecogido} disabled={busy} style={primaryBtn(busy)}>
@@ -523,6 +531,105 @@ function GananciaCard({ pedido, pacto }) {
           {g.total.toFixed(2).replace('.', ',')} €
         </span>
       </div>
+    </div>
+  )
+}
+
+// ─── Cobrar con el móvil (Tap to Pay de Stripe) ────────────
+// Solo en la app Android, con el pedido recogido o en camino, y si su forma de pago se puede
+// cobrar así (datáfono / efectivo: configuracion_plataforma.cobro_movil_metodos). El importe lo
+// pone el servidor. El dinero va a Pidoo y el pedido pasa a «tarjeta»; la liquidación del lunes
+// se lo paga al restaurante. Ver src/lib/cobroMovil.js.
+function CobroMovil({ pedido, paso, onCobrado }) {
+  const soportado = cobroMovilSoportado()
+  const enPuerta = paso === 1 || paso === 2
+  const [cfg, setCfg] = useState(null)
+  const [fase, setFase] = useState(null) // null | 'preparando' | 'tarjeta' | 'confirmando'
+  const [cobrado, setCobrado] = useState(null) // { importeCent, pendienteRegistro }
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!soportado || !enPuerta) return
+    let cancel = false
+    configCobroMovil().then((c) => { if (!cancel) setCfg(c) }, () => {})
+    return () => { cancel = true }
+  }, [soportado, enPuerta])
+
+  const cobrable = !!(soportado && enPuerta && cfg?.habilitado && cfg.metodos.includes(pedido.metodo_pago))
+
+  // Se calienta el lector en cuanto se sabe que este pedido se cobra con el móvil: la primera
+  // conexión tarda unos segundos y mejor que no sea delante del cliente. Si falla, se
+  // reintenta al pulsar el botón, y ahí sí se enseña el motivo.
+  useEffect(() => {
+    if (!cobrable || !cfg?.locationId) return
+    prepararLector(cfg.locationId).catch(() => {})
+  }, [cobrable, cfg?.locationId])
+
+  if (cobrado) {
+    const cobradoTxt = (Number(cobrado.importeCent || 0) / 100).toFixed(2).replace('.', ',')
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+        padding: '14px', borderRadius: 14,
+        background: colors.sageSoft, color: colors.sage2, textAlign: 'center',
+      }}>
+        <CheckCircle2 size={26} strokeWidth={2.4} />
+        <div style={{ fontSize: 15, fontWeight: 800 }}>Cobrado {cobradoTxt} € con tarjeta</div>
+        <div style={{ fontSize: 12, color: colors.stone, fontWeight: 600 }}>
+          {cobrado.pendienteRegistro
+            ? 'Se apuntará en cuanto haya conexión. No vuelvas a cobrarlo.'
+            : 'Ya puedes entregar el pedido.'}
+        </div>
+      </div>
+    )
+  }
+  if (!cobrable) return null
+
+  const ocupado = !!fase
+  const importe = Number(pedido.total || 0).toFixed(2).replace('.', ',')
+
+  async function cobrar() {
+    if (ocupado) return
+    setError(null)
+    try {
+      const r = await cobrarPedido(pedido.id, { onPaso: setFase })
+      setCobrado(r)
+      try { if (navigator.vibrate) navigator.vibrate([60, 40, 60]) } catch (_) {}
+      onCobrado?.()
+    } catch (e) {
+      setError(e?.message || 'No se pudo cobrar. Inténtalo otra vez.')
+      try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
+    } finally {
+      setFase(null)
+    }
+  }
+
+  const textoBoton = fase === 'preparando' ? 'Preparando el cobro…'
+    : fase === 'tarjeta' ? 'Acerca la tarjeta al móvil…'
+      : fase === 'confirmando' ? 'Comprobando el pago…'
+        : `Cobrar con tarjeta · ${importe} €`
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <button onClick={cobrar} disabled={ocupado} style={{
+        ...primaryBtn(ocupado),
+        background: colors.ink,
+        boxShadow: '0 8px 18px rgba(26,24,21,0.22), inset 0 1px 0 rgba(255,255,255,0.12)',
+      }}>
+        <CreditCard size={17} strokeWidth={2.4} />
+        {textoBoton}
+      </button>
+      {error ? (
+        <div style={{
+          padding: '9px 12px', borderRadius: 10,
+          background: colors.dangerSoft, color: colors.danger,
+          fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+        }}>{error}</div>
+      ) : (
+        <div style={{ fontSize: 11.5, color: colors.stone, fontWeight: 600, textAlign: 'center' }}>
+          El cliente acerca su tarjeta o su móvil a la parte de atrás de tu teléfono.
+        </div>
+      )}
     </div>
   )
 }
