@@ -28,6 +28,11 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OfflineBeaconPlugin.class);
         super.onCreate(savedInstanceState);
         crearCanalPedidos();
+        // v305 (28-sep-2026): canal de avisos del socio ('avisos_socio_v1'), aparte del de
+        // pedidos. Se crea ya al arrancar para que exista antes del primer aviso de "has cerrado
+        // la app del todo" y para que una push del servidor con ese channel_id no caiga en el
+        // canal genérico. Sonido normal de notificación: nunca el de alarma del pedido.
+        PresenceBeatService.crearCanalAvisos(this);
     }
 
     @Override

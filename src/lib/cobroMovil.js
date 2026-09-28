@@ -20,15 +20,24 @@
 // lector FALLA (NFC apagado, opciones de desarrollador activas, móvil no compatible), el plugin
 // solo lo apunta en su log y la promesa de discoverReaders NO SE RESUELVE NUNCA. Por eso cada
 // paso lleva un tiempo máximo y un mensaje que dice qué revisar.
+//
+// v305: la ENTREGA va aparte, en rider-estado ('entregado' con `cobro`), que vuelve a mirar Stripe
+// antes de entregar. Aquí además: leer los cobros de un pedido (check verde del historial), la
+// clave del datáfono del restaurante, los requisitos del móvil y los mensajes de la puerta.
 import { Capacitor } from '@capacitor/core'
 import { socioCobroMovil, logCobroMovil } from './riderApi'
 import { isNativeSync } from './capacitor'
+import { supabase } from './supabase'
+import { tapToPayChecks, openNfcSettings } from './offlineBeacon'
 
 const MAX_ARRANQUE_MS = 30_000
 const MAX_BUSCAR_LECTOR_MS = 25_000
 // La primera conexión descarga la configuración del lector: puede tardar.
 const MAX_CONECTAR_MS = 60_000
 const CONFIG_TTL_MS = 5 * 60_000
+// Tap to Pay de Stripe en Android pide Android 13 (API 33) o superior.
+export const ANDROID_MIN_SDK = 33
+const MAX_REQUISITOS_MS = 4_000
 
 const MENSAJES = {
   no_soportado: 'Este móvil no puede cobrar con tarjeta.',
@@ -222,6 +231,124 @@ async function confirmarEnServidor(pedidoId, piId) {
     break
   }
   return { cobrado: false, detalle: ultimo?.data?.error || ultimo?.error || null }
+}
+
+// ─── v305: lo que rodea al cobro en la puerta ───────────────────────────────
+
+// Columnas de pedido_cobros_movil que pintan el pago (estadoPago en lib/metodoPago.js).
+export const COBROS_COLUMNAS = 'pedido_id, estado, importe, cobrado_at, revisar, metodo_pago_anterior, tarjeta_marca, tarjeta_ultimos4, tarjeta_lectura, recibo_url'
+
+// Cobros con el móvil de uno o varios pedidos. TOLERANTE: si falla (sin red, tabla sin permiso)
+// devuelve ok:false y lista vacía, y quien llama sigue pintando lo que tiene. Por eso va en una
+// consulta aparte y no embebida: un embed roto tiraría la consulta entera del historial.
+// pedido_cobros_movil NO está en realtime: después de cobrar hay que volver a llamar aquí.
+export async function leerCobros(pedidoIds) {
+  const ids = Array.from(new Set((Array.isArray(pedidoIds) ? pedidoIds : [pedidoIds]).filter(Boolean)))
+  if (!ids.length) return { ok: true, filas: [] }
+  try {
+    const trozos = []
+    for (let i = 0; i < ids.length; i += 100) trozos.push(ids.slice(i, i + 100))
+    const res = await Promise.all(trozos.map((t) => supabase.from('pedido_cobros_movil').select(COBROS_COLUMNAS).in('pedido_id', t)))
+    const fallo = res.find((r) => r.error)
+    if (fallo) return { ok: false, filas: res.flatMap((r) => r.data || []) }
+    return { ok: true, filas: res.flatMap((r) => r.data || []) }
+  } catch (_) {
+    return { ok: false, filas: [] }
+  }
+}
+
+// ¿Enseña la app «Cobrado con datáfono del restaurante»? configuracion_plataforma
+// cobro_datafono_fisico (nace en 'on', pública). Lo aplica también el servidor (rider-estado v13).
+// Solo un 'off' EXPLÍCITO lo apaga: hoy hay restaurantes (Duende) que dan el datáfono al
+// repartidor, y sin este botón la única salida sería «efectivo», que pasa el pedido a efectivo y
+// descuadra el cajón del restaurante.
+// Devuelve true / false, o null si no se pudo leer (sin red): entonces se enseña el botón y
+// decide el servidor (si está en 'off' responde 409 con un mensaje claro).
+let _datafonoFisico = null // { t, valor }
+export async function datafonoFisicoActivo() {
+  if (_datafonoFisico && Date.now() - _datafonoFisico.t < CONFIG_TTL_MS) return _datafonoFisico.valor
+  try {
+    const { data, error } = await supabase.from('configuracion_plataforma').select('valor').eq('clave', 'cobro_datafono_fisico').maybeSingle()
+    if (error) return null // sin red: no se cachea
+    const valor = String(data?.valor ?? 'on').trim().toLowerCase() !== 'off'
+    _datafonoFisico = { t: Date.now(), valor }
+    return valor
+  } catch (_) {
+    return null
+  }
+}
+
+// Requisitos del móvil para Tap to Pay (Android), desde el plugin nativo.
+// null = no se pudo comprobar (iPhone, web o una app sin esa función): entonces no se bloquea
+// nada y el propio cobro dirá qué falta.
+export async function requisitosTapToPay() {
+  if (!cobroMovilSoportado()) return null
+  let c = null
+  try {
+    c = await Promise.race([
+      tapToPayChecks(),
+      new Promise((r) => setTimeout(() => r(null), MAX_REQUISITOS_MS)),
+    ])
+  } catch (_) {
+    c = null
+  }
+  if (!c) return null
+  const sdk = Number(c.androidSdk) || 0
+  const androidOk = sdk >= ANDROID_MIN_SDK
+  const hardwareOk = !!c.tieneNfc && androidOk
+  return {
+    ...c,
+    androidOk,
+    hardwareOk,
+    // Lo que el socio puede arreglar en Ajustes.
+    listo: hardwareOk && !!c.nfcActivado && !c.opcionesDesarrollador,
+  }
+}
+
+export async function abrirAjustesNfc() {
+  try { await openNfcSettings() } catch (_) {}
+}
+
+// ¿Está ya conectado el lector Tap to Pay del móvil en esta sesión de la app? (Configuración)
+export function lectorPreparado() {
+  return _conectado
+}
+
+const eur = (n) => `${(Number(n) || 0).toFixed(2).replace('.', ',')} €`
+
+// Mensaje para el socio cuando rider-estado NO entrega (errores de negocio, siempre 409).
+export function mensajeEntrega(res) {
+  const cod = (typeof res?.data?.error === 'string' && res.data.error) || res?.error || ''
+  if (res?.status === 0 || cod === 'network') return 'Sin conexión. Busca cobertura y vuelve a intentarlo.'
+  switch (cod) {
+    case 'ya_cobrado_con_tarjeta':
+      return `Este pedido ya está cobrado con tarjeta${res?.data?.importe ? ` (${eur(res.data.importe)})` : ''}. No cobres en efectivo: si el cliente te ha dado dinero, devuélveselo. Pulsa «Entregado».`
+    case 'ya_pagado':
+      return 'Este pedido ya está pagado. No hay que cobrar nada: pulsa «Entregado».'
+    case 'cobro_tarjeta_en_curso':
+      return 'Hay un cobro con tarjeta de este pedido en marcha. Espera unos segundos y vuelve a intentarlo.'
+    case 'no_se_pudo_anular_cobro_tarjeta':
+      return 'Quedó un cobro con tarjeta a medias y no se pudo anular. Espera unos segundos y vuelve a intentarlo.'
+    case 'stripe_no_responde':
+      return 'No se pudo comprobar el cobro con tarjeta. Revisa la conexión e inténtalo otra vez.'
+    case 'cobro_tarjeta_no_confirmado':
+      return 'Todavía no está confirmado el cobro con tarjeta. Espera unos segundos y pulsa otra vez.'
+    case 'registro_tarjeta_fallido':
+      return 'El cobro con tarjeta está hecho, pero no se pudo apuntar. Pulsa otra vez en unos segundos. No lo vuelvas a cobrar.'
+    case 'datafono_fisico_desactivado':
+      return 'El cobro con el datáfono del restaurante no está activado. Cobra con tarjeta en el móvil o en efectivo.'
+    case 'metodo_no_datafono':
+      return 'Este pedido no es de datáfono.'
+    case 'estado_no_cobrable':
+    case 'estado_invalido':
+      return 'El pedido ya no está en reparto. Vuelve atrás y revisa la lista de pedidos. Si lo has cobrado en efectivo, avisa al restaurante.'
+    case 'metodo_no_cambiable':
+      return 'No se pudo apuntar el cobro en efectivo en este pedido. Avisa a Pidoo.'
+    case 'sesion_superada':
+      return 'Se ha iniciado sesión con tu cuenta en otro móvil. Vuelve a entrar en este para seguir.'
+    default:
+      return 'No se pudo actualizar el pedido. Revisa tu conexión e inténtalo de nuevo.'
+  }
 }
 
 // Anula un cobro a medias cuando el socio decide cobrar de otra forma (no mueve dinero).

@@ -4,18 +4,35 @@
 // Botón de acción principal según pedido.estado, vía edge `rider-estado`.
 //   - Aceptado (asignación aceptada, estado nuevo/preparando/listo): "Recogí el pedido" → 'recogido'
 //   - Recogido: "Voy en camino" → 'en_camino'
-//   - En camino: "Entregado" → 'entregado'  +  "No se pudo entregar" → 'fallido' { motivo }
+//   - En camino: COBRO + ENTREGA en la puerta (v305) y "No se pudo entregar" → 'fallido' { motivo }
+//       · ya pagado (tarjeta de la app, cobrado con el móvil o pagado en el local) → "Entregado".
+//       · efectivo / datáfono → "Cobrado en efectivo · X €" (un toque: cobra y entrega) y, si este
+//         móvil puede cobrar con tarjeta y el socio está habilitado, "Cobrar con tarjeta · X €"
+//         (al confirmarlo Stripe, el pedido queda entregado solo). En datáfono sale además
+//         "Cobrado con datáfono del restaurante" (antes que efectivo) salvo que la clave
+//         cobro_datafono_fisico esté en 'off': hoy Duende da el datáfono al repartidor.
+//       Todo va en UNA petición a rider-estado ('entregado' + `cobro`), que mira Stripe antes de
+//       dar por bueno el efectivo: nunca se cobra dos veces ni queda un pedido a medias.
+//       Los botones NO se pintan hasta tener la forma de pago recargada del servidor: el pedido que
+//       llega de la lista puede venir sin ella y se vería «cobrar» en un pedido ya pagado.
 //   - Entregado: cerrado, mensaje de éxito.
-import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Phone, MessageCircle, Package, Truck, CheckCircle2, Navigation, CreditCard } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, Phone, MessageCircle, Package, Truck, CheckCircle2, Navigation, CreditCard, Banknote, TriangleAlert, RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { riderEstado } from '../../lib/riderApi'
 import { useRider } from '../../context/RiderContext'
 import { isNativeSync } from '../../lib/capacitor'
 import { colors } from '../../lib/uiStyles'
 import { calcGanancia } from '../../lib/ganancia'
-import { textoPago, hayQueCobrar } from '../../lib/metodoPago'
-import { cobroMovilSoportado, configCobroMovil, prepararLector, cobrarPedido } from '../../lib/cobroMovil'
+import { hayQueCobrar, estadoPago, etiquetaPago } from '../../lib/metodoPago'
+import {
+  cobroMovilSoportado, configCobroMovil, prepararLector, cobrarPedido,
+  leerCobros, datafonoFisicoActivo, requisitosTapToPay, abrirAjustesNfc, mensajeEntrega,
+} from '../../lib/cobroMovil'
+
+// Columnas que se recargan del pedido. metodo_pago + stripe_payment_id + reembolso deciden los
+// botones de cobro y el bloque de pago; socio_liq_* es la ganancia congelada al entregar.
+const COLUMNAS_PEDIDO = 'id, codigo, estado, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, stripe_payment_id, reembolsado_at, monto_reembolsado, cliente_telefono, guest_telefono, guest_nombre, notas, socio_liq_total, socio_liq_envio, socio_liq_comision, socio_liq_propina, socio_liq_comision_pct, socio_liq_tarifa_modo, socio_liq_tarifa_fija'
 
 const GMAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
 
@@ -43,21 +60,39 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
   const [est, setEst] = useState(null)
   const [cliente, setCliente] = useState(null)
   const [busy, setBusy] = useState(null)
+  // Forma de pago recargada del servidor (sin ella no se pintan los botones de cobro/entrega).
+  const [cargado, setCargado] = useState(false)
+  const [errorCarga, setErrorCarga] = useState(false)
+  const [recarga, setRecarga] = useState(0)
+  // Cobros con el móvil de este pedido (pedido_cobros_movil; no llega por realtime).
+  const [cobros, setCobros] = useState([])
+
+  const releerCobros = useCallback(async () => {
+    const r = await leerCobros([pedido.id])
+    if (r.ok) setCobros(r.filas)
+  }, [pedido.id])
 
   useEffect(() => {
     let cancel = false
     ;(async () => {
+      setErrorCarga(false)
       // Re-cargamos el pedido completo (el objeto entrante puede venir parcial).
-      const [pedRes, itemsRes] = await Promise.all([
-        supabase.from('pedidos')
-          .select('id, codigo, estado, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, metodo_pago, cliente_telefono, guest_telefono, guest_nombre, notas')
-          .eq('id', pedido.id).maybeSingle(),
+      const [pedRes, itemsRes, cobrosRes] = await Promise.all([
+        supabase.from('pedidos').select(COLUMNAS_PEDIDO).eq('id', pedido.id).maybeSingle(),
         supabase.from('pedido_items').select('*').eq('pedido_id', pedido.id),
+        leerCobros([pedido.id]),
       ])
       if (cancel) return
+      if (pedRes.error || !pedRes.data) {
+        // Sin la forma de pago real no se enseña ni «cobrar» ni «entregado».
+        setErrorCarga(true)
+      } else {
+        setCargado(true)
+      }
       const ped = pedRes.data ? { ...pedido, ...pedRes.data } : pedido
-      setPedido(ped)
-      setItems(itemsRes.data || [])
+      setPedido((p) => (pedRes.data ? { ...p, ...pedRes.data } : p))
+      if (itemsRes.data) setItems(itemsRes.data)
+      if (cobrosRes.ok) setCobros(cobrosRes.filas)
 
       // Pacto vigente con ese restaurante: si es precio fijo, se muestra en la ganancia.
       if (socio?.id && ped.establecimiento_id) {
@@ -83,18 +118,22 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
       setCliente(cliRes.data || null)
     })()
     return () => { cancel = true }
-  }, [pedido.id])
+  }, [pedido.id, recarga])
 
-  // Realtime sobre el pedido para reflejar cambios externos
+  // Realtime sobre el pedido para reflejar cambios externos. Si pasa a tarjeta (el webhook de
+  // Stripe registró un cobro con el móvil), se releen los cobros: esa tabla no va por realtime.
   useEffect(() => {
     const ch = supabase.channel('rider-detalle-' + pedido.id)
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'pedidos',
         filter: `id=eq.${pedido.id}`,
-      }, (payload) => setPedido(p => ({ ...p, ...payload.new })))
+      }, (payload) => {
+        setPedido(p => ({ ...p, ...payload.new }))
+        if (payload.new?.metodo_pago === 'tarjeta') releerCobros()
+      })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
-  }, [pedido.id])
+  }, [pedido.id, releerCobros])
 
   // ─── Transiciones de estado vía edge `rider-estado` ─────────
   async function transicion(accion, extra = {}, cerrar = false) {
@@ -124,7 +163,6 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
 
   function handleRecogido() { transicion('recogido') }
   function handleEnCamino() { transicion('en_camino') }
-  function handleEntregado() { transicion('entregado', {}, true) }
   function handleFallido() {
     const motivo = window.prompt('¿Por qué no se pudo entregar?')
     if (!motivo?.trim()) return
@@ -139,6 +177,128 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
 
   const paso = pasoActual(pedido.estado)
   const cerrado = paso >= 3
+
+  // ─── Cobro en la puerta (v305) ───────────────────────────────
+  // Tap to Pay: la configuración (¿habilitado este socio?, ¿qué formas de pago?) y los requisitos
+  // del móvil se miran desde «Recogido», para calentar el lector antes de llegar a la puerta.
+  const soportado = cobroMovilSoportado()
+  const enReparto = paso === 1 || paso === 2
+  const [cfgCobro, setCfgCobro] = useState(null)        // null = todavía no se sabe
+  const [reqMovil, setReqMovil] = useState(undefined)   // undefined = comprobando · null = no se pudo
+  // «Cobrado con datáfono del restaurante»: undefined = comprobando · true/false · null = no se pudo leer.
+  const [datafonoFisico, setDatafonoFisico] = useState(undefined)
+  const [faseTarjeta, setFaseTarjeta] = useState(null)  // null | 'preparando' | 'tarjeta' | 'confirmando'
+  const [cobradoTarjeta, setCobradoTarjeta] = useState(null) // { importeCent, pendienteRegistro }
+  const [errorTarjeta, setErrorTarjeta] = useState(null)
+  const [aviso, setAviso] = useState(null)              // mensaje de la última entrega que no salió
+
+  useEffect(() => {
+    if (!enReparto) return
+    let cancel = false
+    datafonoFisicoActivo().then((v) => { if (!cancel) setDatafonoFisico(v) }, () => { if (!cancel) setDatafonoFisico(null) })
+    if (soportado) {
+      configCobroMovil().then((c) => { if (!cancel) setCfgCobro(c) }, () => { if (!cancel) setCfgCobro({ habilitado: false, metodos: [] }) })
+      requisitosTapToPay().then((r) => { if (!cancel) setReqMovil(r) }, () => { if (!cancel) setReqMovil(null) })
+    }
+    // Con mala cobertura la configuración puede tardar: el socio no se queda sin botones.
+    // Se enseña «efectivo» y, si luego llega que puede cobrar con tarjeta, aparece ese botón.
+    // El datáfono del restaurante, si no se pudo leer, se ENSEÑA (null): decide el servidor.
+    const espera = setTimeout(() => {
+      if (cancel) return
+      setDatafonoFisico((v) => (v === undefined ? null : v))
+      if (soportado) {
+        setCfgCobro((c) => c ?? { habilitado: false, metodos: [] })
+        setReqMovil((r) => (r === undefined ? null : r))
+      }
+    }, 6000)
+    return () => { cancel = true; clearTimeout(espera) }
+  }, [enReparto, soportado])
+
+  // ¿Puede ESTE móvil cobrar ESTE pedido con tarjeta? Sin NFC o con Android < 13, no.
+  const tapToPay = !!(soportado && cfgCobro?.habilitado
+    && cfgCobro.metodos.includes(pedido.metodo_pago)
+    && (reqMovil == null || reqMovil.hardwareOk))
+
+  // Se calienta el lector en cuanto se sabe que este pedido se cobra con el móvil: la primera
+  // conexión tarda unos segundos y mejor que no sea delante del cliente. Si falla, se reintenta
+  // al pulsar el botón, y ahí sí se enseña el motivo.
+  useEffect(() => {
+    if (!tapToPay || !cfgCobro?.locationId || !cargado) return
+    prepararLector(cfgCobro.locationId).catch(() => {})
+  }, [tapToPay, cfgCobro?.locationId, cargado])
+
+  // Pagado = la forma de pago no pide cobrar (tarjeta de la app, pagado en el local) o hay un cobro
+  // con el móvil confirmado. Si la tarjeta se acaba de cobrar aquí y aún no consta en el servidor
+  // (sin cobertura), tampoco se ofrece «efectivo»: el cliente ya ha pagado.
+  const cobroMovilOk = cobros.some((c) => c.estado === 'cobrado')
+  const tarjetaSinApuntar = !!cobradoTarjeta && hayQueCobrar(pedido.metodo_pago) && !cobroMovilOk
+  const yaPagado = !hayQueCobrar(pedido.metodo_pago) || cobroMovilOk
+  // No se pintan los botones de la puerta hasta saber la forma de pago real y, si el móvil puede
+  // cobrar con tarjeta, hasta saber si este socio puede: así no «salta» un botón encima de otro.
+  // En datáfono se espera también a saber si sale «Cobrado con datáfono del restaurante»: si
+  // apareciera tarde, el socio podría pulsar «efectivo» sin querer y descuadrar el cajón.
+  const botonesListos = cargado
+    && (!soportado || (cfgCobro !== null && reqMovil !== undefined))
+    && (pedido.metodo_pago !== 'datafono' || datafonoFisico !== undefined)
+  // Solo un 'off' leído del servidor lo esconde (null = no se pudo leer → se enseña).
+  const verDatafonoFisico = pedido.metodo_pago === 'datafono' && datafonoFisico !== false
+
+  // Entrega con (o sin) cobro. UNA petición: rider-estado cobra y entrega a la vez.
+  async function entregar(cobro) {
+    setBusy(cobro || 'entregado')
+    setAviso(null)
+    try {
+      const res = await riderEstado(pedido.id, 'entregado', cobro ? { cobro } : {})
+      if (res?.ok) {
+        refreshAsignaciones?.()
+        onBack?.()
+        return true
+      }
+      try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
+      if (res?.sessionDead) {
+        alert('Tu sesión ha caducado. Vuelve a iniciar sesión para continuar.')
+        try { await supabase.auth.signOut() } catch (_) {}
+        return false
+      }
+      setAviso(mensajeEntrega(res))
+      // El servidor puede haber encontrado (y registrado) un cobro con tarjeta: se relee todo.
+      const cod = res?.data?.error || res?.error
+      if (['ya_cobrado_con_tarjeta', 'ya_pagado', 'cobro_tarjeta_en_curso', 'estado_invalido', 'estado_no_cobrable'].includes(cod)) {
+        setRecarga((n) => n + 1)
+      }
+      return false
+    } catch (_) {
+      setAviso(mensajeEntrega({ status: 0 }))
+      return false
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function cobrarConTarjeta() {
+    if (faseTarjeta || busy) return
+    setErrorTarjeta(null)
+    setAviso(null)
+    try {
+      const r = await cobrarPedido(pedido.id, { onPaso: setFaseTarjeta })
+      setCobradoTarjeta(r)
+      try { if (navigator.vibrate) navigator.vibrate([60, 40, 60]) } catch (_) {}
+      setFaseTarjeta(null)
+      releerCobros()
+      // Cobrado: el pedido queda entregado solo (rider-estado vuelve a mirar Stripe antes).
+      await entregar('tarjeta')
+    } catch (e) {
+      setErrorTarjeta(e?.message || 'No se pudo cobrar. Inténtalo otra vez.')
+      try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
+      // Por si el fallo fue de red tras cobrar: el servidor manda.
+      releerCobros()
+    } finally {
+      setFaseTarjeta(null)
+    }
+  }
+
+  const ocupado = !!busy || !!faseTarjeta
+  const importeTxt = total.toFixed(2).replace('.', ',')
 
   // Teléfono del cliente: snapshot en el pedido (siempre presente desde el checkout
   // nuevo) y, como respaldo, usuario registrado o invitado.
@@ -373,28 +533,13 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
             </span>
           </div>
 
-          {/* Si hay que cobrar, se avisa en rojo: es lo último que mira el
-              repartidor antes de llamar al timbre. */}
-          <div style={{
-            marginTop: 10, padding: '8px 12px', borderRadius: 8,
-            background: hayQueCobrar(pedido.metodo_pago) ? colors.warningSoft : colors.cream2,
-            fontSize: 11,
-            color: hayQueCobrar(pedido.metodo_pago) ? '#8B6126' : colors.stone,
-            fontWeight: 700,
-          }}>
-            Pago: {textoPago(pedido.metodo_pago)}
-          </div>
+          {/* Estado del pago: es lo último que mira el repartidor antes de llamar al timbre.
+              Check verde solo con prueba de Stripe (cobro con el móvil o tarjeta de la app). */}
+          <PagoBox pedido={pedido} cobros={cobros} cargado={cargado} total={total} />
         </Card>
 
         {/* TU GANANCIA — desglose de lo que gana el socio en este pedido */}
         <GananciaCard pedido={pedido} pacto={pacto} />
-
-        {/* COBRAR CON EL MÓVIL (Tap to Pay) — solo si este pedido se puede cobrar así */}
-        <CobroMovil
-          pedido={pedido}
-          paso={paso}
-          onCobrado={() => setPedido((p) => ({ ...p, metodo_pago: 'tarjeta' }))}
-        />
 
         {/* ACCIONES según estado */}
         {paso === 0 && (
@@ -413,12 +558,125 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
 
         {paso === 2 && (
           <>
-            <button onClick={handleEntregado} disabled={busy} style={primaryBtn(busy)}>
-              <CheckCircle2 size={17} strokeWidth={2.4} />
-              {busy === 'entregado' ? 'Marcando…' : 'Entregado'}
-            </button>
-            <button onClick={handleFallido} disabled={busy} style={{
-              ...primaryBtn(busy),
+            {/* Mensaje de la última entrega que no salió (ya cobrado con tarjeta, sin red…). */}
+            {aviso && (
+              <div style={{
+                display: 'flex', gap: 8, alignItems: 'flex-start',
+                padding: '10px 12px', borderRadius: 10,
+                background: colors.warningSoft, color: '#8B6126',
+                fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+              }}>
+                <TriangleAlert size={16} strokeWidth={2.4} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>{aviso}</span>
+              </div>
+            )}
+
+            {!botonesListos ? (
+              // Sin la forma de pago real no se ofrece ni cobrar ni entregar.
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '14px', borderRadius: 14,
+                background: colors.cream2, color: colors.stone,
+                fontSize: 13, fontWeight: 700, textAlign: 'center',
+              }}>
+                {errorCarga ? (
+                  <>
+                    <span>No se pudo cargar la forma de pago.</span>
+                    <button onClick={() => setRecarga((n) => n + 1)} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '6px 10px', borderRadius: 999, border: `1px solid ${colors.border}`,
+                      background: colors.paper, color: colors.ink, fontSize: 12, fontWeight: 700,
+                      cursor: 'pointer', fontFamily: "'Plus Jakarta Sans', sans-serif",
+                    }}>
+                      <RefreshCw size={13} strokeWidth={2.4} /> Reintentar
+                    </button>
+                  </>
+                ) : 'Comprobando la forma de pago…'}
+              </div>
+            ) : tarjetaSinApuntar ? (
+              // Cobrado con el móvil pero la entrega no salió (sin cobertura): solo queda entregar.
+              <>
+                <CobradoTarjetaBox cobrado={cobradoTarjeta} />
+                <button onClick={() => entregar('tarjeta')} disabled={ocupado} style={primaryBtn(ocupado)}>
+                  <CheckCircle2 size={17} strokeWidth={2.4} />
+                  {busy === 'tarjeta' ? 'Marcando…' : 'Marcar entregado'}
+                </button>
+              </>
+            ) : yaPagado ? (
+              <button onClick={() => entregar(null)} disabled={ocupado} style={primaryBtn(ocupado)}>
+                <CheckCircle2 size={17} strokeWidth={2.4} />
+                {busy === 'entregado' ? 'Marcando…' : 'Entregado'}
+              </button>
+            ) : (
+              <>
+                {tapToPay && (
+                  <>
+                    <button onClick={cobrarConTarjeta} disabled={ocupado} style={{
+                      ...primaryBtn(ocupado),
+                      background: colors.ink,
+                      boxShadow: '0 8px 18px rgba(26,24,21,0.22), inset 0 1px 0 rgba(255,255,255,0.12)',
+                    }}>
+                      <CreditCard size={17} strokeWidth={2.4} />
+                      {faseTarjeta === 'preparando' ? 'Preparando el cobro…'
+                        : faseTarjeta === 'tarjeta' ? 'Acerca la tarjeta al móvil…'
+                          : faseTarjeta === 'confirmando' ? 'Comprobando el pago…'
+                            : busy === 'tarjeta' ? 'Marcando entregado…'
+                              : `Cobrar con tarjeta · ${importeTxt} €`}
+                    </button>
+                    {errorTarjeta ? (
+                      <div style={{
+                        padding: '9px 12px', borderRadius: 10,
+                        background: colors.dangerSoft, color: colors.danger,
+                        fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
+                      }}>{errorTarjeta}</div>
+                    ) : reqMovil && !reqMovil.listo ? (
+                      // El móvil vale, pero falta algo que el socio puede arreglar en Ajustes.
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', gap: 6,
+                        padding: '9px 12px', borderRadius: 10,
+                        background: colors.warningSoft, color: '#8B6126',
+                        fontSize: 12, fontWeight: 700, lineHeight: 1.4,
+                      }}>
+                        {!reqMovil.nfcActivado && <span>El NFC está apagado: actívalo para cobrar con tarjeta.</span>}
+                        {reqMovil.opcionesDesarrollador && <span>Apaga las «Opciones de desarrollador» del móvil para cobrar con tarjeta.</span>}
+                        {!reqMovil.nfcActivado && (
+                          <button onClick={abrirAjustesNfc} style={{
+                            alignSelf: 'flex-start', padding: '6px 10px', borderRadius: 999,
+                            border: '1px solid #C99551', background: colors.paper, color: '#8B6126',
+                            fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Plus Jakarta Sans', sans-serif",
+                          }}>Abrir ajustes de NFC</button>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11.5, color: colors.stone, fontWeight: 600, textAlign: 'center' }}>
+                        El cliente acerca su tarjeta o su móvil a la parte de atrás de tu teléfono.
+                      </div>
+                    )}
+                  </>
+                )}
+                {/* Datáfono del restaurante ANTES que efectivo: el cliente eligió pagar con tarjeta, y
+                    pulsar «efectivo» por error pasa el pedido a efectivo y descuadra el cajón. */}
+                {verDatafonoFisico && (
+                  <button onClick={() => entregar('datafono_fisico')} disabled={ocupado} style={{
+                    ...primaryBtn(ocupado),
+                    background: colors.paper,
+                    color: colors.ink,
+                    border: `1px solid ${colors.borderStrong}`,
+                    boxShadow: 'none',
+                  }}>
+                    <CreditCard size={17} strokeWidth={2.4} />
+                    {busy === 'datafono_fisico' ? 'Marcando…' : 'Cobrado con datáfono del restaurante'}
+                  </button>
+                )}
+                <button onClick={() => entregar('efectivo')} disabled={ocupado} style={primaryBtn(ocupado)}>
+                  <Banknote size={17} strokeWidth={2.4} />
+                  {busy === 'efectivo' ? 'Marcando…' : `Cobrado en efectivo · ${importeTxt} €`}
+                </button>
+              </>
+            )}
+
+            <button onClick={handleFallido} disabled={ocupado} style={{
+              ...primaryBtn(ocupado),
               background: 'transparent',
               color: colors.danger,
               border: `1px solid ${colors.danger}`,
@@ -495,12 +753,24 @@ function Stepper({ paso }) {
 }
 
 // ─── Tu ganancia (desglose para el socio) ───────────────────
+// Si el pedido ya tiene la ganancia CONGELADA (socio_liq_*, se congela al entregar con el pacto
+// vigente), manda esa: es la que se factura. Si no, se estima con el pacto (calcGanancia).
 function GananciaCard({ pedido, pacto }) {
   const isDelivery = pedido.modo_entrega === 'delivery'
-  const esTelefonico = pedido.origen_pedido === 'telefonico'
-  const esTarifaFija = pacto?.tarifa_modo === 'fija'
-  const importeFijo = Number(pacto?.tarifa_fija ?? 0)
-  const g = calcGanancia(pedido, pacto)
+  const congelada = pedido.socio_liq_total != null
+  const g = congelada
+    ? {
+        envio: Number(pedido.socio_liq_envio || 0),
+        comision: Number(pedido.socio_liq_comision || 0),
+        propina: Number(pedido.socio_liq_propina || 0),
+        comisionPct: Number(pedido.socio_liq_comision_pct || 0),
+        total: Number(pedido.socio_liq_total || 0),
+      }
+    : calcGanancia(pedido, pacto)
+  const esTarifaFija = congelada ? pedido.socio_liq_tarifa_modo === 'fija' : pacto?.tarifa_modo === 'fija'
+  const importeFijo = congelada
+    ? Number(pedido.socio_liq_tarifa_fija ?? g.envio)
+    : Number(pacto?.tarifa_fija ?? 0)
   return (
     <div style={{
       background: colors.sageSoft, borderRadius: 14, padding: 14,
@@ -512,15 +782,10 @@ function GananciaCard({ pedido, pacto }) {
           Tarifa fija pactada: {importeFijo.toFixed(2).replace('.', ',')} € por entrega, sea cual sea la distancia.
         </div>
       )}
-      {esTelefonico && (
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: colors.sage2, marginBottom: 8 }}>
-          Pedido telefónico: cobras solo el envío, sin comisión.
-        </div>
-      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
         {isDelivery && <GananciaRow label={esTarifaFija ? 'Tarifa fija' : 'Envío'} value={g.envio} />}
-        {isDelivery && !esTelefonico && <GananciaRow label="Propina" value={g.propina} />}
-        {!esTelefonico && g.comisionPct > 0 && <GananciaRow label={`Comisión ${g.comisionPct}%`} value={g.comision} />}
+        {isDelivery && <GananciaRow label="Propina" value={g.propina} />}
+        {g.comision > 0 && <GananciaRow label={`Comisión ${Number(g.comisionPct)}%`} value={g.comision} />}
       </div>
 
       <div style={{ height: 1, background: colors.sage, opacity: 0.5, margin: '12px 0' }} />
@@ -535,101 +800,73 @@ function GananciaCard({ pedido, pacto }) {
   )
 }
 
-// ─── Cobrar con el móvil (Tap to Pay de Stripe) ────────────
-// Solo en la app Android, con el pedido recogido o en camino, y si su forma de pago se puede
-// cobrar así (datáfono / efectivo: configuracion_plataforma.cobro_movil_metodos). El importe lo
-// pone el servidor. El dinero va a Pidoo y el pedido pasa a «tarjeta»; la liquidación del lunes
-// se lo paga al restaurante. Ver src/lib/cobroMovil.js.
-function CobroMovil({ pedido, paso, onCobrado }) {
-  const soportado = cobroMovilSoportado()
-  const enPuerta = paso === 1 || paso === 2
-  const [cfg, setCfg] = useState(null)
-  const [fase, setFase] = useState(null) // null | 'preparando' | 'tarjeta' | 'confirmando'
-  const [cobrado, setCobrado] = useState(null) // { importeCent, pendienteRegistro }
-  const [error, setError] = useState(null)
+// ─── Estado del pago (lib/metodoPago.js → estadoPago) ──────
+// Check verde solo con prueba de Stripe. En curso y sin cobrar: aviso ámbar con el importe y la
+// forma de pago que eligió el cliente, que es lo que el socio necesita en la puerta.
+const TONOS_PAGO = {
+  ok:        { bg: colors.sageSoft,    fg: colors.sage2 },
+  aviso:     { bg: colors.warningSoft, fg: '#8B6126' },
+  pendiente: { bg: colors.warningSoft, fg: '#8B6126' },
+  error:     { bg: colors.dangerSoft,  fg: colors.danger },
+  neutro:    { bg: colors.cream2,      fg: colors.stone },
+}
 
-  useEffect(() => {
-    if (!soportado || !enPuerta) return
-    let cancel = false
-    configCobroMovil().then((c) => { if (!cancel) setCfg(c) }, () => {})
-    return () => { cancel = true }
-  }, [soportado, enPuerta])
-
-  const cobrable = !!(soportado && enPuerta && cfg?.habilitado && cfg.metodos.includes(pedido.metodo_pago))
-
-  // Se calienta el lector en cuanto se sabe que este pedido se cobra con el móvil: la primera
-  // conexión tarda unos segundos y mejor que no sea delante del cliente. Si falla, se
-  // reintenta al pulsar el botón, y ahí sí se enseña el motivo.
-  useEffect(() => {
-    if (!cobrable || !cfg?.locationId) return
-    prepararLector(cfg.locationId).catch(() => {})
-  }, [cobrable, cfg?.locationId])
-
-  if (cobrado) {
-    const cobradoTxt = (Number(cobrado.importeCent || 0) / 100).toFixed(2).replace('.', ',')
+function PagoBox({ pedido, cobros, cargado, total }) {
+  if (!cargado) {
     return (
       <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-        padding: '14px', borderRadius: 14,
-        background: colors.sageSoft, color: colors.sage2, textAlign: 'center',
+        marginTop: 10, padding: '8px 12px', borderRadius: 8,
+        background: colors.cream2, color: colors.stone, fontSize: 11, fontWeight: 700,
       }}>
-        <CheckCircle2 size={26} strokeWidth={2.4} />
-        <div style={{ fontSize: 15, fontWeight: 800 }}>Cobrado {cobradoTxt} € con tarjeta</div>
-        <div style={{ fontSize: 12, color: colors.stone, fontWeight: 600 }}>
-          {cobrado.pendienteRegistro
-            ? 'Se apuntará en cuanto haya conexión. No vuelvas a cobrarlo.'
-            : 'Ya puedes entregar el pedido.'}
-        </div>
+        Comprobando la forma de pago…
       </div>
     )
   }
-  if (!cobrable) return null
-
-  const ocupado = !!fase
-  const importe = Number(pedido.total || 0).toFixed(2).replace('.', ',')
-
-  async function cobrar() {
-    if (ocupado) return
-    setError(null)
-    try {
-      const r = await cobrarPedido(pedido.id, { onPaso: setFase })
-      setCobrado(r)
-      try { if (navigator.vibrate) navigator.vibrate([60, 40, 60]) } catch (_) {}
-      onCobrado?.()
-    } catch (e) {
-      setError(e?.message || 'No se pudo cobrar. Inténtalo otra vez.')
-      try { if (navigator.vibrate) navigator.vibrate(200) } catch (_) {}
-    } finally {
-      setFase(null)
-    }
-  }
-
-  const textoBoton = fase === 'preparando' ? 'Preparando el cobro…'
-    : fase === 'tarjeta' ? 'Acerca la tarjeta al móvil…'
-      : fase === 'confirmando' ? 'Comprobando el pago…'
-        : `Cobrar con tarjeta · ${importe} €`
-
+  const e = estadoPago(pedido, cobros)
+  const t = TONOS_PAGO[e.tono] || TONOS_PAGO.neutro
+  const pendiente = e.tono === 'pendiente'
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <button onClick={cobrar} disabled={ocupado} style={{
-        ...primaryBtn(ocupado),
-        background: colors.ink,
-        boxShadow: '0 8px 18px rgba(26,24,21,0.22), inset 0 1px 0 rgba(255,255,255,0.12)',
-      }}>
-        <CreditCard size={17} strokeWidth={2.4} />
-        {textoBoton}
-      </button>
-      {error ? (
-        <div style={{
-          padding: '9px 12px', borderRadius: 10,
-          background: colors.dangerSoft, color: colors.danger,
-          fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
-        }}>{error}</div>
-      ) : (
-        <div style={{ fontSize: 11.5, color: colors.stone, fontWeight: 600, textAlign: 'center' }}>
-          El cliente acerca su tarjeta o su móvil a la parte de atrás de tu teléfono.
+    <div style={{
+      marginTop: 10, padding: '9px 12px', borderRadius: 8,
+      background: t.bg, color: t.fg,
+      display: 'flex', alignItems: 'flex-start', gap: 8,
+    }}>
+      {e.check && <CheckCircle2 size={17} strokeWidth={2.6} style={{ flexShrink: 0, marginTop: 1 }} />}
+      {(e.tono === 'aviso' || e.tono === 'error') && <TriangleAlert size={16} strokeWidth={2.4} style={{ flexShrink: 0, marginTop: 1 }} />}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800 }}>
+          {pendiente ? `Pendiente de cobro · ${total.toFixed(2).replace('.', ',')} €` : e.texto}
         </div>
-      )}
+        {pendiente ? (
+          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2 }}>
+            El cliente eligió pagar con {METODO_ELEGIDO[pedido.metodo_pago] || etiquetaPago(pedido.metodo_pago).toLowerCase()}.
+          </div>
+        ) : e.detalle ? (
+          <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2, opacity: 0.9 }}>{e.detalle}</div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+const METODO_ELEGIDO = { efectivo: 'efectivo', datafono: 'datáfono (tarjeta)' }
+
+// Cobrado con el móvil, pero la entrega todavía no ha llegado al servidor.
+function CobradoTarjetaBox({ cobrado }) {
+  const cobradoTxt = (Number(cobrado?.importeCent || 0) / 100).toFixed(2).replace('.', ',')
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+      padding: '14px', borderRadius: 14,
+      background: colors.sageSoft, color: colors.sage2, textAlign: 'center',
+    }}>
+      <CheckCircle2 size={26} strokeWidth={2.4} />
+      <div style={{ fontSize: 15, fontWeight: 800 }}>Cobrado {cobradoTxt} € con tarjeta</div>
+      <div style={{ fontSize: 12, color: colors.stone, fontWeight: 600 }}>
+        {cobrado?.pendienteRegistro
+          ? 'Se apuntará en cuanto haya conexión. No vuelvas a cobrarlo: pulsa «Marcar entregado».'
+          : 'No vuelvas a cobrarlo: pulsa «Marcar entregado».'}
+      </div>
     </div>
   )
 }

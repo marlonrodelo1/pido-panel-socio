@@ -1,8 +1,15 @@
-import { useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { CheckCircle2, CircleX, CircleQuestionMark, CreditCard } from 'lucide-react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
-import { isNativeSync } from '../lib/capacitor'
+import { isNativeSync, getPlugin } from '../lib/capacitor'
 import { colors, ds, type } from '../lib/uiStyles'
+import {
+  cobroMovilSoportado, configCobroMovil, requisitosTapToPay, prepararLector,
+  abrirAjustesNfc, lectorPreparado,
+} from '../lib/cobroMovil'
+import { requestLocationPermission, openLocationSettings } from '../lib/riderGeo'
 
 // Campos fiscales obligatorios para poder emitir facturas a los restaurantes
 // (mismo criterio que el gate en Dashboard.jsx y RestauranteDetalle.jsx).
@@ -90,6 +97,10 @@ export default function Configuracion({ enApp = false }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* Mi cuenta: qué correo tiene la sesión abierta y cómo cambiar la contraseña. */}
         <MiCuentaCard />
+
+        {/* Cobro con tarjeta (Tap to Pay): solo en la app del móvil. Dice si este móvil puede
+            cobrar, qué falta y cómo se cobra. */}
+        {enApp && isNativeSync() && <CobroTarjetaCard />}
 
         {/* Mi suscripción Pidoo — SOLO en el panel web. Dentro de la app no puede haber
             ningún camino hacia un cobro fuera del sistema de Apple/Google: es rechazo
@@ -299,6 +310,250 @@ function MiCuentaCard() {
         </div>
       </div>
     </Card>
+  )
+}
+
+// ─── Cobro con tarjeta (Tap to Pay de Stripe) ─────────────────
+// El socio cobra en la puerta con la tarjeta del cliente en SU móvil (lib/cobroMovil.js).
+// Esta tarjeta le dice si su móvil puede, qué le falta (casi todo se arregla en Ajustes) y cómo
+// se cobra. Las comprobaciones del móvil las da el plugin nativo (tapToPayChecks); si la app no
+// las trae, salen como «sin comprobar» y no se bloquea nada.
+function CobroTarjetaCard() {
+  let plataforma = 'web'
+  try { plataforma = Capacitor.getPlatform() } catch (_) {}
+  if (plataforma === 'ios') {
+    return (
+      <Card>
+        <CabeceraCobro />
+        <EstadoCobro tono="neutro" titulo="Pendiente de Apple: por ahora cobra en efectivo">
+          En iPhone hace falta un permiso de Apple que todavía no tenemos. Cuando llegue, podrás
+          cobrar con tarjeta desde este móvil sin hacer nada más.
+        </EstadoCobro>
+      </Card>
+    )
+  }
+  if (plataforma !== 'android') return null
+  return <CobroTarjetaAndroid />
+}
+
+const VERSION_ANDROID = { 33: '13', 34: '14', 35: '15', 36: '16', 37: '17' }
+
+async function permisoUbicacion() {
+  try {
+    const Geo = (await getPlugin('Geolocation'))?.plugin
+    if (!Geo) return null
+    const p = await Geo.checkPermissions()
+    return p?.location || null // 'granted' | 'prompt' | 'prompt-with-rationale' | 'denied'
+  } catch (_) {
+    return null
+  }
+}
+
+function CobroTarjetaAndroid() {
+  const soportado = cobroMovilSoportado()
+  const [cfg, setCfg] = useState(null)         // null = comprobando
+  const [req, setReq] = useState(undefined)    // undefined = comprobando · null = sin comprobar
+  const [ubic, setUbic] = useState(undefined)
+  const [lector, setLector] = useState({ estado: lectorPreparado() ? 'ok' : 'sin_probar', msg: null })
+
+  const comprobar = useCallback(async () => {
+    const [c, r, u] = await Promise.all([
+      configCobroMovil().catch(() => ({ habilitado: false, metodos: [], locationId: null })),
+      requisitosTapToPay().catch(() => null),
+      permisoUbicacion(),
+    ])
+    setCfg(c)
+    setReq(r)
+    setUbic(u)
+    if (lectorPreparado()) setLector({ estado: 'ok', msg: null })
+  }, [])
+
+  useEffect(() => { if (soportado) comprobar() }, [soportado, comprobar])
+
+  // Al volver de Ajustes (NFC, ubicación, opciones de desarrollador) se vuelve a mirar.
+  useEffect(() => {
+    if (!soportado) return
+    let quitado = false
+    let handle = null
+    ;(async () => {
+      const App = (await getPlugin('App'))?.plugin
+      if (!App || quitado) return
+      handle = await App.addListener('appStateChange', (s) => { if (s?.isActive) comprobar() })
+    })()
+    return () => { quitado = true; try { handle?.remove?.() } catch (_) {} }
+  }, [soportado, comprobar])
+
+  async function prepararAhora() {
+    if (!cfg?.locationId) {
+      setLector({ estado: 'error', msg: 'El cobro con tarjeta no está activado para tu cuenta.' })
+      return
+    }
+    setLector({ estado: 'preparando', msg: null })
+    try {
+      await prepararLector(cfg.locationId)
+      setLector({ estado: 'ok', msg: null })
+    } catch (e) {
+      setLector({ estado: 'error', msg: e?.message || 'No se pudo preparar el lector. Inténtalo otra vez.' })
+    }
+  }
+
+  async function darPermisoUbicacion() {
+    if (ubic === 'denied') { await openLocationSettings(); return }
+    await requestLocationPermission()
+    setUbic(await permisoUbicacion())
+  }
+
+  if (!soportado) {
+    return (
+      <Card>
+        <CabeceraCobro />
+        <EstadoCobro tono="neutro" titulo="Actualiza la app para cobrar con tarjeta">
+          Esta versión de Pidoo Socio no trae el cobro con tarjeta. Actualízala desde Google Play.
+          Mientras tanto, cobra en efectivo.
+        </EstadoCobro>
+      </Card>
+    )
+  }
+
+  const comprobando = cfg === null || req === undefined || ubic === undefined
+  const sdk = Number(req?.androidSdk) || 0
+  const versionTxt = sdk ? (VERSION_ANDROID[sdk] ? `Android ${VERSION_ANDROID[sdk]}` : `API ${sdk}`) : null
+  const ubicOk = ubic === 'granted'
+  const todoOk = !!(cfg?.habilitado && req?.listo && ubicOk)
+
+  let estado
+  if (comprobando) {
+    estado = { tono: 'neutro', titulo: 'Comprobando tu móvil…', texto: null }
+  } else if (req && !req.hardwareOk) {
+    estado = { tono: 'mal', titulo: 'Este móvil no puede cobrar con tarjeta', texto: 'Hace falta un móvil con NFC y Android 13 o superior. Cobra en efectivo.' }
+  } else if (!cfg?.habilitado) {
+    estado = { tono: 'neutro', titulo: 'Todavía no está activado para tu cuenta', texto: 'Cuando Pidoo lo active, podrás cobrar con tarjeta desde este móvil. Mientras tanto, cobra en efectivo.' }
+  } else if (todoOk && lector.estado === 'ok') {
+    estado = { tono: 'ok', titulo: 'Listo para cobrar con tarjeta', texto: null }
+  } else if (todoOk) {
+    estado = { tono: 'ok', titulo: 'Tu móvil puede cobrar con tarjeta', texto: 'Pulsa «Preparar ahora» para dejar el lector listo antes del primer reparto.' }
+  } else {
+    estado = { tono: 'aviso', titulo: 'Falta algo por revisar', texto: 'Mira la lista de abajo: casi todo se arregla en los Ajustes del móvil.' }
+  }
+
+  const sinDato = req === null // la app no trae las comprobaciones del móvil
+  const items = [
+    { ok: cfg?.habilitado, titulo: 'Activado por Pidoo para tu cuenta' },
+    { ok: sinDato ? null : req?.androidOk, titulo: 'Android 13 o superior', detalle: versionTxt ? `Tu móvil: ${versionTxt}` : null },
+    { ok: sinDato ? null : req?.tieneNfc, titulo: 'El móvil tiene NFC' },
+    {
+      ok: sinDato ? null : req?.nfcActivado, titulo: 'NFC encendido',
+      accion: !sinDato && req?.tieneNfc && !req?.nfcActivado ? { texto: 'Abrir ajustes de NFC', fn: abrirAjustesNfc } : null,
+    },
+    {
+      ok: sinDato ? null : !req?.opcionesDesarrollador,
+      titulo: 'Opciones de desarrollador apagadas',
+      detalle: !sinDato && req?.opcionesDesarrollador
+        ? `Apágalas en Ajustes${req?.depuracionUsb ? ' (también la depuración USB)' : ''}: con ellas encendidas no deja cobrar.`
+        : null,
+    },
+    {
+      ok: ubic == null ? null : ubicOk, titulo: 'Permiso de ubicación',
+      detalle: ubicOk || ubic == null ? null : 'Stripe lo pide para cobrar con tarjeta.',
+      accion: ubic != null && !ubicOk ? { texto: ubic === 'denied' ? 'Abrir ajustes' : 'Dar permiso', fn: darPermisoUbicacion } : null,
+    },
+    {
+      ok: lector.estado === 'ok' ? true : lector.estado === 'error' ? false : null,
+      titulo: 'Lector preparado',
+      detalle: lector.estado === 'preparando' ? 'Preparando… la primera vez puede tardar un minuto.' : lector.msg,
+      accion: lector.estado !== 'ok' && cfg?.habilitado && (!req || req.hardwareOk)
+        ? { texto: lector.estado === 'preparando' ? 'Preparando…' : 'Preparar ahora', fn: prepararAhora, desactivado: lector.estado === 'preparando' }
+        : null,
+    },
+  ]
+
+  return (
+    <Card>
+      <CabeceraCobro />
+      <EstadoCobro tono={estado.tono} titulo={estado.titulo}>{estado.texto}</EstadoCobro>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 12 }}>
+        {items.map((it) => <ItemCobro key={it.titulo} {...it} />)}
+      </div>
+
+      {req?.fabricante && (
+        <div style={{ fontSize: type.xxs, color: colors.textFaint, marginTop: 8 }}>
+          Móvil: {[req.fabricante, req.modelo].filter(Boolean).join(' ')}{versionTxt ? ` · ${versionTxt}` : ''}
+        </div>
+      )}
+
+      <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <button onClick={abrirAjustesNfc} style={{ ...ds.secondaryBtn, fontSize: type.xs }}>Abrir ajustes de NFC</button>
+        <button onClick={comprobar} style={{ ...ds.secondaryBtn, fontSize: type.xs }}>Volver a comprobar</button>
+      </div>
+
+      <div style={{
+        marginTop: 16, padding: '12px 14px', borderRadius: 10,
+        background: colors.surface2, border: `1px solid ${colors.border}`,
+      }}>
+        <div style={{ fontSize: type.xs, fontWeight: 800, color: colors.text, marginBottom: 6 }}>Cómo se cobra</div>
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: type.xs, color: colors.textDim, lineHeight: 1.55 }}>
+          <li>En el pedido, pulsa «Cobrar con tarjeta». El cliente acerca su tarjeta o su móvil a la <b>parte de atrás</b> de tu teléfono y la deja quieta hasta que suene.</li>
+          <li>Por encima de <b>50 €</b> el banco puede pedir el <b>PIN</b>: el cliente lo teclea en tu pantalla.</li>
+          <li>Antes de cobrar, quita las <b>burbujas flotantes</b> (chats, grabadores de pantalla, filtros de luz): con ellas el PIN no funciona.</li>
+          <li>Al confirmarse el cobro, el pedido queda entregado solo. Si la tarjeta falla, cobra en efectivo. Nunca cobres dos veces el mismo pedido.</li>
+        </ul>
+      </div>
+    </Card>
+  )
+}
+
+function CabeceraCobro() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: 10,
+        background: colors.terracottaSoft, color: colors.terracotta,
+        display: 'grid', placeItems: 'center', flexShrink: 0,
+      }}>
+        <CreditCard size={18} strokeWidth={2.2} />
+      </div>
+      <h2 style={{ ...ds.h2, margin: 0 }}>Cobro con tarjeta</h2>
+    </div>
+  )
+}
+
+const TONO_COBRO = {
+  ok:    { bg: colors.sageSoft,    fg: colors.sage2 },
+  aviso: { bg: colors.warningSoft, fg: '#8B6126' },
+  mal:   { bg: colors.dangerSoft,  fg: colors.danger },
+  neutro: { bg: colors.surface2,   fg: colors.textDim },
+}
+
+function EstadoCobro({ tono, titulo, children }) {
+  const t = TONO_COBRO[tono] || TONO_COBRO.neutro
+  return (
+    <div style={{ padding: '10px 12px', borderRadius: 10, background: t.bg, color: t.fg }}>
+      <div style={{ fontSize: type.sm, fontWeight: 800 }}>{titulo}</div>
+      {children && <div style={{ fontSize: type.xs, fontWeight: 600, marginTop: 3, lineHeight: 1.45 }}>{children}</div>}
+    </div>
+  )
+}
+
+// Una línea de la lista de comprobación: ok = true (bien) · false (falta) · null (sin comprobar).
+function ItemCobro({ ok, titulo, detalle, accion }) {
+  const Icono = ok === true ? CheckCircle2 : ok === false ? CircleX : CircleQuestionMark
+  const color = ok === true ? colors.sage2 : ok === false ? colors.danger : colors.textFaint
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 0', borderTop: `1px solid ${colors.border}` }}>
+      <Icono size={18} strokeWidth={2.4} style={{ color, flexShrink: 0, marginTop: 1 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text }}>{titulo}</div>
+        {detalle && <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2, lineHeight: 1.4 }}>{detalle}</div>}
+      </div>
+      {accion && (
+        <button
+          onClick={accion.fn}
+          disabled={!!accion.desactivado}
+          style={{ ...ds.secondaryBtn, fontSize: type.xs, padding: '6px 10px', whiteSpace: 'nowrap', opacity: accion.desactivado ? 0.6 : 1 }}
+        >{accion.texto}</button>
+      )}
+    </div>
   )
 }
 

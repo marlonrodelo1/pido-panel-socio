@@ -8,6 +8,7 @@ import { Bike, MapPin, AlertCircle, X, Store, Phone, Smartphone, ChevronRight } 
 import { useRider } from '../../context/RiderContext'
 import { supabase } from '../../lib/supabase'
 import { colors } from '../../lib/uiStyles'
+import { useTelefonicoCobraComision } from '../../lib/ganancia'
 
 // Switch pequeño estilo pill. Cambia al instante (el guardado corre detrás).
 function Switch({ on, onToggle, ariaLabel }) {
@@ -46,13 +47,17 @@ const FUENTES = [
   },
   {
     campo: 'acepta_telefonicos', icono: Phone, titulo: 'Pedidos telefónicos',
-    desc: 'Envíos que crea el restaurante · solo envío, sin comisión.',
+    // 28-sep-2026: con la clave del cambio (comision_telefonico_pct_desde) el telefónico
+    // se cobra lo pactado, como la app. Sin ella, el texto de siempre (descSinComision).
+    desc: 'Pedidos que el restaurante toma por teléfono · cobras lo pactado, como en la app.',
+    descSinComision: 'Envíos que crea el restaurante · solo envío, sin comisión.',
     off: 'Los restaurantes no podrán mandarte envíos telefónicos.',
   },
 ]
 
 export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
   const { socio, isOnline, needsLocation, actionError, retryLocation, clearActionError, asignacionesActivas } = useRider() || {}
+  const telConComision = useTelefonicoCobraComision()
   const [restaurantes, setRestaurantes] = useState([])
   const [retrying, setRetrying] = useState(false)
   // Fuentes: estado local optimista, sembrado desde la fila socios (default true).
@@ -254,7 +259,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
                     {f.titulo}
                   </div>
                   <div style={{ fontSize: 11, color: on ? colors.stone : '#B0763B', marginTop: 1, lineHeight: 1.35 }}>
-                    {on ? f.desc : f.off}
+                    {on ? ((f.descSinComision && !telConComision) ? f.descSinComision : f.desc) : f.off}
                   </div>
                 </div>
                 <Switch on={on} onToggle={() => toggleFuente(f.campo)} ariaLabel={f.titulo} />

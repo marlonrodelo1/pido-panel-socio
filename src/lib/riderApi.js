@@ -238,9 +238,12 @@ export async function riderOnline({ latitud, longitud, accuracy } = {}) {
   return callEdgeAuthed('rider-online', { latitud, longitud, accuracy, device_id })
 }
 
-export async function riderOffline() {
+// v305: `motivo` opcional ('boton', 'arranque_tras_cierre', 'sin_consentimiento'...) para que
+// socio_presencia_log diga POR QUÉ quedó Fuera de línea. rider-offline v13 solo acepta una
+// lista cerrada; cualquier otro valor (o ninguno) se apunta como 'offline', igual que antes.
+export async function riderOffline(motivo = null) {
   const device_id = await getDeviceId()
-  return callEdgeAuthed('rider-offline', { device_id })
+  return callEdgeAuthed('rider-offline', motivo ? { device_id, motivo } : { device_id })
 }
 
 // ────────────────────────────────────────────────────────────

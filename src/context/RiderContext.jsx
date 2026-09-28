@@ -21,13 +21,16 @@ import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat, riderPresenceToken } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
-import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs, openAutostartSettings } from '../lib/offlineBeacon'
+import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs, openAutostartSettings, consumeClosedFlag, marcarPedidoEnCurso } from '../lib/offlineBeacon'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
 import { installPedidoSoundUnlock } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
 
 const RiderCtx = createContext(null)
 export const useRider = () => useContext(RiderCtx)
+
+// v305: aviso en pantalla cuando no se pudo completar el Fuera de línea de un cierre del todo.
+const MSG_CIERRE_SIN_RED = 'No hemos podido ponerte Fuera de línea porque no hay conexión. Lo volveremos a intentar cuando vuelvas a la app.'
 
 export function RiderProvider({ children }) {
   const { socio, user, refreshSocio } = useSocio() || {}
@@ -40,6 +43,7 @@ export function RiderProvider({ children }) {
   const lastFetchRef = useRef(0)
   const lastPosRef = useRef(null)   // última posición GPS conocida (para el latido)
   const togglingRef = useRef(false) // mutex: hay un setOnline en vuelo (evita toggles cruzados)
+  const toggleGenRef = useRef(0)    // v305: sube en cada pulsación del botón (ver apagarTrasCierre)
   const dismissedIdsRef = useRef(new Set()) // asignaciones ya descartadas localmente (no re-mostrar)
   const [showDisclosure, setShowDisclosure] = useState(false)
   const disclosureResolveRef = useRef(null)
@@ -58,74 +62,225 @@ export function RiderProvider({ children }) {
     if (err?.code === 'NOT_AUTHORIZED') setNeedsLocation(true)
   }, [])
 
-  // Al ARRANCAR la app empezamos SIEMPRE offline: el rider debe pulsar "En servicio"
-  // para compartir su ubicación (eso dispara el aviso de geolocalización + el permiso).
-  // Si en el DB quedó "en servicio" de una sesión anterior, lo sincronizamos a offline
-  // (la app acaba de arrancar sin tracking → no está realmente disponible para pedidos).
-  // Tras el primer arranque, solo reflejamos cambios EXTERNOS hacia offline (p. ej. el
-  // cron auto-offline); nunca auto-encendemos online desde el DB.
+  // ─── ¿Qué pasa al ARRANCAR la app? (corregido el 28-sep-2026) ───
+  // El comentario anterior decía "al arrancar empezamos SIEMPRE offline; nunca auto-encendemos
+  // online desde el DB", y el código hacía lo contrario (reanudar el turno). Lo que hace de
+  // verdad, según la regla de Marlon ("el socio SOLO queda Fuera de línea si pulsa su botón o
+  // CIERRA LA APP DEL TODO"):
+  //  1) Si el socio CERRÓ LA APP DEL TODO estando En línea (marca del nativo): NO se reanuda.
+  //     Para volver tiene que pulsar En línea. Normalmente el nativo ya le puso Fuera de línea;
+  //     si ese apagado no llegó (sin red al cerrar), se completa aquí (motivo
+  //     'arranque_tras_cierre').
+  //  2) Si no hay marca (el SISTEMA mató la app: ahorro de batería, memoria, o iOS la relanza en
+  //     segundo plano con el ping silencioso), se mantiene lo que diga la BD: seguía En línea y
+  //     dio el consentimiento de ubicación → se REANUDA el turno (tracking + latido).
+  //  3) Sin el consentimiento de ubicación guardado (reinstalación, móvil nuevo) → Fuera de
+  //     línea (motivo 'sin_consentimiento'): sin ubicación no se le pueden asignar pedidos.
+  // La marca se LEE sin borrarla (soloLeer) y solo se borra cuando el Fuera de línea está
+  // CONFIRMADO: la BD ya dice en_servicio=false o rider-offline respondió bien (revisión del
+  // 28-sep). Antes se borraba nada más abrir: si el apagado fallaba (sin red, o el socio volvía a
+  // cerrar la app durante los reintentos), la BD seguía En línea sin marca y el SIGUIENTE
+  // arranque caía en el caso 2 y reanudaba el turno solo, justo lo que la regla prohíbe.
+  // En segundo plano (App.getState().isActive=false, el ping de iOS) tampoco se borra: "abrir la
+  // app" es cosa del socio; se borra cuando la abra (ver el efecto de volver del segundo plano).
+  // Tras el arranque solo se reflejan cambios EXTERNOS hacia offline (superadmin, respaldo del
+  // servidor); nunca se enciende online desde la BD.
   const didInitRef = useRef(false)
+  const socioRef = useRef(socio)
+  socioRef.current = socio
+  const marcaCierreRef = useRef(false)    // hay una marca de cierre del todo sin borrar
+  const apagandoCierreRef = useRef(false) // apagarTrasCierre en marcha (no lanzar dos)
+  const appActivaRef = useRef(true)       // la app está delante (no lanzada en segundo plano)
+
+  // El Fuera de línea tras el cierre está confirmado → fuera la marca (y el aviso de la bandeja).
+  // Solo con la app delante: en segundo plano se deja para cuando el socio la abra.
+  const cerrarMarcaCierre = (activa) => {
+    if (!activa) return
+    marcaCierreRef.current = false
+    consumeClosedFlag().catch(() => {})
+  }
+
+  // Completa un apagado que el nativo no pudo mandar al cerrar la app (sin red). Reintenta a los
+  // 5 s, 15 s, 30 s y 1 min; no insiste si otro dispositivo tiene la cuenta (409). Usa el MISMO
+  // candado que el botón (togglingRef) mientras la petición está en vuelo: si el socio pulsa En
+  // línea justo al abrir, su "En línea" no puede quedar pisado por este apagado que llega tarde.
+  // Y si ya ha pulsado el botón (toggleGenRef cambió), manda lo suyo.
+  // Si no lo consigue, la marca SE QUEDA: el siguiente arranque (o volver a la app) lo reintenta
+  // y nunca reanuda el turno solo.
+  // En Android corre A LA VEZ que el reintento del servicio nativo (si sigue vivo): los dos mandan
+  // el mismo apagado, que es idempotente, y el del nativo sobrevive a que el socio vuelva a cerrar
+  // la app. Si lo consigue el nativo, el efecto de "cambios externos" limpia la marca.
+  // La llave de presencia no se revoca aquí: el nativo ya está desarmado y el próximo
+  // "En línea" la rota.
+  const apagarTrasCierre = async ({ activa = true } = {}) => {
+    if (apagandoCierreRef.current) return
+    apagandoCierreRef.current = true
+    const gen = toggleGenRef.current
+    const esperas = [5_000, 15_000, 30_000, 60_000]
+    try {
+      for (let intento = 0; ; intento++) {
+        if (toggleGenRef.current !== gen || togglingRef.current) return
+        togglingRef.current = true
+        let res = null
+        try {
+          res = await riderOffline('arranque_tras_cierre').catch(() => null)
+        } finally {
+          togglingRef.current = false
+        }
+        if (res?.ok) {
+          cerrarMarcaCierre(activa)
+          setActionError(null)
+          refreshSocio?.()
+          return
+        }
+        if (res?.sessionDead) {
+          // La marca se queda: al volver a iniciar sesión se reintenta (sin reanudar el turno).
+          setActionError('Tu sesión ha caducado. Vuelve a iniciar sesión.')
+          try { await supabase.auth.signOut() } catch (_) {}
+          return
+        }
+        // Otro dispositivo tiene la cuenta: este no puede (ni debe) tocar su turno. La marca se
+        // queda para que ESTE móvil no reanude solo; se borra si aquí se pulsa En línea.
+        if (res?.status === 409) return
+        if (intento >= esperas.length) break
+        await new Promise((r) => setTimeout(r, esperas[intento]))
+        if (socioRef.current && !socioRef.current.en_servicio) { // ya lo apagó otra vía
+          cerrarMarcaCierre(activa)
+          return
+        }
+      }
+      if (activa) setActionError(MSG_CIERRE_SIN_RED)
+    } finally {
+      apagandoCierreRef.current = false
+    }
+  }
+
+  const arrancarTurno = async () => {
+    let consented = false
+    try { consented = localStorage.getItem('pidoo_bg_loc_consent') === '1' } catch (_) {}
+    const nativo = await isNativePlatform()
+    // ¿La ha abierto el socio o la ha lanzado el sistema en segundo plano (ping de iOS)?
+    let activa = true
+    if (nativo) {
+      try {
+        const App = (await getPlugin('App'))?.plugin
+        if (App?.getState) {
+          const st = await App.getState()
+          activa = st?.isActive !== false
+        }
+      } catch (_) { /* sin plugin App: se trata como apertura normal */ }
+    }
+    appActivaRef.current = activa
+    // Solo LEER: se borra cuando el Fuera de línea esté confirmado (ver cabecera).
+    const cierre = nativo ? await consumeClosedFlag({ soloLeer: true }) : null
+    // Valor ACTUAL (durante los await pudo llegar un cambio externo).
+    const s = socioRef.current
+    if (!s) return
+
+    if (cierre?.cerrada) {
+      // (1) Cerró la app del todo: NO reanudar.
+      marcaCierreRef.current = true
+      setIsOnline(false)
+      disarmOfflineBeacon()
+      if (s.en_servicio) {
+        // El apagado del cierre no llegó. Si el servicio de Android sigue reintentándolo (modo
+        // reintento, ver PresenceBeatService) NO se para: si el socio vuelve a cerrar la app
+        // antes de que esto lo consiga, ese reintento sigue solo y apaga en cuanto haya red.
+        // (Ya está desarmado desde el cierre; se corta al pulsar En línea, ver setOnline.)
+        apagarTrasCierre({ activa })
+      } else {
+        disarmPresenceBeat()
+        cerrarMarcaCierre(activa) // la BD ya dice Fuera de línea: confirmado
+      }
+      return
+    }
+
+    if (s.en_servicio && consented) {
+      // (2) REANUDAR turno: seguía En servicio y ya dio el consentimiento de ubicación
+      // → mantener online y RE-ARRANCAR el tracking (que de verdad comparta, no solo
+      // la UI). Así reabrir la app NO te apaga. El latido (efecto de abajo) revive solo
+      // al pasar isOnline=true.
+      //
+      // RE-RECLAMO al abrir (last-wins single-device): `en_servicio` es una columna
+      // COMPARTIDA entre dispositivos. Si otro dispositivo la dejó en true, ESTE —el que
+      // ACABA de abrir/loguear— debe RECLAMAR active_device_id (rider-online) ANTES de
+      // empezar a latir. Si no, el latido saldría con el id de ESTE dispositivo mientras
+      // active_device_id sigue siendo el del OTRO → 409 sesion_superada → ESTE (el nuevo)
+      // se desloguea y gana el viejo, justo lo contrario de "el último gana". Reclamando
+      // aquí, el nuevo pasa a ser el activo y el anterior queda superado limpiamente (su
+      // realtime ve el cambio de active_device_id → handleSuperseded). claimPendingRef
+      // silencia el latido inmediato mientras el reclamo está en vuelo (mismo guard de la
+      // regresión del 10-jul). Corre una sola vez por montaje (envuelto por didInitRef).
+      claimPendingRef.current = true
+      setIsOnline(true)
+      armOfflineBeacon() // Parte B: re-armar el beacon de cierre al reanudar turno
+      armPresenceBeat()  // v300: re-armar el latido nativo (rota la llave de presencia)
+      riderOnline({})
+        .then((res) => {
+          // Éxito → este dispositivo ya es active_device_id. Un fallo de SESIÓN muerta lo
+          // detecta y gestiona el latido (fuerza re-login); un fallo de RED se ignora a
+          // propósito: NO hard-logout, NO revertimos en_servicio. El latido reintentará y,
+          // sin red, tampoco recibiría un 409 limpio que dispare un logout espurio.
+          if (!res?.ok) console.warn('[RiderContext] re-reclamo al abrir no OK:', res?.error)
+        })
+        .catch((e) => console.warn('[RiderContext] re-reclamo al abrir excepción:', e?.message))
+        .finally(() => { claimPendingRef.current = false })
+      requestLocationPermission().then((granted) => {
+        setNeedsLocation(!granted)
+        if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError })
+      })
+    } else {
+      // (3) Primer login / sin consentimiento previo / estaba offline → empezar offline
+      // (aquí, al pulsar "En servicio", sale el aviso + se piden permisos).
+      setIsOnline(false)
+      if (s.en_servicio) { riderOffline('sin_consentimiento').catch(() => {}) }
+    }
+  }
+
   useEffect(() => {
     if (!socio) return
     if (!didInitRef.current) {
       didInitRef.current = true
-      let consented = false
-      try { consented = localStorage.getItem('pidoo_bg_loc_consent') === '1' } catch (_) {}
-      if (socio.en_servicio && consented) {
-        // REANUDAR turno: seguía En servicio y ya dio el consentimiento de ubicación
-        // → mantener online y RE-ARRANCAR el tracking (que de verdad comparta, no solo
-        // la UI). Así reabrir la app NO te apaga. El latido (efecto de abajo) revive solo
-        // al pasar isOnline=true.
-        //
-        // RE-RECLAMO al abrir (last-wins single-device): `en_servicio` es una columna
-        // COMPARTIDA entre dispositivos. Si otro dispositivo la dejó en true, ESTE —el que
-        // ACABA de abrir/loguear— debe RECLAMAR active_device_id (rider-online) ANTES de
-        // empezar a latir. Si no, el latido saldría con el id de ESTE dispositivo mientras
-        // active_device_id sigue siendo el del OTRO → 409 sesion_superada → ESTE (el nuevo)
-        // se desloguea y gana el viejo, justo lo contrario de "el último gana". Reclamando
-        // aquí, el nuevo pasa a ser el activo y el anterior queda superado limpiamente (su
-        // realtime ve el cambio de active_device_id → handleSuperseded). claimPendingRef
-        // silencia el latido inmediato mientras el reclamo está en vuelo (mismo guard de la
-        // regresión del 10-jul). Corre una sola vez por montaje (envuelto por didInitRef).
-        claimPendingRef.current = true
-        setIsOnline(true)
-        armOfflineBeacon() // Parte B: re-armar el beacon de cierre al reanudar turno
-        armPresenceBeat()  // v300: re-armar el latido nativo (rota la llave de presencia)
-        riderOnline({})
-          .then((res) => {
-            // Éxito → este dispositivo ya es active_device_id. Un fallo de SESIÓN muerta lo
-            // detecta y gestiona el latido (fuerza re-login); un fallo de RED se ignora a
-            // propósito: NO hard-logout, NO revertimos en_servicio. El latido reintentará y,
-            // sin red, tampoco recibiría un 409 limpio que dispare un logout espurio.
-            if (!res?.ok) console.warn('[RiderContext] re-reclamo al abrir no OK:', res?.error)
-          })
-          .catch((e) => console.warn('[RiderContext] re-reclamo al abrir excepción:', e?.message))
-          .finally(() => { claimPendingRef.current = false })
-        requestLocationPermission().then((granted) => {
-          setNeedsLocation(!granted)
-          if (granted) startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError })
-        })
-      } else {
-        // Primer login / sin consentimiento previo / estaba offline → empezar offline
-        // (aquí, al pulsar "En servicio", sale el aviso + se piden permisos).
-        setIsOnline(false)
-        if (socio.en_servicio) { riderOffline().catch(() => {}) }
-      }
+      arrancarTurno()
       return
     }
-    // Cambios externos posteriores (p. ej. cron auto-offline) → reflejar offline.
+    // Cambios externos posteriores (superadmin, respaldo del servidor) → reflejar offline.
     // Importante: además de la UI, hay que PARAR el tracking nativo; si no, el
     // foreground service y los POST de ubicación siguen corriendo con el rider
-    // ya offline en DB (batería + privacidad).
+    // ya offline en DB (batería + privacidad). v305: salvo que lleve un pedido encima,
+    // que el cliente sigue viendo en el mapa (ver "GPS del reparto" más abajo).
     if (!socio.en_servicio) {
       setIsOnline(false)
       setNeedsLocation(false)
-      stopTracking()
+      pararGpsSalvoReparto()
       disarmOfflineBeacon()
       disarmPresenceBeat() // v300: apagar también el latido nativo
       lastPosRef.current = null
+      // v305: el Fuera de línea pendiente de un cierre del todo ha llegado por otra vía (el
+      // reintento del servicio de Android, o el superadmin): confirmado. Fuera la marca si la app
+      // está delante, y el aviso de "no hemos podido" deja de ser verdad.
+      if (marcaCierreRef.current) {
+        cerrarMarcaCierre(appActivaRef.current)
+        setActionError((e) => (e === MSG_CIERRE_SIN_RED ? null : e))
+      }
     }
   }, [socio?.id, socio?.en_servicio, handleWatcherError])
+
+  // ─── GPS del reparto con el socio Fuera de línea (v305) ───
+  // Fuera de línea = no recibe pedidos NUEVOS. Pero si tiene uno aceptado sin entregar, el
+  // cliente sigue mirando el mapa: la posición tiene que seguir llegando
+  // (rider-update-location no mira en_servicio, a propósito). Caso típico: cierra la app a
+  // mitad de un reparto → el nativo le pone Fuera de línea → al reabrir no se reanuda el turno,
+  // pero el GPS del reparto sí arranca. Cuando entrega (ya no hay pedido en curso), se para.
+  const pedidoEnCursoRef = useRef(false)
+  const repartoTrackingRef = useRef(false) // el GPS actual lo mantiene el reparto, no el turno
+  const pararGpsSalvoReparto = () => {
+    if (pedidoEnCursoRef.current) {
+      repartoTrackingRef.current = true // sigue compartiendo; lo parará el efecto al entregar
+      return
+    }
+    stopTracking()
+  }
 
   // Disclosure obligatoria de Google Play (ubicación en segundo plano): se muestra
   // ANTES de pedir el permiso, una sola vez (consentimiento guardado en localStorage).
@@ -158,14 +313,25 @@ export function RiderProvider({ children }) {
     // offline concurrentes dejen la UI, la DB y el watcher desincronizados.
     if (togglingRef.current) return { ok: false, busy: true }
     togglingRef.current = true
+    toggleGenRef.current += 1
     setActionError(null)
     if (next) {
       // === IR ONLINE (OPTIMISTA) ===
+      // v305: si queda el apagado pendiente de un cierre del todo, se corta ANTES el reintento
+      // del servicio de Android (sigue vivo a propósito, ver arrancarTurno): si no, un apagado
+      // suyo que llegara tarde podría caer DESPUÉS de este En línea y dejarlo desconectado.
+      if (marcaCierreRef.current) await disarmPresenceBeat()
       // El consentimiento y el permiso se piden ANTES de marcar la UI como online,
       // para no mostrar "En línea" mientras el modal de disclosure sigue abierto.
       // Son instantáneos si ya se concedieron.
       const consent = await ensureBgConsent()
-      if (!consent) { setIsOnline(false); togglingRef.current = false; return { ok: false, declined: true } }
+      if (!consent) {
+        setIsOnline(false)
+        togglingRef.current = false
+        // v305: esta pulsación paró un apagado pendiente tras cerrar la app: retomarlo.
+        if (marcaCierreRef.current && socioRef.current?.en_servicio) apagarTrasCierre()
+        return { ok: false, declined: true }
+      }
       const granted = await requestLocationPermission()
       setNeedsLocation(!granted)
       // UI INSTANTÁNEA: pintamos "En línea" YA. GPS y edge corren en segundo plano.
@@ -173,6 +339,7 @@ export function RiderProvider({ children }) {
       claimPendingRef.current = true
       setIsOnline(true)
       ;(async () => {
+        let volverAApagar = false
         try {
           // 1) RECLAMAR PRIMERO, sin esperar al GPS: la edge acepta sin coordenadas y
           //    estampa last_location_at (cuenta como señal fresca para el dispatcher).
@@ -188,6 +355,10 @@ export function RiderProvider({ children }) {
               try { await supabase.auth.signOut() } catch (_) {}
             } else {
               setActionError('No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.')
+              // v305: si quedaba pendiente el apagado de un cierre del todo (sin red), la pantalla
+              // vuelve a decir Fuera de línea: la BD tiene que decir lo mismo. Se retoma al soltar
+              // el candado (este intento de En línea paró el anterior al cambiar toggleGenRef).
+              volverAApagar = marcaCierreRef.current && !!socioRef.current?.en_servicio
             }
             return
           }
@@ -200,6 +371,11 @@ export function RiderProvider({ children }) {
           // Parte B: armar el beacon de cierre. v300: armar el latido nativo de presencia.
           armOfflineBeacon()
           armPresenceBeat()
+          // v305: volver a pulsar En línea anula una marca de cierre que no se llegara a leer
+          // (el nativo también la borra al armar; esto cubre el caso de que armar falle) y
+          // retira el aviso de cierre de la bandeja.
+          marcaCierreRef.current = false
+          consumeClosedFlag().catch(() => {})
           // v300: chequeo PROACTIVO de requisitos de fondo. Antes esperábamos al fallo
           // asíncrono del watcher para enterarnos; ahora, al ponerse online:
           //  - sin "Permitir siempre" → banner de ubicación al momento (las
@@ -232,6 +408,7 @@ export function RiderProvider({ children }) {
           // El mutex se mantiene durante todo el trabajo de fondo (evita que un tap de
           // offline entre a medias) y se libera aquí al terminar.
           togglingRef.current = false
+          if (volverAApagar) apagarTrasCierre()
         }
       })()
       return { ok: true, optimistic: true }
@@ -247,7 +424,7 @@ export function RiderProvider({ children }) {
       setIsOnline(false)
       ;(async () => {
         try {
-          const res = await riderOffline()
+          const res = await riderOffline('boton') // v305: motivo en socio_presencia_log
           if (!res.ok) {
             if (res.sessionDead) {
               stopTracking()
@@ -263,10 +440,15 @@ export function RiderProvider({ children }) {
             }
             return
           }
-          stopTracking()
+          pararGpsSalvoReparto() // v305: con un pedido encima el cliente sigue viendo el mapa
           disarmOfflineBeacon() // Parte B: desconexión manual -> desarmar beacon
           disarmPresenceBeat()  // v300: parar el latido nativo
-          riderPresenceToken('revocar').catch(() => {}) // higiene: la llave deja de valer
+          // Higiene: la llave deja de valer. v305: con await, DENTRO del candado. Antes iba
+          // suelta y, si el socio pulsaba En línea enseguida, este "revocar" podía llegar
+          // DESPUÉS del "emitir" del nuevo En línea y borrar la llave recién creada: el latido
+          // nativo y el apagado al cerrar la app se quedarían sin llave hasta el siguiente
+          // En línea. (Carrera posible por orden de llegada; no se ha visto en producción.)
+          await riderPresenceToken('revocar').catch(() => {})
           lastPosRef.current = null
           setNeedsLocation(false)
           refreshSocio?.()
@@ -288,6 +470,14 @@ export function RiderProvider({ children }) {
     setNeedsLocation(!granted)
     if (granted) {
       if (isOnline) { startTracking({ onUpdate: (pos) => { lastPosRef.current = pos }, onError: handleWatcherError }); captureAndPush() }
+      // v305: con el permiso "solo mientras se usa la app" el GPS va en primer plano, pero al
+      // guardar la app el móvil la suspende: ni latido, ni pedidos por cercanía, ni (en iPhone)
+      // aviso al cerrarla. "Permitir siempre" solo se elige en Ajustes: se abren directamente.
+      // (Hasta la 305 en iPhone esto no se sabía: el plugin no respondía.)
+      try {
+        const pre = await checkPresencePrereqs()
+        if (pre && pre.bgLocation === false) openLocationSettings()
+      } catch (_) {}
     } else {
       openLocationSettings()
     }
@@ -343,7 +533,10 @@ export function RiderProvider({ children }) {
     // asignación (no por pedido.estado) evita perder los recién aceptados.
     const { data: asigs } = await supabase
       .from('pedido_asignaciones')
-      .select('created_at, pedidos!inner(id, codigo, estado, shipday_status, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at)')
+      // v305: metodo_pago y stripe_payment_id los necesita el detalle del pedido para decidir
+      // los botones de cobro sin esperar a la recarga (sin ellos salía "Cobrar al cliente" un
+      // instante en pedidos ya pagados).
+      .select('created_at, pedidos!inner(id, codigo, estado, shipday_status, modo_entrega, origen_pedido, subtotal, total, coste_envio, propina, metodo_pago, stripe_payment_id, establecimiento_id, usuario_id, direccion_entrega, lat_entrega, lng_entrega, created_at)')
       .eq('socio_id', socio.id)
       .eq('estado', 'aceptado')
       .in('pedidos.estado', ['preparando', 'listo', 'recogido', 'en_camino'])
@@ -436,8 +629,15 @@ export function RiderProvider({ children }) {
     let removed = false
     let appHandle = null
     const onResume = () => {
+      appActivaRef.current = true
       try { supabase.realtime.connect() } catch (_) {}
       refreshAsignaciones()
+      // v305: marca de cierre del todo sin borrar (el apagado no se pudo confirmar, o la app
+      // arrancó en segundo plano): al volver el socio a la app se completa. Nunca reanuda.
+      if (marcaCierreRef.current && !togglingRef.current) {
+        if (socioRef.current?.en_servicio) apagarTrasCierre({ activa: true })
+        else cerrarMarcaCierre(true)
+      }
     }
     // Web / PWA
     const onVisibility = () => { if (typeof document !== 'undefined' && !document.hidden) onResume() }
@@ -448,6 +648,7 @@ export function RiderProvider({ children }) {
       if (!App || removed) return
       appHandle = await App.addListener('appStateChange', (state) => {
         if (state?.isActive) onResume()
+        else appActivaRef.current = false
       })
     })()
     return () => {
@@ -472,6 +673,42 @@ export function RiderProvider({ children }) {
     })
     return () => { offRecv?.(); offTap?.() }
   }, [socio?.id, refreshAsignaciones])
+
+  // ─── Pedido en curso → nativo (v305) ─────
+  // El aviso de "has cerrado la app del todo" cambia si lleva un pedido aceptado sin entregar.
+  // Se le dice al nativo cada vez que cambia, para que lo sepa aunque al cerrar no haya red.
+  const hayPedidoEnCurso = asignacionesActivas.length > 0
+  useEffect(() => {
+    pedidoEnCursoRef.current = hayPedidoEnCurso
+    marcarPedidoEnCurso(hayPedidoEnCurso)
+  }, [hayPedidoEnCurso])
+
+  // ─── GPS del reparto estando Fuera de línea (v305) ─────
+  // Ver pararGpsSalvoReparto. Online, el GPS es del turno (este efecto no hace nada). Offline:
+  // con pedido en curso se comparte la posición; sin él, se para el GPS que arrancó el reparto.
+  useEffect(() => {
+    if (isOnline) { repartoTrackingRef.current = false; return }
+    if (!hayPedidoEnCurso) {
+      if (repartoTrackingRef.current) {
+        repartoTrackingRef.current = false
+        stopTracking()
+        lastPosRef.current = null
+      }
+      return
+    }
+    if (repartoTrackingRef.current) return
+    let cancelado = false
+    ;(async () => {
+      if (!(await isNativePlatform())) return
+      if (supersededRef.current) return // otro dispositivo tiene la cuenta: no compartir desde aquí
+      const granted = await requestLocationPermission()
+      if (cancelado || !granted) return
+      repartoTrackingRef.current = true
+      startTracking({ onUpdate: (p) => { lastPosRef.current = p }, onError: handleWatcherError })
+      captureAndPush()
+    })()
+    return () => { cancelado = true }
+  }, [isOnline, hayPedidoEnCurso, handleWatcherError])
 
   // ─── Latido de presencia mientras online (SOLO foreground/web) ─────
   // Cada 60s, estando EN SERVICIO, mandamos un latido (rider-heartbeat) aunque el

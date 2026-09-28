@@ -10,8 +10,17 @@
 //
 // Nota honesta: es best-effort. Si el token guardado caducó (app mucho tiempo en segundo
 // plano) o el OEM mata el proceso sin avisar, el beacon no sale y actúa la red de seguridad
-// (frescura 12 min / auto-offline 60 min). En iOS no hay evento de cierre fiable -> allí no
-// aplica; se queda solo la red de seguridad.
+// (frescura 12 min / auto-offline 60 min).
+//
+// v305 (28-sep-2026): en iOS el plugin SÍ existe desde la build que lo registra en el puente
+// (PidooBridgeViewController, AppDelegate.swift). Antes NUNCA estuvo registrado: toda llamada
+// fallaba con "not implemented" y se tragaba en silencio. Por eso ahora los fallos se apuntan
+// una vez por método en push_debug_logs (source 'riderApi.offlineBeacon'): que no vuelva a
+// pasar desapercibido.
+// Cierre del todo (Android: onTaskRemoved; iOS: applicationWillTerminate): el nativo pone
+// Fuera de línea, avisa con una notificación que dice lo que ha pasado de verdad (Fuera de línea
+// confirmado, o "no hemos podido desconectarte") y deja una marca que lee consumeClosedFlag() al
+// reabrir la app, para NO reanudar el turno solo.
 
 import { registerPlugin } from '@capacitor/core'
 import { isNativePlatform } from './capacitor'
@@ -20,6 +29,24 @@ import { riderPresenceToken } from './riderApi'
 
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const OfflineBeacon = registerPlugin('OfflineBeacon')
+
+// v305: rastro de los fallos del plugin (una vez por método y arranque, para no inundar).
+// "not implemented" = el nativo de ese móvil no tiene el método (build vieja con JS nuevo, o
+// el plugin sin registrar en iOS como hasta la 305). push_debug_logs admite insert anónimo.
+const _fallosApuntados = new Set()
+function apuntarFallo(metodo, e) {
+  try {
+    if (_fallosApuntados.has(metodo)) return
+    _fallosApuntados.add(metodo)
+    const msg = String(e?.message || e || '')
+    console.warn(`[offlineBeacon] ${metodo} falló:`, msg)
+    supabase.from('push_debug_logs').insert({
+      source: 'riderApi.offlineBeacon',
+      level: /not implemented/i.test(msg) ? 'no_implementado' : 'error',
+      payload: { metodo, error: msg.slice(0, 300) },
+    }).then(() => {}, () => {})
+  } catch (_) {}
+}
 
 async function currentToken() {
   const { data: { session } } = await supabase.auth.getSession()
@@ -33,7 +60,7 @@ export async function armOfflineBeacon() {
     const token = await currentToken()
     if (!token) return
     await OfflineBeacon.arm({ token, functionsUrl: FUNCTIONS_URL, anonKey: ANON_KEY })
-  } catch (_) {}
+  } catch (e) { apuntarFallo('arm', e) }
 }
 
 // Refrescar el token guardado (llamar en el latido de primer plano, tras refrescar sesión).
@@ -42,19 +69,19 @@ export async function refreshOfflineBeaconToken() {
   try {
     const token = await currentToken()
     if (token) await OfflineBeacon.updateToken({ token })
-  } catch (_) {}
+  } catch (e) { apuntarFallo('updateToken', e) }
 }
 
 // Desarmar: al desconectarse manualmente o en logout.
 export async function disarmOfflineBeacon() {
   if (!(await isNativePlatform())) return
-  try { await OfflineBeacon.disarm() } catch (_) {}
+  try { await OfflineBeacon.disarm() } catch (e) { apuntarFallo('disarm', e) }
 }
 
 // Abrir ajustes de exención de batería (una vez, al ponerse online la primera vez).
 export async function requestBatteryExemption() {
   if (!(await isNativePlatform())) return
-  try { await OfflineBeacon.requestBatteryExemption() } catch (_) {}
+  try { await OfflineBeacon.requestBatteryExemption() } catch (e) { apuntarFallo('requestBatteryExemption', e) }
 }
 
 // ─── v300: LATIDO NATIVO DE PRESENCIA (PresenceBeatService) ───
@@ -66,8 +93,8 @@ export async function requestBatteryExemption() {
 // Solo se para al pulsar "Salir de línea", al cerrar la app del todo (onTaskRemoved,
 // que además manda el offline con la llave — ya no muere por JWT caducado) o al ser
 // superado por otro dispositivo (la llave rota → 401 → el servicio se apaga solo).
-// En iOS/web el plugin no existe → no-op silencioso (allí sigue el watcher + red de
-// seguridad de siempre).
+// En web el plugin no existe → no-op. En iOS existe desde la 305 (latido en Swift con la
+// misma llave cuando llega el ping silencioso; ver AppDelegate.swift).
 
 // Armar al ponerse EN SERVICIO: emite/rota la llave y arranca el servicio.
 export async function armPresenceBeat() {
@@ -77,22 +104,23 @@ export async function armPresenceBeat() {
     const presenceToken = res?.data?.presence_token
     if (!presenceToken) return
     await OfflineBeacon.armPresence({ presenceToken, functionsUrl: FUNCTIONS_URL, anonKey: ANON_KEY })
-  } catch (_) {}
+  } catch (e) { apuntarFallo('armPresence', e) }
 }
 
 // Desarmar: desconexión manual, logout, sesión muerta o dispositivo superado.
 export async function disarmPresenceBeat() {
   if (!(await isNativePlatform())) return
-  try { await OfflineBeacon.disarmPresence() } catch (_) {}
+  try { await OfflineBeacon.disarmPresence() } catch (e) { apuntarFallo('disarmPresence', e) }
 }
 
 // Estado de los requisitos del latido de fondo (permiso "siempre" + batería).
 // v303: incluye `autostartSospechoso` (Xiaomi/Huawei/Oppo/Vivo... — OEMs que matan el
 // proceso salvo que el usuario conceda su "Inicio automático" propietario).
-// Devuelve null en web/iOS o si el plugin no está (APK vieja con bundle OTA nuevo).
+// v305: en iOS devuelve las mismas claves que Android (bgLocation = "Permitir siempre").
+// Devuelve null en web o si el plugin no está (build vieja).
 export async function checkPresencePrereqs() {
   if (!(await isNativePlatform())) return null
-  try { return await OfflineBeacon.checkPrereqs() } catch (_) { return null }
+  try { return await OfflineBeacon.checkPrereqs() } catch (e) { apuntarFallo('checkPrereqs', e); return null }
 }
 
 // v303: abre la pantalla de "Inicio automático" del fabricante. No es consultable por
@@ -101,5 +129,62 @@ export async function checkPresencePrereqs() {
 // ni START_STICKY ni la exención de batería lo salvan.
 export async function openAutostartSettings() {
   if (!(await isNativePlatform())) return
-  try { await OfflineBeacon.openAutostartSettings() } catch (_) {}
+  try { await OfflineBeacon.openAutostartSettings() } catch (e) { apuntarFallo('openAutostartSettings', e) }
+}
+
+// ─── v305 (28-sep-2026): CIERRE DE LA APP DEL TODO ───
+//
+// Regla de Marlon: el socio solo queda Fuera de línea si pulsa su botón o CIERRA LA APP DEL
+// TODO. Al cerrarla estando En línea, el nativo (Android onTaskRemoved / iOS
+// applicationWillTerminate) le pone Fuera de línea, le avisa con una notificación y deja una
+// marca. Al volver a abrir la app, RiderContext la lee aquí y NO reanuda el turno: tiene que
+// pulsar En línea. Si fue el SISTEMA quien mató la app (ahorro de batería, memoria), no hay
+// marca y todo sigue como estaba.
+//
+// Devuelve { cerrada, at, conPedido } o null (web, build sin el método, o error).
+// soloLeer:true la mira sin borrarla. RiderContext SIEMPRE la lee así al arrancar y solo la borra
+// (llamada sin soloLeer) cuando el Fuera de línea está confirmado en el servidor o al pulsar En
+// línea: si se borrase antes y el apagado fallara, el siguiente arranque reanudaría el turno solo.
+// Borrarla retira también el aviso de cierre de la bandeja del móvil.
+export async function consumeClosedFlag({ soloLeer = false } = {}) {
+  if (!(await isNativePlatform())) return null
+  try {
+    const r = await OfflineBeacon.consumeClosedFlag({ soloLeer })
+    return r && typeof r === 'object' ? { cerrada: !!r.cerrada, at: r.at ?? null, conPedido: !!r.conPedido } : null
+  } catch (e) {
+    apuntarFallo('consumeClosedFlag', e)
+    return null
+  }
+}
+
+// El nativo necesita saber si hay un pedido aceptado sin entregar para que el aviso de cierre
+// lo recuerde ("tienes un pedido pendiente de entregar"), aunque en ese instante no haya red.
+export async function marcarPedidoEnCurso(enCurso) {
+  if (!(await isNativePlatform())) return
+  try { await OfflineBeacon.marcarPedidoEnCurso({ enCurso: !!enCurso }) } catch (e) { apuntarFallo('marcarPedidoEnCurso', e) }
+}
+
+// ─── v305: COBRO CON EL MÓVIL (Tap to Pay) ───
+//
+// Lo que el móvil ofrece para cobrar con Tap to Pay. El SDK de Stripe se cuelga en
+// discoverReaders si el móvil no vale (NFC apagado, opciones de desarrollador), así que se
+// mira antes. Android: { plataforma:'android', tieneNfc, nfcActivado, androidSdk,
+// opcionesDesarrollador, depuracionUsb, fabricante, modelo }. iOS: { plataforma:'ios',
+// disponible:false } (falta el permiso de Apple). null en web o build sin el método.
+export async function tapToPayChecks() {
+  if (!(await isNativePlatform())) return null
+  try {
+    const r = await OfflineBeacon.tapToPayChecks()
+    return r && typeof r === 'object' ? r : null
+  } catch (e) {
+    apuntarFallo('tapToPayChecks', e)
+    return null
+  }
+}
+
+// Abre los ajustes de NFC del móvil (Android; en iOS no hace nada). Devuelve true si la
+// llamada llegó al nativo.
+export async function openNfcSettings() {
+  if (!(await isNativePlatform())) return false
+  try { await OfflineBeacon.openNfcSettings(); return true } catch (e) { apuntarFallo('openNfcSettings', e); return false }
 }

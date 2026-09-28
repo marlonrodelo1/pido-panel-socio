@@ -10,7 +10,7 @@ import { useRider } from '../context/RiderContext'
 import { riderAcceptOrder, riderRejectOrder } from '../lib/riderApi'
 import { supabase } from '../lib/supabase'
 import { colors } from '../lib/uiStyles'
-import { calcGanancia } from '../lib/ganancia'
+import { calcGanancia, useTelefonicoCobraComision } from '../lib/ganancia'
 import { getPedidoAudio } from '../lib/pedidoSound'
 
 // 150s (2:30) = ventana real del cron de reasignación (assigned_at < now() - 150s).
@@ -25,6 +25,9 @@ export default function ModalPedidoEntrante() {
   const [items, setItems] = useState([])             // qué lleva el pedido (se ve ANTES de aceptar)
   const [cliente, setCliente] = useState(null)       // nombre del cliente (vista, no tabla usuarios)
   const [pacto, setPacto] = useState(null)           // tarifa pactada con ese restaurante
+  // ¿El telefónico ya lleva comisión? Lo dice la clave del cambio (lib/ganancia.js), el
+  // mismo interruptor que la BD. Hook ANTES del return temprano de más abajo.
+  const telConComision = useTelefonicoCobraComision()
   const audioRef = useRef(null)
   const intervalRef = useRef(null)
 
@@ -310,8 +313,9 @@ export default function ModalPedidoEntrante() {
           </div>
         )}
 
-        {/* Pedido telefónico: el rider cobra SOLO el envío (sin % del subtotal).
-            Tiene que quedarle claro ANTES de aceptar. */}
+        {/* Pedido telefónico: lo ha tomado el restaurante por teléfono. Con la clave del
+            cambio (28-sep-2026) se cobra lo pactado, igual que un pedido de la app; sin
+            ella, solo el envío. Tiene que quedarle claro ANTES de aceptar. */}
         {esTelefonico && (
           <div style={{
             borderRadius: 12, padding: '11px 13px',
@@ -319,7 +323,9 @@ export default function ModalPedidoEntrante() {
             fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
             border: `1px solid ${colors.info}`,
           }}>
-            Pedido telefónico: cobras SOLO el envío. Este tipo de pedido no lleva comisión.
+            {telConComision
+              ? 'Pedido telefónico: lo ha tomado el restaurante por teléfono. Cobras lo pactado, igual que en un pedido de la app.'
+              : 'Pedido telefónico: cobras SOLO el envío. Este tipo de pedido no lleva comisión.'}
           </div>
         )}
 
@@ -332,7 +338,10 @@ export default function ModalPedidoEntrante() {
             fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
             border: `1px solid ${colors.warning}`,
           }}>
-            Última vuelta y eres el responsable. Si no lo aceptas, el pedido se cancela y TÚ asumes el coste de la comida.
+            {/* En el telefónico no hay cargo de la comida al responsable (create-shipday-order). */}
+            {esTelefonico
+              ? 'Última vuelta y eres el responsable. Si no lo aceptas, el pedido se cancela.'
+              : 'Última vuelta y eres el responsable. Si no lo aceptas, el pedido se cancela y TÚ asumes el coste de la comida.'}
           </div>
         ) : esUltimaVuelta ? (
           <div style={{
@@ -445,9 +454,14 @@ export default function ModalPedidoEntrante() {
           <div>
             <div style={{ fontSize: 12, color: colors.sage2, fontWeight: 700 }}>Tu ganancia</div>
             <div style={{ fontSize: 10, color: colors.stone }}>
+              {/* El % sale del pacto con este restaurante (calcGanancia), no un 10 fijo.
+                  El telefónico se rotula igual que la app en cuanto existe la clave del cambio. */}
               {esTarifaFija
                 ? `Tarifa fija pactada · ${importeFijo.toFixed(2).replace('.', ',')} € por entrega`
-                : (esTelefonico ? 'Solo envío · sin comisión' : (isDelivery ? 'Envío + 10% + propina' : '10% del subtotal'))}
+                : (esTelefonico && !telConComision) ? 'Solo envío · sin comisión'
+                : (isDelivery
+                  ? `Envío + ${String(ganancia.comisionPct).replace('.', ',')}% + propina`
+                  : `${String(ganancia.comisionPct).replace('.', ',')}% del subtotal`)}
             </div>
           </div>
           <div style={{ fontSize: 22, fontWeight: 800, color: colors.sage2 }}>
@@ -457,8 +471,8 @@ export default function ModalPedidoEntrante() {
 
         {/* Qué lleva el pedido. Va DESPUÉS del dinero a propósito: es lo único que puede
             crecer sin límite, y si va antes empuja "Tu ganancia" fuera de la pantalla
-            mientras "Aceptar" sigue ahí abajo, pulsable. Los telefónicos no tienen líneas
-            (son solo envío), así que el bloque no se pinta en vez de enseñar un "(0)". */}
+            mientras "Aceptar" sigue ahí abajo, pulsable. Algunos telefónicos no tienen líneas
+            (importe de comida sin desglose), así que el bloque no se pinta en vez de enseñar un "(0)". */}
         {items.length > 0 && (
           <>
             <div style={{ height: 1, background: colors.border, flexShrink: 0 }} />

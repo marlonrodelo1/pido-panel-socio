@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.nfc.NfcAdapter;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
@@ -38,6 +39,19 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  - checkPrereqs(): estado de los requisitos para latir de fondo: permiso de ubicación
  *    (primer plano y "Permitir siempre") + exención de batería. Lo usa RiderContext para
  *    avisar proactivamente en vez de esperar al fallo del watcher.
+ *
+ * v305 (28-sep-2026):
+ *  - consumeClosedFlag({soloLeer?}): {cerrada, at, conPedido}. Dice si el socio CERRÓ LA APP
+ *    DEL TODO estando En línea (lo apunta PresenceBeatService.onTaskRemoved) y borra la marca
+ *    (salvo soloLeer:true). RiderContext la LEE al arrancar (soloLeer) y solo la borra cuando el
+ *    Fuera de línea está confirmado en el servidor: si se borrase antes y el apagado fallara, el
+ *    siguiente arranque reanudaría el turno solo. Al borrarla retira también el aviso de cierre
+ *    de la bandeja (ya cumplió), igual que armPresence.
+ *  - marcarPedidoEnCurso({enCurso}): el JS avisa si hay un pedido aceptado sin entregar, para
+ *    que el aviso de cierre lo recuerde aunque en ese instante no haya red.
+ *  - tapToPayChecks(): lo que el móvil ofrece para cobrar con Tap to Pay (NFC, opciones de
+ *    desarrollador...). Solo informa; qué hacer con ello lo decide el JS.
+ *  - openNfcSettings(): abre los ajustes de NFC (o los de conexiones si el móvil no los tiene).
  */
 @CapacitorPlugin(name = "OfflineBeacon")
 public class OfflineBeaconPlugin extends Plugin {
@@ -121,6 +135,12 @@ public class OfflineBeaconPlugin extends Plugin {
                 .putBoolean("presence_armed", true);
         if (anonKey != null) ed.putString("anon_key", anonKey);
         ed.apply();
+        // v305: volver a estar En línea anula cualquier marca de cierre que no se llegara a leer
+        // (si no, el próximo arranque tras un cierre del SISTEMA se creería un cierre del socio),
+        // y retira el aviso del cierre anterior: si se quedara en la bandeja, el aviso del próximo
+        // cierre sería una actualización muda con el mismo id (sin sonido).
+        borrarMarcaCierre(ctx);
+        PresenceBeatService.cancelarAvisoCierre(ctx);
         try {
             Intent i = new Intent(ctx, PresenceBeatService.class);
             boolean fine = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -233,6 +253,124 @@ public class OfflineBeaconPlugin extends Plugin {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(intent);
         } catch (Exception ignored) {
+        }
+        call.resolve();
+    }
+
+    // ─── v305: cierre de la app del todo ───
+
+    // Borra la marca y el apagado pendiente (la llave con la que PresenceBeatService reintenta
+    // rider-offline si no había red al cerrar): sin marca, el reintento se abandona solo.
+    private static void borrarMarcaCierre(Context ctx) {
+        try {
+            ctx.getSharedPreferences(PresenceBeatService.PREFS_CIERRE, Context.MODE_PRIVATE).edit()
+                    .remove(PresenceBeatService.K_CERRADA_AT)
+                    .remove(PresenceBeatService.K_CERRADA_CON_PEDIDO)
+                    .remove(PresenceBeatService.K_PEND_TOKEN)
+                    .remove(PresenceBeatService.K_PEND_URL)
+                    .remove(PresenceBeatService.K_PEND_ANON)
+                    .commit();
+        } catch (Exception ignored) {
+        }
+    }
+
+    @PluginMethod
+    public void consumeClosedFlag(PluginCall call) {
+        Context ctx = getContext();
+        boolean soloLeer = Boolean.TRUE.equals(call.getBoolean("soloLeer", false));
+        JSObject out = new JSObject();
+        try {
+            SharedPreferences c = ctx.getSharedPreferences(PresenceBeatService.PREFS_CIERRE, Context.MODE_PRIVATE);
+            long at = c.getLong(PresenceBeatService.K_CERRADA_AT, 0L);
+            boolean cerrada = at > 0L;
+            out.put("cerrada", cerrada);
+            if (cerrada) out.put("at", at);
+            out.put("conPedido", cerrada && c.getBoolean(PresenceBeatService.K_CERRADA_CON_PEDIDO, false));
+            if (!soloLeer) {
+                // El JS solo lo pide así cuando el Fuera de línea ya está confirmado (o al pulsar
+                // En línea): el aviso de la bandeja ya no hace falta.
+                if (cerrada) borrarMarcaCierre(ctx);
+                PresenceBeatService.cancelarAvisoCierre(ctx);
+            }
+        } catch (Exception e) {
+            out.put("cerrada", false);
+            out.put("conPedido", false);
+        }
+        call.resolve(out);
+    }
+
+    @PluginMethod
+    public void marcarPedidoEnCurso(PluginCall call) {
+        boolean enCurso = Boolean.TRUE.equals(call.getBoolean("enCurso", false));
+        try {
+            getContext().getSharedPreferences(PresenceBeatService.PREFS_CIERRE, Context.MODE_PRIVATE).edit()
+                    .putBoolean(PresenceBeatService.K_PEDIDO_EN_CURSO, enCurso)
+                    .apply();
+        } catch (Exception ignored) {
+        }
+        call.resolve();
+    }
+
+    // ─── v305: comprobaciones para el cobro con el móvil (Tap to Pay) ───
+
+    /**
+     * Lo que el móvil ofrece para Tap to Pay. El SDK de Stripe se queda colgado en
+     * discoverReaders si el móvil no vale (NFC apagado, opciones de desarrollador...) sin dar
+     * error (nota del 28-sep), así que la app lo mira ANTES y se lo explica al socio.
+     * Solo informa: no decide si el cobro está disponible.
+     */
+    @PluginMethod
+    public void tapToPayChecks(PluginCall call) {
+        Context ctx = getContext();
+        JSObject out = new JSObject();
+        out.put("plataforma", "android");
+        boolean tieneNfc = false;
+        boolean nfcActivado = false;
+        try {
+            NfcAdapter nfc = NfcAdapter.getDefaultAdapter(ctx);
+            tieneNfc = nfc != null;
+            nfcActivado = nfc != null && nfc.isEnabled();
+        } catch (Exception ignored) {
+        }
+        boolean opcionesDesarrollador = false;
+        boolean depuracionUsb = false;
+        try {
+            opcionesDesarrollador = Settings.Global.getInt(ctx.getContentResolver(),
+                    Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1;
+        } catch (Exception ignored) {
+        }
+        try {
+            depuracionUsb = Settings.Global.getInt(ctx.getContentResolver(), Settings.Global.ADB_ENABLED, 0) == 1;
+        } catch (Exception ignored) {
+        }
+        out.put("tieneNfc", tieneNfc);
+        out.put("nfcActivado", nfcActivado);
+        out.put("androidSdk", Build.VERSION.SDK_INT);
+        out.put("opcionesDesarrollador", opcionesDesarrollador);
+        out.put("depuracionUsb", depuracionUsb);
+        out.put("fabricante", Build.MANUFACTURER == null ? "" : Build.MANUFACTURER);
+        out.put("modelo", Build.MODEL == null ? "" : Build.MODEL);
+        call.resolve(out);
+    }
+
+    /** Abre los ajustes de NFC; si el móvil no tiene esa pantalla, los de conexiones; si no, Ajustes. */
+    @PluginMethod
+    public void openNfcSettings(PluginCall call) {
+        Context ctx = getContext();
+        String[] acciones = {
+                Settings.ACTION_NFC_SETTINGS,
+                Settings.ACTION_WIRELESS_SETTINGS,
+                Settings.ACTION_SETTINGS,
+        };
+        for (String accion : acciones) {
+            try {
+                Intent intent = new Intent(accion);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(intent);
+                break;
+            } catch (Exception ignored) {
+                // esa pantalla no existe en este móvil: probar la siguiente
+            }
         }
         call.resolve();
     }

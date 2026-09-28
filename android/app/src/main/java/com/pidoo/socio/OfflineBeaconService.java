@@ -43,7 +43,15 @@ public class OfflineBeaconService extends Service {
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        sendOfflineBeacon();
+        // v305 (28-sep-2026): si el latido nativo (PresenceBeatService) está corriendo o ya
+        // gestionó el cierre, él manda el Fuera de línea con la llave, el motivo y el aviso al
+        // socio. Este beacon viejo (JWT) solo actúa cuando el latido nativo no está: así no
+        // salen dos rider-offline ni el registro se queda con el motivo equivocado.
+        // Los dos servicios viven en el mismo proceso y sus onTaskRemoved corren en el mismo
+        // hilo principal, uno detrás de otro, así que las dos banderas estáticas bastan.
+        if (!PresenceBeatService.latiendo && !PresenceBeatService.cierreGestionado) {
+            sendOfflineBeacon();
+        }
         stopSelf();
         super.onTaskRemoved(rootIntent);
     }
@@ -54,6 +62,23 @@ public class OfflineBeaconService extends Service {
         final String token = prefs.getString("access_token", null);
         final String anonKey = prefs.getString("anon_key", null);
         if (functionsUrl == null || token == null) return;
+
+        // v305: marca de cierre del todo también por esta vía (sin aviso: el aviso es cosa del
+        // latido nativo). Sin ella, si este POST falla (JWT caducado, sin red), al reabrir la
+        // app se pondría En línea sola, contra la regla de Marlon.
+        try {
+            getSharedPreferences(PresenceBeatService.PREFS_CIERRE, MODE_PRIVATE).edit()
+                    .putLong(PresenceBeatService.K_CERRADA_AT, System.currentTimeMillis())
+                    .putBoolean(PresenceBeatService.K_CERRADA_CON_PEDIDO,
+                            getSharedPreferences(PresenceBeatService.PREFS_CIERRE, MODE_PRIVATE)
+                                    .getBoolean(PresenceBeatService.K_PEDIDO_EN_CURSO, false))
+                    .commit();
+            // Y desarmado: si el latido nativo estaba armado pero su servicio no llegó a arrancar
+            // (por eso no gestionó él el cierre), el siguiente ping de FCM lo resucitaría
+            // (reviveSiArmado) latiendo por quien ha cerrado la app.
+            prefs.edit().putBoolean("presence_armed", false).commit();
+        } catch (Exception ignored) {
+        }
 
         // onTaskRemoved corre en el hilo principal; la red no puede ir ahí. Lanzamos un hilo
         // corto y esperamos su fin con un timeout breve (Android da un instante antes de matar).
@@ -72,7 +97,9 @@ public class OfflineBeaconService extends Service {
                     conn.setRequestProperty("Authorization", "Bearer " + token);
                     if (anonKey != null) conn.setRequestProperty("apikey", anonKey);
                     OutputStream os = conn.getOutputStream();
-                    os.write("{}".getBytes("UTF-8"));
+                    // v305: motivo para socio_presencia_log (rider-offline v13+; las versiones
+                    // anteriores lo ignoran).
+                    os.write("{\"motivo\":\"cierre_app_android\"}".getBytes("UTF-8"));
                     os.flush();
                     os.close();
                     conn.getResponseCode(); // dispara la petición

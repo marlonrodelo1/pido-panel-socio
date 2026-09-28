@@ -37,6 +37,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Pidoo Socio incluye el sistema de cobro con tarjeta de Stripe, que puede usar Bluetooth para conectar con un lector de tarjetas cuando cobras un pedido. Pidoo no usa el Bluetooth para nada más.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Pidoo usa la cámara para subir el logo o banner de tu marketplace.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
+import { CheckCircle2, TriangleAlert } from 'lucide-react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
 import { colors, ds, type, stateBadge } from '../lib/uiStyles'
-import { hayQueCobrar, etiquetaPago } from '../lib/metodoPago'
+import { etiquetaPago, estadoPago, cobroConfirmado } from '../lib/metodoPago'
+import { leerCobros } from '../lib/cobroMovil'
+import { calcGanancia } from '../lib/ganancia'
+
+// Colores del estado del pago (estadoPago → tono). El check verde solo sale con prueba de Stripe.
+const TONO_PAGO = {
+  ok:        { bg: colors.sageSoft,    fg: colors.sage2 },
+  aviso:     { bg: colors.warningSoft, fg: colors.warning },
+  pendiente: { bg: colors.warningSoft, fg: colors.warning },
+  error:     { bg: colors.dangerSoft,  fg: colors.danger },
+  neutro:    { bg: colors.surface2,    fg: colors.textDim },
+}
 
 const RANGOS = [
   { id: 'hoy', label: 'Hoy' },
@@ -24,10 +36,10 @@ const PAGOS = [
   { id: 'tarjeta', label: 'Tarjeta' },
   { id: 'efectivo', label: 'Efectivo' },
   { id: 'datafono', label: 'Datáfono' },
+  { id: 'pagado_local', label: 'Pagado en el local' },
 ]
 
-// Un solo sitio decide qué está cobrado y qué no: lib/metodoPago.js
-const esPagadoOnline = (m) => !hayQueCobrar(m)
+// Un solo sitio decide qué está cobrado y qué no: lib/metodoPago.js (estadoPago)
 const metodoPagoLabel = etiquetaPago
 
 // Origen del pedido para el socio.
@@ -107,7 +119,7 @@ export default function Pedidos() {
       // El desglose de comisión del rider ya no tiene fuente de datos.
       let q = supabase
         .from('pedidos')
-        .select('id, codigo, estado, metodo_pago, total, created_at, origen_pedido, establecimiento:establecimientos(nombre)')
+        .select('id, codigo, estado, metodo_pago, stripe_payment_id, reembolsado_at, monto_reembolsado, total, created_at, origen_pedido, establecimiento:establecimientos(nombre)')
         .order('created_at', { ascending: false })
         .limit(200)
 
@@ -131,10 +143,18 @@ export default function Pedidos() {
         return
       }
 
+      // Cobros con el móvil (check verde). SEGUNDA consulta y tolerante: si falla, la lista se
+      // pinta igual, solo sin el check de la puerta (un embed roto tiraría la lista entera).
+      const { filas: cobros } = await leerCobros((data || []).map((p) => p.id))
+      if (cancel) return
+      const cobrosPorPedido = {}
+      for (const c of cobros) (cobrosPorPedido[c.pedido_id] ||= []).push(c)
+
       // Sin tabla rider_earnings → no hay desglose de comisión; se deja en null
       // para mostrar "—" en la columna Comisión (no inventamos cifras).
       const pedidosNorm = (data || []).map(p => ({
         ...p,
+        cobros: cobrosPorPedido[p.id] || [],
         comision_generada: null,
       }))
       setPedidos(pedidosNorm)
@@ -204,7 +224,7 @@ export default function Pedidos() {
         <div style={{ ...ds.card, padding: 0, overflow: 'hidden' }}>
           <div className="pedidos-tabla-head" style={{
             display: 'grid',
-            gridTemplateColumns: '1.2fr 1.6fr 0.9fr 0.8fr 1fr 1fr 1fr',
+            gridTemplateColumns: '1.1fr 1.5fr 0.9fr 1.5fr 0.8fr 0.8fr 1fr',
             gap: 12, padding: '12px 18px',
             background: colors.surface2,
             fontSize: 11, fontWeight: 700, color: colors.textMute,
@@ -220,9 +240,10 @@ export default function Pedidos() {
           </div>
           {pedidos.map((p, i) => {
             const b = stateBadge(p.estado)
-            const cobrar = !esPagadoOnline(p.metodo_pago)
-            const pagoTone = cobrar ? colors.warningSoft : colors.surface2
-            const pagoColor = cobrar ? colors.warning : colors.textDim
+            // Estado REAL del pago (no solo cómo quería pagar el cliente): check verde si hay
+            // prueba de Stripe, ámbar si falta cobrar o hay que revisarlo.
+            const ep = estadoPago(p, p.cobros)
+            const tono = TONO_PAGO[ep.tono] || TONO_PAGO.neutro
             return (
               <div
                 key={p.id}
@@ -230,7 +251,7 @@ export default function Pedidos() {
                 className="pedidos-tabla-row"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1.2fr 1.6fr 0.9fr 0.8fr 1fr 1fr 1fr',
+                  gridTemplateColumns: '1.1fr 1.5fr 0.9fr 1.5fr 0.8fr 0.8fr 1fr',
                   gap: 12, padding: '14px 18px',
                   alignItems: 'center',
                   borderTop: i > 0 ? `1px solid ${colors.border}` : 'none',
@@ -245,13 +266,20 @@ export default function Pedidos() {
                   {p.establecimiento?.nombre || '—'}
                 </span>
                 <span><span style={b}>{b._label}</span></span>
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center',
-                  fontSize: 11, fontWeight: 700,
-                  background: pagoTone, color: pagoColor,
-                  padding: '3px 8px', borderRadius: 999,
-                  justifySelf: 'start',
-                }}>{metodoPagoLabel(p.metodo_pago)}</span>
+                <span
+                  title={ep.detalle || ep.texto}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontSize: 11, fontWeight: 700, lineHeight: 1.25,
+                    background: tono.bg, color: tono.fg,
+                    padding: '3px 8px', borderRadius: 999,
+                    justifySelf: 'start',
+                  }}
+                >
+                  {ep.check && <CheckCircle2 size={13} strokeWidth={2.6} style={{ flexShrink: 0 }} />}
+                  {ep.tono === 'aviso' && <TriangleAlert size={12} strokeWidth={2.6} style={{ flexShrink: 0 }} />}
+                  {ep.clave === 'pendiente' ? `Pendiente · ${metodoPagoLabel(p.metodo_pago)}` : ep.texto}
+                </span>
                 <span style={{
                   color: colors.text, fontWeight: 600,
                   fontVariantNumeric: 'tabular-nums',
@@ -337,15 +365,15 @@ function DetalleModal({ pedidoId, onClose }) {
   const { socio } = useSocio()
   const [pedido, setPedido] = useState(null)
   const [items, setItems] = useState([])
+  const [cobros, setCobros] = useState([])
   const [cliente, setCliente] = useState(null)
-  const [comisionPct, setComisionPct] = useState(10)
-  const [tarifaPacto, setTarifaPacto] = useState({ tarifa_modo: null, tarifa_fija: null })
+  const [pacto, setPacto] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     ;(async () => {
       setLoading(true)
-      const [pedRes, itemsRes] = await Promise.all([
+      const [pedRes, itemsRes, cobrosRes] = await Promise.all([
         supabase
           .from('pedidos')
           // El contacto del cliente NO se embebe desde `usuarios`: el socio no tiene
@@ -358,10 +386,13 @@ function DetalleModal({ pedidoId, onClose }) {
           .from('pedido_items')
           .select('*')
           .eq('pedido_id', pedidoId),
+        // Cobros con el móvil: consulta aparte y tolerante (si falla, el detalle sale igual).
+        leerCobros([pedidoId]),
       ])
       const ped = pedRes.data || null
       setPedido(ped)
       setItems(itemsRes.data || [])
+      setCobros(cobrosRes.filas || [])
       // Contacto del cliente registrado. En los pedidos sin cuenta no hay fila: el
       // nombre y el teléfono viven en el propio pedido (guest_*).
       if (ped?.usuario_id) {
@@ -374,8 +405,8 @@ function DetalleModal({ pedidoId, onClose }) {
       } else {
         setCliente(null)
       }
-      // Comisión REAL del socio para este restaurante (para el desglose de ganancia,
-      // en vez de asumir 10%). Si no hay vinculación, queda el default 10%.
+      // Pacto REAL del socio con este restaurante (para estimar la ganancia mientras no esté
+      // congelada). Sin vinculación, calcGanancia usa su regla por defecto.
       if (ped?.establecimiento_id && socio?.id) {
         const { data: vinc } = await supabase
           .from('socio_establecimiento')
@@ -383,8 +414,7 @@ function DetalleModal({ pedidoId, onClose }) {
           .eq('socio_id', socio.id)
           .eq('establecimiento_id', ped.establecimiento_id)
           .maybeSingle()
-        if (vinc?.comision_pct != null) setComisionPct(Number(vinc.comision_pct))
-        if (vinc) setTarifaPacto({ tarifa_modo: vinc.tarifa_modo, tarifa_fija: vinc.tarifa_fija })
+        if (vinc) setPacto(vinc)
       }
       setLoading(false)
     })()
@@ -413,20 +443,27 @@ function DetalleModal({ pedidoId, onClose }) {
   const envio = Number(pedido?.coste_envio || pedido?.precio_envio || 0)
   const propina = Number(pedido?.propina || 0)
   const badge = pedido?.estado ? stateBadge(pedido.estado) : null
-  // Ganancia del socio. Si el pedido está ENTREGADO y tiene la ganancia CONGELADA
-  // (socio_liq_*), se usa esa (respeta la tarifa pactada: fija = solo el fijo, sin
-  // comisión). Si no, se estima con el pacto vigente (misma regla que calc_ganancia_socio).
+  // Estado REAL del pago (check verde solo con prueba de Stripe) y el cobro con el móvil que vale.
+  const pago = pedido ? estadoPago(pedido, cobros) : null
+  const cobroPuerta = cobroConfirmado(cobros)
+  // Ganancia del socio. Si el pedido tiene la ganancia CONGELADA (socio_liq_*, se congela al
+  // entregar con el pacto vigente), se usa esa. Si no, se estima con el pacto: calcGanancia
+  // (lib/ganancia.js), la misma regla que la pantalla de reparto y que calc_ganancia_socio.
+  // 28-sep-2026: el telefónico cobra lo pactado, como la app, en cuanto existe la clave del
+  // cambio (comision_telefonico_pct_desde); sin ella, sin comisión. Lo decide calcGanancia.
   const esReparto = pedido?.modo_entrega === 'delivery' || envio > 0
   const esEntregado = pedido?.estado === 'entregado'
   const tieneSnap = pedido?.socio_liq_total != null
-  const esFijaPacto = tarifaPacto.tarifa_modo === 'fija'
-  const esTelef = pedido?.origen_pedido === 'telefonico'
-  const gEnvio = tieneSnap ? Number(pedido.socio_liq_envio || 0)
-    : (esReparto ? (esFijaPacto ? Number(tarifaPacto.tarifa_fija || 0) : envio) : 0)
-  const comisionSocio = tieneSnap ? Number(pedido.socio_liq_comision || 0)
-    : ((esTelef || esFijaPacto) ? 0 : subtotal * (comisionPct / 100))
-  const gPropina = tieneSnap ? Number(pedido.socio_liq_propina || 0) : (esReparto ? propina : 0)
-  const gananciaSocio = tieneSnap ? Number(pedido.socio_liq_total || 0) : (gEnvio + comisionSocio + gPropina)
+  const estimada = calcGanancia(
+    pedido ? { ...pedido, modo_entrega: esReparto ? 'delivery' : pedido.modo_entrega, coste_envio: envio, subtotal } : null,
+    pacto,
+  )
+  const esFijaPacto = tieneSnap ? pedido.socio_liq_tarifa_modo === 'fija' : estimada.esFija
+  const gEnvio = tieneSnap ? Number(pedido.socio_liq_envio || 0) : estimada.envio
+  const comisionSocio = tieneSnap ? Number(pedido.socio_liq_comision || 0) : estimada.comision
+  const comisionPct = tieneSnap ? Number(pedido.socio_liq_comision_pct || 0) : estimada.comisionPct
+  const gPropina = tieneSnap ? Number(pedido.socio_liq_propina || 0) : estimada.propina
+  const gananciaSocio = tieneSnap ? Number(pedido.socio_liq_total || 0) : estimada.total
 
   return (
     <div
@@ -451,8 +488,17 @@ function DetalleModal({ pedidoId, onClose }) {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           position: 'sticky', top: 0, background: colors.paper, zIndex: 2,
         }}>
-          <div>
-            <div style={{ fontSize: type.lg, fontWeight: 800, color: colors.text, letterSpacing: '-0.3px', fontFamily: type.mono }}>
+          <div style={{ minWidth: 0 }}>
+            {/* El restaurante, lo primero: es lo que el socio busca al abrir un pedido del historial. */}
+            {pedido?.establecimiento?.nombre && (
+              <div style={{
+                fontSize: type.base, fontWeight: 800, color: colors.text, letterSpacing: '-0.2px',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {pedido.establecimiento.nombre}
+              </div>
+            )}
+            <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.textMute, fontFamily: type.mono, marginTop: 2 }}>
               {pedido?.codigo || '—'}
             </div>
             {badge && <span style={{ ...badge, marginTop: 6 }}>{badge._label}</span>}
@@ -470,11 +516,33 @@ function DetalleModal({ pedidoId, onClose }) {
           <div style={{ padding: 24, color: colors.textMute }}>Pedido no encontrado</div>
         ) : (
           <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* PAGO: si el dinero se cobró de verdad y cómo. Check verde solo con prueba de
+                Stripe (cobro con el móvil en la puerta o tarjeta pagada en la app). */}
+            {pago && (
+              <Section title="Pago">
+                <PagoEstado pago={pago} total={pedido.total} />
+                {cobroPuerta && cobroPuerta.importe != null && Math.abs(Number(cobroPuerta.importe) - Number(pedido.total || 0)) >= 0.005 && (
+                  <Row k="Cobrado con el móvil" v={`${Number(cobroPuerta.importe).toFixed(2)} €`} />
+                )}
+                {cobroPuerta?.metodo_pago_anterior && (
+                  <Row k="Forma de pago al pedir" v={metodoPagoLabel(cobroPuerta.metodo_pago_anterior)} />
+                )}
+                {!cobroPuerta && ['pendiente', 'no_cobrado', 'anulado_tarjeta', 'pago_sin_completar', 'reembolsado', 'tarjeta_sin_pago', 'entregado'].includes(pago.clave) && (
+                  <Row k="Forma de pago elegida" v={metodoPagoLabel(pedido.metodo_pago)} />
+                )}
+                {cobroPuerta?.recibo_url && (
+                  <div style={{ marginTop: 6 }}>
+                    <a href={cobroPuerta.recibo_url} target="_blank" rel="noreferrer" style={{
+                      fontSize: type.xs, fontWeight: 700, color: colors.textDim,
+                    }}>Ver recibo del cobro</a>
+                  </div>
+                )}
+              </Section>
+            )}
+
             <Section title="Resumen">
               <Row k="Fecha" v={new Date(pedido.created_at).toLocaleString('es-ES')} />
               <Row k="Origen" v={origenLabel(pedido.origen_pedido)} />
-              <Row k="Método de pago" v={metodoPagoLabel(pedido.metodo_pago)} />
-              <Row k="Cobro" v={esPagadoOnline(pedido.metodo_pago) ? 'Pagado online (no cobrar)' : 'Cobrar al cliente'} />
               <Row k="Total" v={`${Number(pedido.total || 0).toFixed(2)} €`} highlight />
               {pedido.minutos_preparacion && <Row k="Tiempo prep." v={`${pedido.minutos_preparacion} min`} />}
             </Section>
@@ -592,6 +660,30 @@ function DetalleModal({ pedidoId, onClose }) {
               </div>
             )}
           </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Línea grande del estado del pago: check verde, aviso ámbar o texto neutro.
+function PagoEstado({ pago, total }) {
+  const tono = TONO_PAGO[pago.tono] || TONO_PAGO.neutro
+  const pendiente = pago.clave === 'pendiente'
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+      background: tono.bg, color: tono.fg,
+    }}>
+      {pago.check && <CheckCircle2 size={22} strokeWidth={2.4} style={{ flexShrink: 0 }} />}
+      {(pago.tono === 'aviso' || pago.tono === 'error') && <TriangleAlert size={20} strokeWidth={2.4} style={{ flexShrink: 0 }} />}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: type.base, fontWeight: 800 }}>
+          {pendiente ? `Pendiente de cobro · ${Number(total || 0).toFixed(2)} €` : pago.texto}
+        </div>
+        {pago.detalle && !pendiente && (
+          <div style={{ fontSize: type.xs, fontWeight: 600, marginTop: 2, opacity: 0.9 }}>{pago.detalle}</div>
         )}
       </div>
     </div>
