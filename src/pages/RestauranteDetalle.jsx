@@ -41,6 +41,34 @@ function liqSocio(pedido, pacto) {
 // Las columnas del snapshot van en TODA query de esta pantalla que hable de dinero del socio.
 const COLS_LIQ = 'socio_liq_envio, socio_liq_comision, socio_liq_propina, socio_liq_total'
 
+// Simulación de la factura en el servidor (generar-factura-socio-restaurante v15 con
+// simular:true): misma consulta, mismo corte de los lunes y mismos importes que la factura
+// real, sin registrar nada. Fuente única: antes esta pantalla recalculaba por su cuenta y
+// facturaba todo lo pendiente, también los pedidos de la semana en curso.
+async function simularFactura(establecimiento_id) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const r = await fetch(`${FUNCTIONS_URL}/generar-factura-socio-restaurante`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session?.access_token}`,
+    },
+    body: JSON.stringify({ establecimiento_id, simular: true }),
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(data.error || `Error ${r.status}`)
+  return data
+}
+
+// "Los 2 pedidos de esta semana (desde el lunes 28/9) se facturan a partir del lunes 5/10."
+// null si no hay pedidos de la semana en curso.
+function textoSemanaEnCurso(sim) {
+  const n = Number(sim?.pedidos_semana_en_curso || 0)
+  if (!n || !sim?.corte || !sim?.siguiente_corte) return null
+  const dia = (iso) => new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'numeric', timeZone: 'UTC' })
+  return `${n === 1 ? 'El pedido' : `Los ${n} pedidos`} de esta semana (desde el lunes ${dia(sim.corte)}) ${n === 1 ? 'se factura' : 'se facturan'} a partir del lunes ${dia(sim.siguiente_corte)}.`
+}
+
 // Abre un PDF: navegador nativo (Browser) dentro de la APK; en web cae a window.open.
 async function abrirPDF(url) {
   if (!url) return
@@ -64,6 +92,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
   const [emitiendo, setEmitiendo] = useState(false)
   const [cargandoPreview, setCargandoPreview] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [simFactura, setSimFactura] = useState(null)
   const [msg, setMsg] = useState(null)
   const [togglingDestacado, setTogglingDestacado] = useState(false)
   const [togglingReparto, setTogglingReparto] = useState(false)
@@ -285,43 +314,35 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
     }
   }
 
-  // Previsualización: calcula el desglose EXACTO de lo que se va a facturar
-  // (misma fórmula que la edge generar-factura-socio-restaurante) para revisarlo
-  // ANTES de emitir. No registra nada; solo consulta los pedidos pendientes.
+  // Lo que entraría HOY en la factura (para el botón y el aviso de la semana en curso).
+  // Si el servidor no deja facturar (p. ej. datos fiscales incompletos) se queda en null:
+  // esos avisos ya salen en la propia pantalla.
+  const refrescarSimFactura = () => {
+    if (!establecimiento_id) return
+    simularFactura(establecimiento_id).then(setSimFactura).catch(() => setSimFactura(null))
+  }
+  useEffect(() => {
+    if (!socio?.id) return
+    refrescarSimFactura()
+    window.addEventListener('pidoo:refresh-rest-detalle', refrescarSimFactura)
+    return () => window.removeEventListener('pidoo:refresh-rest-detalle', refrescarSimFactura)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [establecimiento_id, socio?.id])
+
+  // Previsualización: el desglose EXACTO de lo que se va a facturar, calculado por el
+  // propio servidor de facturas en modo simulación, para revisarlo ANTES de emitir.
   const abrirPreviewFactura = async () => {
     setCargandoPreview(true); setMsg(null)
     try {
-      const { data: peds, error } = await supabase.from('pedidos')
-        .select(`id, modo_entrega, origen_pedido, subtotal, coste_envio, propina, entregado_at, created_at, ${COLS_LIQ}`)
-        .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
-        .eq('estado', 'entregado').is('factura_socio_id', null)
-        .or('modo_entrega.eq.delivery,and(modo_entrega.eq.recogida,origen_pedido.eq.marketplace_socio)')
-        .order('entregado_at', { ascending: true })
-      if (error) throw error
-      if (!peds || peds.length === 0) {
-        setMsg({ tipo: 'error', txt: 'No hay pedidos pendientes de facturar a este restaurante.' })
+      const sim = await simularFactura(establecimiento_id)
+      setSimFactura(sim)
+      if (!sim.pedidos_count) {
+        setMsg({ tipo: 'error', txt: textoSemanaEnCurso(sim)
+          ? `La semana en curso aún no ha cerrado. ${textoSemanaEnCurso(sim)}`
+          : 'No hay pedidos pendientes de facturar a este restaurante.' })
         return
       }
-      const pct = Number(vinculacion?.comision_pct ?? 10)
-      // Mismo desglose, pedido a pedido, que la edge generar-factura-socio-restaurante v10:
-      // el snapshot socio_liq_* manda. Reimplementar aquí la fórmula fue justo lo que hizo
-      // que esta pantalla y la factura emitida dijeran cifras distintas.
-      let comision = 0, envios = 0, propinas = 0
-      for (const p of peds) {
-        const g = liqSocio(p, vinculacion)
-        comision += g.comision; envios += g.envio; propinas += g.propina
-      }
-      comision = +comision.toFixed(2); envios = +envios.toFixed(2); propinas = +propinas.toFixed(2)
-      // El total es el precio final: comisión + envíos + propinas, con el IGIC ya dentro.
-      // No se añade ningún impuesto por encima (decisión de Marlon, 29 jul 2026).
-      const total = +(comision + envios + propinas).toFixed(2)
-      const fechas = peds.map(p => new Date(p.entregado_at || p.created_at)).sort((a, b) => +a - +b)
-      setPreview({
-        pedidos_count: peds.length, comision_pct: pct,
-        comision, envios, propinas, total,
-        periodo_inicio: fechas[0]?.toISOString().slice(0, 10),
-        periodo_fin: fechas[fechas.length - 1]?.toISOString().slice(0, 10),
-      })
+      setPreview(sim)
     } catch (e) {
       setMsg({ tipo: 'error', txt: 'No se pudo calcular la factura: ' + e.message })
     } finally {
@@ -597,8 +618,13 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
       <div style={{ marginBottom: 24 }}>
         <button onClick={abrirPreviewFactura} disabled={!puedeFacturar || cargandoPreview || emitiendo}
           style={{ ...ds.glossyBtn, opacity: (!puedeFacturar || cargandoPreview || emitiendo) ? 0.5 : 1 }}>
-          {cargandoPreview ? 'Calculando…' : `Revisar y emitir factura${pedidosPendientesFactura ? ` (${pedidosPendientesFactura} pedidos)` : ''}`}
+          {cargandoPreview ? 'Calculando…' : `Revisar y emitir factura${simFactura?.pedidos_count ? ` (${simFactura.pedidos_count} ${simFactura.pedidos_count === 1 ? 'pedido' : 'pedidos'})` : ''}`}
         </button>
+        {textoSemanaEnCurso(simFactura) && (
+          <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 8, lineHeight: 1.5 }}>
+            Se factura por semanas cerradas (corte los lunes). {textoSemanaEnCurso(simFactura)}
+          </p>
+        )}
       </div>
 
       {/* Pedidos 7 días */}
@@ -781,6 +807,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
             </div>
             <p style={{ fontSize: 11, color: colors.textFaint, marginBottom: 16, lineHeight: 1.5 }}>
               IGIC incluido. Al confirmar se emite la factura y estos pedidos quedan marcados como facturados.
+              {textoSemanaEnCurso(preview) && <> {textoSemanaEnCurso(preview)}</>}
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setPreview(null)} disabled={emitiendo} style={ds.secondaryBtn}>Cancelar</button>
