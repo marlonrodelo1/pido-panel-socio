@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-// reconciliar-reembolsos v1 (9 jul 2026)
+// reconciliar-reembolsos v1 (9 jul 2026) · v6 (5 oct 2026): lote ordenado por cancelado_at desc
 // Cron (cada 5 min, via cron_dispatcher_5min): RED DE SEGURIDAD UNIVERSAL de reembolsos.
 // Barre pedidos YA CANCELADOS (o fallidos) pagados con TARJETA cuyo reembolso nunca
 // llegó a emitirse — p.ej. el refund fire-and-forget del panel restaurante falló
@@ -107,6 +107,10 @@ Deno.serve(async (req) => {
       .not('stripe_payment_id', 'is', null)
       .is('stripe_refund_id', null)
       .or(`cancelado_at.lt.${limite},and(cancelado_at.is.null,created_at.lt.${limite})`)
+      // v6 (5 oct 2026): lo más reciente primero. Sin orden, el lote de 25 se llenaba
+      // siempre con los mismos pedidos nunca cobrados ("sin completar el pago", que se
+      // omiten pero no salen del filtro) y un cancelado nuevo no entraba nunca (PD-I4Q759).
+      .order('cancelado_at', { ascending: false, nullsFirst: false })
       .limit(25);
     if (selErr) return json({ error: 'select_failed', message: selErr.message }, 500);
 
