@@ -14,7 +14,23 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" />
     <style>
       html, body { background-color: #F7F3EC !important; margin: 0; padding: 0; font-family: -apple-system, system-ui, sans-serif; color: #111; }
+      html[data-theme="dark"], html[data-theme="dark"] body { background-color: #14120F !important; color: #F3EDE3; }
     </style>
+    <!-- Modo oscuro (5-oct-2026): decide el tema ANTES de que cargue React para que no
+         haya un fogonazo claro. Misma clave y misma regla que src/lib/uiStyles.js. -->
+    <script>
+      (function () {
+        try {
+          var p = localStorage.getItem('pidoo_socio_tema');
+          var d = p === 'oscuro' || (p !== 'claro' && !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches));
+          var r = document.documentElement;
+          r.setAttribute('data-theme', d ? 'dark' : 'light');
+          r.style.colorScheme = d ? 'dark' : 'light';
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.setAttribute('content', d ? '#14120F' : '#F7F3EC');
+        } catch (e) {}
+      })();
+    </script>
     <meta name="description" content="Pidoo Socio — gestiona tu marketplace, tus restaurantes y tus ganancias." />
     <title>Pidoo Socio</title>
   </head>

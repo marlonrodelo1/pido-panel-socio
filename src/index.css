@@ -55,6 +55,56 @@
   --c-sage-soft: #DDE3D3;
 }
 
+/* Modo oscuro (5-oct-2026): mismos nombres, valores de la paleta OSCURO de
+   src/lib/uiStyles.js. data-theme lo ponen index.html (antes de React) y uiStyles.js. */
+:root[data-theme="dark"] {
+  --c-bg: #14120F;
+  --c-surface: #1C1915;
+  --c-surface2: #221F1A;
+  --c-surface3: #2F2B25;
+  --c-elev: #1C1915;
+  --c-elev2: #221F1A;
+  --c-border: #2F2B25;
+  --c-border-strong: #423C33;
+
+  --c-text: #F3EDE3;
+  --c-text-soft: #DCD4C7;
+  --c-muted: #A89F91;
+  --c-text-faint: #857C70;
+
+  --c-primary: #D46A40;
+  --c-primary-dark: #EE9670;
+  --c-primary-light: rgba(212,106,64,0.14);
+  --c-primary-soft: rgba(212,106,64,0.22);
+
+  --c-success: #9AAE88;
+  --c-success-soft: rgba(154,174,136,0.18);
+  --c-danger: #E2806F;
+  --c-danger-soft: rgba(226,128,111,0.16);
+  --c-warning: #DDAA63;
+  --c-warning-soft: rgba(221,170,99,0.16);
+  --c-info: #98ABC4;
+  --c-info-soft: rgba(152,171,196,0.16);
+
+  --c-shadow: 0 1px 3px rgba(0,0,0,0.35), 0 1px 1px rgba(0,0,0,0.25);
+  --c-shadow-md: 0 4px 12px rgba(0,0,0,0.40), 0 1px 3px rgba(0,0,0,0.30);
+  --c-shadow-lg: 0 14px 40px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35);
+
+  --c-cream: #14120F;
+  --c-cream-2: #221F1A;
+  --c-paper: #1C1915;
+  --c-ink: #F3EDE3;
+  --c-ink-2: #DCD4C7;
+  --c-stone: #A89F91;
+  --c-stone-2: #857C70;
+  --c-terracotta: #D46A40;
+  --c-terracotta-2: #EE9670;
+  --c-terracotta-soft: #3B241A;
+  --c-sage: #9AAE88;
+  --c-sage-2: #B5C7A3;
+  --c-sage-soft: #232A1E;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

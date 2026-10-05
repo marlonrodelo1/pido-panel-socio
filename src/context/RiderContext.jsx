@@ -21,10 +21,12 @@ import { useSocio } from './SocioContext'
 import { riderOnline, riderOffline, riderHeartbeat, riderPresenceToken } from '../lib/riderApi'
 import { startTracking, stopTracking, getCurrentPosition, requestLocationPermission, captureAndPush, openLocationSettings } from '../lib/riderGeo'
 import { onPushReceived, onPushTapped } from '../lib/pushNative'
-import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, requestBatteryExemption, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs, openAutostartSettings, consumeClosedFlag, marcarPedidoEnCurso } from '../lib/offlineBeacon'
+import { armOfflineBeacon, disarmOfflineBeacon, refreshOfflineBeaconToken, armPresenceBeat, disarmPresenceBeat, checkPresencePrereqs, consumeClosedFlag, marcarPedidoEnCurso } from '../lib/offlineBeacon'
+import { comprobarMovil } from '../lib/comprobacionMovil'
 import { isNativePlatform, getPlugin, getDeviceId } from '../lib/capacitor'
 import { installPedidoSoundUnlock } from '../lib/pedidoSound'
 import LocationDisclosureModal from '../components/LocationDisclosureModal'
+import ComprobacionMovilModal from '../components/ComprobacionMovilModal'
 
 const RiderCtx = createContext(null)
 export const useRider = () => useContext(RiderCtx)
@@ -47,6 +49,11 @@ export function RiderProvider({ children }) {
   const dismissedIdsRef = useRef(new Set()) // asignaciones ya descartadas localmente (no re-mostrar)
   const [showDisclosure, setShowDisclosure] = useState(false)
   const disclosureResolveRef = useRef(null)
+  // v307: comprobación del móvil (ver lib/comprobacionMovil.js). `problemasMovil` = lo que falla
+  // AHORA estando En línea (se mira al volver a la app) → banner en la pantalla principal.
+  const [comprobacion, setComprobacion] = useState({ open: false, lista: [], comprobando: false, soloRevisar: false })
+  const comprobacionResolveRef = useRef(null)
+  const [problemasMovil, setProblemasMovil] = useState([])
   const deviceIdRef = useRef(null)     // id de este dispositivo (single-device)
   const supersededRef = useRef(false)  // ya se detecto que otro dispositivo tomo la cuenta
   // true mientras el RECLAMO del dispositivo (rider-online) está en vuelo. El latido no
@@ -233,7 +240,11 @@ export function RiderProvider({ children }) {
       // (3) Primer login / sin consentimiento previo / estaba offline → empezar offline
       // (aquí, al pulsar "En servicio", sale el aviso + se piden permisos).
       setIsOnline(false)
-      if (s.en_servicio) { riderOffline('sin_consentimiento').catch(() => {}) }
+      // v307: SOLO en la app nativa. En la web (vista previa, socio.pidoo.es) este
+      // consentimiento no se guarda nunca, así que abrir la web con el socio En línea en su
+      // móvil lo echaba de línea (pasó el 5-oct con deltafood). Un navegador no puede apagar
+      // al socio: eso es del botón o de cerrar la app del todo.
+      if (nativo && s.en_servicio) { riderOffline('sin_consentimiento').catch(() => {}) }
     }
   }
 
@@ -307,6 +318,51 @@ export function RiderProvider({ children }) {
   // gesto del usuario en la app (cualquier toque).
   useEffect(() => { installPedidoSoundUnlock() }, [])
 
+  // ─── v307: comprobación del móvil ─────────────────────────
+  // Antes de ponerse En línea (Android): notificaciones, sonido del aviso de pedidos, volumen de
+  // alarma, batería, ubicación "siempre" e Inicio automático. Si todo está bien, no se enseña
+  // nada. Si algo falla, pantalla con cada arreglo; resuelve true al pulsar "Ponerme En línea"
+  // con todo en verde, false si el socio dice "Ahora no".
+  const recomprobarMovil = async () => {
+    setComprobacion((c) => ({ ...c, comprobando: true }))
+    try {
+      const { lista, fallos } = await comprobarMovil()
+      setComprobacion((c) => ({ ...c, lista, comprobando: false }))
+      setProblemasMovil(fallos)
+    } catch (_) {
+      setComprobacion((c) => ({ ...c, comprobando: false }))
+    }
+  }
+  const pedirComprobacion = async ({ soloRevisar = false } = {}) => {
+    let r
+    try { r = await comprobarMovil() } catch (_) { return true }
+    setProblemasMovil(r.fallos)
+    if (!soloRevisar && r.fallos.length === 0) return true
+    return new Promise((resolve) => {
+      comprobacionResolveRef.current = resolve
+      setComprobacion({ open: true, lista: r.lista, comprobando: false, soloRevisar })
+    })
+  }
+  const cerrarComprobacion = (resultado) => {
+    setComprobacion((c) => ({ ...c, open: false }))
+    const res = comprobacionResolveRef.current
+    comprobacionResolveRef.current = null
+    res?.(resultado)
+  }
+  // Estando En línea, al volver a la app se mira otra vez (el socio pudo quitar el sonido o el
+  // sistema resetear un permiso). Si algo falla, banner en la pantalla principal.
+  useEffect(() => {
+    if (!isOnline) { setProblemasMovil([]); return }
+    let vivo = true
+    const mirar = () => {
+      if (document.visibilityState !== 'visible') return
+      comprobarMovil().then((r) => { if (vivo) setProblemasMovil(r.fallos) }).catch(() => {})
+    }
+    mirar()
+    document.addEventListener('visibilitychange', mirar)
+    return () => { vivo = false; document.removeEventListener('visibilitychange', mirar) }
+  }, [isOnline])
+
   const setOnline = async (next) => {
     // Mutex: si ya hay un cambio de estado en vuelo, ignoramos el segundo tap
     // (posiblemente desde otro toggle en otra pantalla). Evita que un online y un
@@ -334,6 +390,14 @@ export function RiderProvider({ children }) {
       }
       const granted = await requestLocationPermission()
       setNeedsLocation(!granted)
+      // v307: sin el móvil preparado no se pone En línea (caso Edinson: pedidos que no sonaban).
+      const listo = await pedirComprobacion()
+      if (!listo) {
+        setIsOnline(false)
+        togglingRef.current = false
+        if (marcaCierreRef.current && socioRef.current?.en_servicio) apagarTrasCierre()
+        return { ok: false, declined: true }
+      }
       // UI INSTANTÁNEA: pintamos "En línea" YA. GPS y edge corren en segundo plano.
       // claimPendingRef silencia el latido hasta que rider-online reclame el dispositivo.
       claimPendingRef.current = true
@@ -382,25 +446,12 @@ export function RiderProvider({ children }) {
           //    actualizaciones de Play a veces resetean ese permiso);
           //  - sin exención de batería → abrir ajustes, máx. 1 vez al día (si insistimos
           //    en cada toggle, el socio deja de leer).
+          // v307: batería e Inicio automático ya los exige la comprobación del móvil antes de
+          // llegar aquí (antes se pedían una vez al día / una sola vez, y el Inicio automático
+          // solo si la batería ya estaba bien: a Edinson nunca se le llegó a pedir).
           try {
             const pre = await checkPresencePrereqs()
             if (pre && pre.bgLocation === false) setNeedsLocation(true)
-            if (pre && pre.batteryExempt === false) {
-              const last = Number(localStorage.getItem('pidoo_batt_asked_at') || 0)
-              if (Date.now() - last > 86_400_000) {
-                localStorage.setItem('pidoo_batt_asked_at', String(Date.now()))
-                requestBatteryExemption()
-              }
-            } else if (pre && pre.autostartSospechoso === true && !localStorage.getItem('pidoo_autostart_asked')) {
-              // v303: en Xiaomi/Huawei/Oppo/Vivo el sistema mata la app aunque haya
-              // foreground service + batería sin restricciones, salvo que el usuario
-              // conceda el "Inicio automático" propietario (caso Edinson, 2-sep). No es
-              // consultable por API → se pide UNA sola vez, y solo cuando la batería ya
-              // está resuelta (nunca dos pantallas de ajustes en el mismo online).
-              localStorage.setItem('pidoo_autostart_asked', '1')
-              alert('Último paso para no perder pedidos: en la pantalla que se abre ahora, busca "Pidoo Socio" y activa el Inicio automático. Sin esto, tu móvil desconecta la app a los pocos minutos de guardarlo.')
-              openAutostartSettings()
-            }
           } catch (_) {}
           refreshSocio?.()
         } finally {
@@ -804,7 +855,9 @@ export function RiderProvider({ children }) {
     clearActionError,
     dismissPendiente,
     refreshAsignaciones,
-  }), [socio, user, isOnline, needsLocation, actionError, asignacionPendiente, asignacionesActivas, refreshAsignaciones])
+    problemasMovil,
+    revisarMovil: () => pedirComprobacion({ soloRevisar: true }),
+  }), [socio, user, isOnline, needsLocation, actionError, asignacionPendiente, asignacionesActivas, refreshAsignaciones, problemasMovil])
 
   return (
     <RiderCtx.Provider value={value}>
@@ -813,6 +866,15 @@ export function RiderProvider({ children }) {
         open={showDisclosure}
         onAccept={() => disclosureResolveRef.current?.(true)}
         onDecline={() => disclosureResolveRef.current?.(false)}
+      />
+      <ComprobacionMovilModal
+        open={comprobacion.open}
+        lista={comprobacion.lista}
+        comprobando={comprobacion.comprobando}
+        soloRevisar={comprobacion.soloRevisar}
+        onRecheck={recomprobarMovil}
+        onContinue={() => cerrarComprobacion(true)}
+        onCancel={() => cerrarComprobacion(false)}
       />
     </RiderCtx.Provider>
   )

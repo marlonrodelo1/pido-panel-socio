@@ -542,7 +542,7 @@ export default function ModalPedidoEntrante() {
           disabled={busy === 'reject'}
           style={{
             flex: 2, padding: '14px', borderRadius: 14, border: 'none',
-            background: `linear-gradient(180deg, ${colors.terracotta} 0%, ${colors.terracotta2} 100%)`,
+            background: `linear-gradient(180deg, ${colors.terracotta} 0%, ${colors.terracottaDeep} 100%)`,
             color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit',
             boxShadow: '0 8px 20px rgba(197,86,44,0.40), inset 0 1px 0 rgba(255,255,255,0.18)',
             opacity: busy ? 0.6 : 1,

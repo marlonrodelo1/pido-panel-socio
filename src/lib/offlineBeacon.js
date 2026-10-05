@@ -132,6 +132,31 @@ export async function openAutostartSettings() {
   try { await OfflineBeacon.openAutostartSettings() } catch (e) { apuntarFallo('openAutostartSettings', e) }
 }
 
+// ─── v307 (5-oct-2026): ARREGLAR DESDE LA COMPROBACIÓN DEL MÓVIL ───
+// Ver lib/comprobacionMovil.js. Cada uno abre la pantalla de Ajustes donde se arregla una
+// cosa concreta. Devuelven false si el nativo no tiene el método (build vieja / iOS / web).
+
+export async function openNotificationSettings() {
+  if (!(await isNativePlatform())) return false
+  try { await OfflineBeacon.openNotificationSettings(); return true } catch (e) { apuntarFallo('openNotificationSettings', e); return false }
+}
+
+export async function openPedidosChannelSettings() {
+  if (!(await isNativePlatform())) return false
+  try { await OfflineBeacon.openPedidosChannelSettings(); return true } catch (e) { apuntarFallo('openPedidosChannelSettings', e); return false }
+}
+
+// Sube el volumen de ALARMA (el aviso de pedidos suena a ese volumen) al 80 % del máximo.
+export async function subirVolumenAlarma(fraccion = 0.8) {
+  if (!(await isNativePlatform())) return null
+  try { return await OfflineBeacon.subirVolumenAlarma({ fraccion }) } catch (e) { apuntarFallo('subirVolumenAlarma', e); return null }
+}
+
+export async function openAppSettings() {
+  if (!(await isNativePlatform())) return false
+  try { await OfflineBeacon.openAppSettings(); return true } catch (e) { apuntarFallo('openAppSettings', e); return false }
+}
+
 // ─── v305 (28-sep-2026): CIERRE DE LA APP DEL TODO ───
 //
 // Regla de Marlon: el socio solo queda Fuera de línea si pulsa su botón o CIERRA LA APP DEL

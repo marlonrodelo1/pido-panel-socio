@@ -1,16 +1,20 @@
 package com.pidoo.socio;
 
 import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.nfc.NfcAdapter;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
@@ -52,6 +56,15 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *  - tapToPayChecks(): lo que el móvil ofrece para cobrar con Tap to Pay (NFC, opciones de
  *    desarrollador...). Solo informa; qué hacer con ello lo decide el JS.
  *  - openNfcSettings(): abre los ajustes de NFC (o los de conexiones si el móvil no los tiene).
+ *
+ * v307 (5-oct-2026) — COMPROBACIÓN DEL MÓVIL ANTES DE PONERSE EN LÍNEA:
+ *  Caso Edinson (Xiaomi, Android 16): el servidor le mandaba los avisos de pedido y Google los
+ *  aceptaba (34 de 34), pero su móvil no los hacía sonar con la app minimizada. Nada de eso lo
+ *  veía la app. checkPrereqs() ahora devuelve también: notificaciones activadas, importancia y
+ *  sonido del canal "Pedidos entrantes" y volumen de ALARMA (el canal suena a ese volumen).
+ *  Métodos nuevos para arreglarlo desde la propia pantalla de comprobación:
+ *  openNotificationSettings(), openPedidosChannelSettings(), subirVolumenAlarma({fraccion}),
+ *  openAppSettings().
  */
 @CapacitorPlugin(name = "OfflineBeacon")
 public class OfflineBeaconPlugin extends Plugin {
@@ -197,10 +210,121 @@ public class OfflineBeaconPlugin extends Plugin {
             // (caso Edinson, Xiaomi HyperOS). No hay API para CONSULTAR ese permiso: solo
             // se puede sospechar por fabricante y abrir su pantalla de ajustes.
             out.put("autostartSospechoso", esFabricanteAsesino());
+
+            // v307: que el aviso de pedido SUENE con la app minimizada.
+            out.put("notificaciones", NotificationManagerCompat.from(ctx).areNotificationsEnabled());
+            int canalImportancia = -1; // -1 = el canal aún no existe (lo crea MainActivity al abrir)
+            boolean canalSonido = true;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+                NotificationChannel ch = nm != null ? nm.getNotificationChannel(MainActivity.CH_PEDIDOS) : null;
+                if (ch != null) {
+                    canalImportancia = ch.getImportance();
+                    canalSonido = ch.getSound() != null;
+                }
+            }
+            out.put("canalImportancia", canalImportancia);
+            out.put("canalSonido", canalSonido);
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                out.put("volumenAlarma", am.getStreamVolume(AudioManager.STREAM_ALARM));
+                out.put("volumenAlarmaMax", am.getStreamMaxVolume(AudioManager.STREAM_ALARM));
+            }
+            out.put("fabricante", Build.MANUFACTURER == null ? "" : Build.MANUFACTURER);
+            out.put("modelo", Build.MODEL == null ? "" : Build.MODEL);
+            out.put("androidSdk", Build.VERSION.SDK_INT);
         } catch (Exception e) {
             out.put("error", e.getMessage());
         }
         call.resolve(out);
+    }
+
+    // ─── v307: arreglar desde la comprobación del móvil ───
+
+    /** Ajustes de notificaciones de la app (Android 8+); si no, la ficha de la app. */
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        Context ctx = getContext();
+        try {
+            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, ctx.getPackageName());
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+        } catch (Exception e) {
+            abrirFichaApp(ctx);
+        }
+        call.resolve();
+    }
+
+    /** Ajustes del canal "Pedidos entrantes" (sonido, ventana emergente); si no, los de la app. */
+    @PluginMethod
+    public void openPedidosChannelSettings(PluginCall call) {
+        Context ctx = getContext();
+        try {
+            Intent intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, ctx.getPackageName());
+            intent.putExtra(Settings.EXTRA_CHANNEL_ID, MainActivity.CH_PEDIDOS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+        } catch (Exception e) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                intent.putExtra(Settings.EXTRA_APP_PACKAGE, ctx.getPackageName());
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(intent);
+            } catch (Exception e2) {
+                abrirFichaApp(ctx);
+            }
+        }
+        call.resolve();
+    }
+
+    /**
+     * Sube el volumen de ALARMA (el aviso de pedidos suena a ese volumen, USAGE_ALARM) a la
+     * fracción pedida del máximo, enseñando el control del sistema. Si el móvil no deja
+     * (No molestar estricto), abre los ajustes de sonido. Devuelve {volumen, max}.
+     */
+    @PluginMethod
+    public void subirVolumenAlarma(PluginCall call) {
+        Context ctx = getContext();
+        JSObject out = new JSObject();
+        double fraccion = call.getDouble("fraccion", 0.8);
+        try {
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            int max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM);
+            int objetivo = (int) Math.max(1, Math.round(max * Math.min(1.0, Math.max(0.1, fraccion))));
+            if (am.getStreamVolume(AudioManager.STREAM_ALARM) < objetivo) {
+                am.setStreamVolume(AudioManager.STREAM_ALARM, objetivo, AudioManager.FLAG_SHOW_UI);
+            }
+            out.put("volumen", am.getStreamVolume(AudioManager.STREAM_ALARM));
+            out.put("max", max);
+        } catch (Exception e) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_SOUND_SETTINGS);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(intent);
+            } catch (Exception ignored) {
+            }
+            out.put("error", e.getMessage());
+        }
+        call.resolve(out);
+    }
+
+    /** Ficha de la app en Ajustes (permisos, batería, ahorro de energía del fabricante). */
+    @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        abrirFichaApp(getContext());
+        call.resolve();
+    }
+
+    private static void abrirFichaApp(Context ctx) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + ctx.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+        } catch (Exception ignored) {
+        }
     }
 
     // ─── v303: "Inicio automatico" en OEMs que matan el latido ───

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { Capacitor } from '@capacitor/core'
-import { CheckCircle2, CircleX, CircleQuestionMark, CreditCard } from 'lucide-react'
+import { CheckCircle2, CircleX, CircleQuestionMark, CreditCard, Sun, Moon, SunMoon } from 'lucide-react'
 import { useSocio } from '../context/SocioContext'
 import { supabase } from '../lib/supabase'
 import { isNativeSync, getPlugin } from '../lib/capacitor'
-import { colors, ds, type } from '../lib/uiStyles'
+import { colors, ds, type, TEMA, preferenciaTema, cambiarTema } from '../lib/uiStyles'
 import {
   cobroMovilSoportado, configCobroMovil, requisitosTapToPay, prepararLector,
   abrirAjustesNfc, lectorPreparado,
@@ -97,6 +97,9 @@ export default function Configuracion({ enApp = false }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* Mi cuenta: qué correo tiene la sesión abierta y cómo cambiar la contraseña. */}
         <MiCuentaCard />
+
+        {/* Apariencia: claro / oscuro / automático (el del móvil). */}
+        <AparienciaCard />
 
         {/* Cobro con tarjeta (Tap to Pay): solo en la app del móvil. Dice si este móvil puede
             cobrar, qué falta y cómo se cobra. */}
@@ -246,6 +249,51 @@ export default function Configuracion({ enApp = false }) {
 
 function Card({ children, style }) {
   return <div style={{ ...ds.card, padding: 20, ...style }}>{children}</div>
+}
+
+// Apariencia (5-oct-2026). Se guarda en el móvil (localStorage), no en la cuenta: cada
+// dispositivo puede llevar la suya. Cambiar a un tema distinto del que se ve recarga la app
+// para repintarlo todo (ver cambiarTema en lib/uiStyles.js).
+const OPCIONES_TEMA = [
+  { id: 'auto', label: 'Automático', Icon: SunMoon },
+  { id: 'claro', label: 'Claro', Icon: Sun },
+  { id: 'oscuro', label: 'Oscuro', Icon: Moon },
+]
+function AparienciaCard() {
+  const [pref, setPref] = useState(preferenciaTema)
+  const elegir = (id) => { setPref(id); cambiarTema(id) }
+  return (
+    <Card>
+      <h2 style={{ ...ds.h2, marginBottom: 4 }}>Apariencia</h2>
+      <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 12, lineHeight: 1.5 }}>
+        {pref === 'auto'
+          ? `Sigue el modo de tu móvil (ahora ${TEMA === 'oscuro' ? 'oscuro' : 'claro'}).`
+          : `Siempre en modo ${pref}, aunque el móvil esté en ${pref === 'oscuro' ? 'claro' : 'oscuro'}.`}
+      </p>
+      <div role="radiogroup" aria-label="Apariencia" style={{
+        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, padding: 4,
+        background: colors.cream2, borderRadius: 12, border: `1px solid ${colors.border}`,
+      }}>
+        {OPCIONES_TEMA.map(({ id, label, Icon }) => {
+          const on = pref === id
+          return (
+            <button key={id} role="radio" aria-checked={on} onClick={() => elegir(id)} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+              padding: '9px 4px', borderRadius: 9, cursor: 'pointer', fontFamily: type.family,
+              border: on ? `1px solid ${colors.border}` : '1px solid transparent',
+              background: on ? colors.paper : 'transparent',
+              boxShadow: on ? colors.shadow : 'none',
+              color: on ? colors.text : colors.textMute,
+              fontSize: type.xs, fontWeight: on ? 700 : 600,
+            }}>
+              <Icon size={17} strokeWidth={2.2} />
+              {label}
+            </button>
+          )
+        })}
+      </div>
+    </Card>
+  )
 }
 
 // Mi cuenta — el socio no tenía dónde ver con qué correo ha entrado ni cómo
@@ -520,7 +568,7 @@ function CabeceraCobro() {
 
 const TONO_COBRO = {
   ok:    { bg: colors.sageSoft,    fg: colors.sage2 },
-  aviso: { bg: colors.warningSoft, fg: '#8B6126' },
+  aviso: { bg: colors.warningSoft, fg: colors.warningInk },
   mal:   { bg: colors.dangerSoft,  fg: colors.danger },
   neutro: { bg: colors.surface2,   fg: colors.textDim },
 }

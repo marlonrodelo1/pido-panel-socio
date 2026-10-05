@@ -8,6 +8,11 @@ import { SUPABASE_CONFIG_OK } from './lib/supabase'
 import { setupStatusBar, hideSplash } from './lib/capacitor'
 import { initLiveUpdates } from './lib/liveUpdates'
 import { installPedidoSoundUnlock } from './lib/pedidoSound'
+import { vigilarTemaDelMovil } from './lib/uiStyles'
+
+// Modo oscuro en "Automático": si el móvil cambia de claro a oscuro con la app en segundo
+// plano, al volver se recarga con el tema nuevo.
+vigilarTemaDelMovil()
 
 // Desbloqueo del audio del pedido LO ANTES POSIBLE (18-jul-2026). Antes se instalaba
 // dentro de RiderProvider, que solo se monta tras el gate de sesión: los toques en el

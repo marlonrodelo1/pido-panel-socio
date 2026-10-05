@@ -1,4 +1,9 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, processLock } from '@supabase/supabase-js'
+import { Capacitor } from '@capacitor/core'
+
+function esAppNativa() {
+  try { return Capacitor.isNativePlatform() } catch (_) { return false }
+}
 
 const url = import.meta.env.VITE_SUPABASE_URL
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -28,6 +33,14 @@ function createSafeClient() {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        // v307 (5-oct-2026): candado de sesión DENTRO del proceso en vez del del navegador
+        // (navigator.locks). La app es una sola pestaña (WebView); con el candado del
+        // navegador, cuando una petición lo retenía más de 5 s (renovar el token con el
+        // WebView frenado en segundo plano) la siguiente lo "robaba" y saltaba
+        // "Lock broken by another request with the 'steal' option": 883 envíos de ubicación
+        // perdidos en 3 días (riderApi.rider-update-location en push_debug_logs).
+        // En la web (socio.pidoo.es, varias pestañas) se deja el del navegador.
+        ...(esAppNativa() ? { lock: processLock } : {}),
       },
     })
   }

@@ -149,10 +149,11 @@ export async function setupStatusBar() {
   try {
     await SB.setOverlaysWebView({ overlay: true })
     // OJO: en Capacitor 'Light' = iconos OSCUROS (para fondos claros) y 'Dark' =
-    // iconos claros. El socio tiene fondo claro (#FAFAF7), así que va 'LIGHT' para
-    // que la hora/wifi/batería se vean (con 'DARK' salían blancos = invisibles).
-    await SB.setStyle({ style: 'LIGHT' })
-    await SB.setBackgroundColor({ color: '#FAFAF7' })
+    // iconos claros. En claro (#FAFAF7) va 'LIGHT' para que la hora/wifi/batería se vean
+    // (con 'DARK' salían blancos = invisibles). 5-oct-2026: en modo oscuro, al revés.
+    const { esOscuro, colors } = await import('./uiStyles')
+    await SB.setStyle({ style: esOscuro ? 'DARK' : 'LIGHT' })
+    await SB.setBackgroundColor({ color: esOscuro ? colors.cream : '#FAFAF7' })
   } catch (e) {
     console.warn('[capacitor] StatusBar setup failed:', e?.message)
   }

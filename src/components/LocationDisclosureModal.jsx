@@ -5,6 +5,7 @@
 // Requiere acción afirmativa del usuario (Activar) antes de seguir.
 
 import { MapPin } from 'lucide-react'
+import { colors, esOscuro } from '../lib/uiStyles'
 
 export default function LocationDisclosureModal({ open, onAccept, onDecline }) {
   if (!open) return null
@@ -18,9 +19,9 @@ export default function LocationDisclosureModal({ open, onAccept, onDecline }) {
     >
       <div
         style={{
-          width: '100%', maxWidth: 420, background: '#FFFFFF', borderRadius: 20,
+          width: '100%', maxWidth: 420, background: esOscuro ? colors.paper : '#FFFFFF', borderRadius: 20,
           padding: '28px 24px', boxShadow: '0 24px 60px rgba(0,0,0,0.35)',
-          fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif", color: '#16130F',
+          fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif", color: esOscuro ? colors.text : '#16130F',
         }}
       >
         <div
@@ -35,7 +36,7 @@ export default function LocationDisclosureModal({ open, onAccept, onDecline }) {
         <h2 style={{ fontSize: 20, fontWeight: 800, textAlign: 'center', margin: '0 0 12px', letterSpacing: '-0.01em' }}>
           Pidoo Socio necesita tu ubicación
         </h2>
-        <p style={{ fontSize: 14.5, lineHeight: 1.55, color: '#4A4640', margin: '0 0 22px', textAlign: 'center' }}>
+        <p style={{ fontSize: 14.5, lineHeight: 1.55, color: esOscuro ? colors.textDim : '#4A4640', margin: '0 0 22px', textAlign: 'center' }}>
           Para asignarte los pedidos más cercanos, Pidoo Socio recoge tu ubicación{' '}
           <b>incluso cuando la app está cerrada o en segundo plano</b>, mientras estás{' '}
           <b>En servicio</b>. Verás una notificación “Pidoo en servicio” mientras compartes tu
@@ -55,7 +56,7 @@ export default function LocationDisclosureModal({ open, onAccept, onDecline }) {
           onClick={onDecline}
           style={{
             width: '100%', padding: '12px 0', borderRadius: 12, border: 'none',
-            background: 'transparent', color: '#6B6356', fontSize: 14, fontWeight: 700,
+            background: 'transparent', color: colors.textMute, fontSize: 14, fontWeight: 700,
             cursor: 'pointer', fontFamily: 'inherit',
           }}
         >

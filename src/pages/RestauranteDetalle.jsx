@@ -10,10 +10,23 @@ import { formatTarifa, tarifaCampos, fmtPct, formatFechaCorta } from '../lib/tar
 import { etiquetaPago } from '../lib/metodoPago'
 import { calcGanancia } from '../lib/ganancia'
 import { getPlugin } from '../lib/capacitor'
-import { Bike } from 'lucide-react'
+import { Bike, FileText } from 'lucide-react'
 import { ModalProponer } from './Restaurantes'
 
-function euro(v) { return `${Number(v || 0).toFixed(2)} €` }
+function euro(v) { return `${Number(v || 0).toFixed(2).replace('.', ',')} €` }
+
+// Fechas tipo DATE ('2026-09-28'): se leen en UTC, si no en un móvil al oeste de UTC
+// saldrían un día antes.
+const diaUTC = (d) => new Date(`${String(d).slice(0, 10)}T00:00:00Z`)
+// "28 sept – 4 oct 2026" (el año solo al final si es el mismo).
+function rangoPeriodo(ini, fin) {
+  if (!ini || !fin) return '—'
+  const a = diaUTC(ini); const b = diaUTC(fin)
+  const dm = { day: 'numeric', month: 'short', timeZone: 'UTC' }
+  const izq = a.toLocaleDateString('es-ES', a.getUTCFullYear() === b.getUTCFullYear() ? dm : { ...dm, year: 'numeric' })
+  return `${izq} – ${b.toLocaleDateString('es-ES', { ...dm, year: 'numeric' })}`
+}
+const fechaCorta = (d) => (d ? diaUTC(d).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }) : '—')
 
 // Lo que el socio cobra por un pedido. FUENTE ÚNICA = el snapshot socio_liq_* congelado al
 // entregar, que es EXACTAMENTE lo que factura generar-factura-socio-restaurante v10 y lo que
@@ -67,6 +80,16 @@ function textoSemanaEnCurso(sim) {
   if (!n || !sim?.corte || !sim?.siguiente_corte) return null
   const dia = (iso) => new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'numeric', timeZone: 'UTC' })
   return `${n === 1 ? 'El pedido' : `Los ${n} pedidos`} de esta semana (desde el lunes ${dia(sim.corte)}) ${n === 1 ? 'se factura' : 'se facturan'} a partir del lunes ${dia(sim.siguiente_corte)}.`
+}
+
+// " La de esta semana (5 oct – 11 oct 2026) sale el lunes, 12 oct, de momento con 4 pedidos."
+function textoProximaFactura(sim) {
+  if (!sim?.corte || !sim?.siguiente_corte) return null
+  const sig = new Date(sim.siguiente_corte)
+  const domingo = new Date(sig.getTime() - 86400000).toISOString()
+  const lunes = sig.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' })
+  const n = Number(sim.pedidos_semana_en_curso || 0)
+  return ` La de esta semana (${rangoPeriodo(sim.corte, domingo)}) sale el ${lunes}${n ? `, de momento con ${n} ${n === 1 ? 'pedido' : 'pedidos'}` : ''}.`
 }
 
 // Abre un PDF: navegador nativo (Browser) dentro de la APK; en web cae a window.open.
@@ -131,7 +154,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
             .select('id, codigo, estado, total, created_at, metodo_pago')
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
             .gte('created_at', desde7.toISOString())
-            .order('created_at', { ascending: false }).limit(50),
+            .order('created_at', { ascending: false }).limit(200),
           // Pedidos ENTREGADOS este mes → ingresos del socio (según el pacto, no según lo
           // que pagó el cliente: en tarifa fija son cifras distintas).
           supabase.from('pedidos')
@@ -145,7 +168,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
           supabase.from('facturas_socio_restaurante')
             .select('id, numero, fecha_emision, total, estado, pdf_url, pedidos_count, periodo_inicio, periodo_fin')
             .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
-            .order('fecha_emision', { ascending: false }).limit(20),
+            .order('periodo_inicio', { ascending: false }).order('fecha_emision', { ascending: false }).limit(20),
         ])
 
         if (cancel) return
@@ -177,6 +200,11 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
     () => pedidosMes.reduce((s, p) => s + liqSocio(p, vinculacion).total, 0),
     [pedidosMes, vinculacion]
   )
+  // La tarjeta "Pedidos 7 días" contaba también los cancelados (deltafood → Duende: 21 pedidos
+  // de los que 18 eran pruebas canceladas). Cuenta lo entregado y enseña los cancelados aparte.
+  const entregados7d = pedidos7d.filter(p => p.estado === 'entregado').length
+  const cancelados7d = pedidos7d.filter(p => p.estado === 'cancelado').length
+  const enCurso7d = pedidos7d.length - entregados7d - cancelados7d
   const totalPorCobrar = Number(resumenCobro?.total_neto || 0)
   const pedidosPendientesFactura = Number(resumenCobro?.pedidos_count || 0)
 
@@ -387,7 +415,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
             supabase.from('facturas_socio_restaurante')
               .select('id, numero, fecha_emision, total, estado, pdf_url, pedidos_count, periodo_inicio, periodo_fin')
               .eq('socio_id', socio.id).eq('establecimiento_id', establecimiento_id)
-              .order('fecha_emision', { ascending: false }).limit(20),
+              .order('periodo_inicio', { ascending: false }).order('fecha_emision', { ascending: false }).limit(20),
             supabase.rpc('get_detalle_por_cobrar_socio', { p_establecimiento_id: establecimiento_id }),
             supabase.from('pedidos')
               .select(`id, codigo, modo_entrega, origen_pedido, coste_envio, propina, subtotal, entregado_at, ${COLS_LIQ}`)
@@ -515,9 +543,10 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
               {repartoActivo ? 'Recibiendo pedidos' : 'En pausa'}
             </div>
             <div style={{ fontSize: type.xs, color: colors.textMute, marginTop: 2, lineHeight: 1.4 }}>
+              {/* 5-oct-2026: pausar también lo quita de tu marketplace (get-socio-marketplace v21). */}
               {repartoActivo
-                ? 'Estás recibiendo pedidos de este restaurante.'
-                : 'No recibirás pedidos de este restaurante hasta que lo actives.'}
+                ? 'Recibes sus pedidos de la app, su web, por teléfono y de tu marketplace.'
+                : 'No recibirás sus pedidos y no saldrá en tu marketplace hasta que lo actives.'}
             </div>
           </div>
           <Switch on={repartoActivo} onToggle={toggleReparto} disabled={togglingReparto} ariaLabel="Recibir pedidos de este restaurante" />
@@ -529,7 +558,12 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
         <StatCard label="Enviado este mes" value={euro(ingresosMes)} sub={pedidosMes.length === 1 ? '1 entregado' : `${pedidosMes.length} entregados`} tone="sage" />
         <StatCard label="Por cobrar" value={euro(totalPorCobrar)} sub={`${pedidosPendientesFactura} sin facturar`} tone="terracotta" />
         <StatCard label="Cobrado (histórico)" value={euro(totalCobrado)} />
-        <StatCard label="Pedidos 7 días" value={pedidos7d.length} sub={pedidos7d.length === 1 ? '1 pedido' : `${pedidos7d.length} pedidos`} />
+        <StatCard label="Pedidos 7 días" value={entregados7d}
+          sub={[
+            entregados7d === 1 ? 'entregado' : 'entregados',
+            enCurso7d ? `${enCurso7d} en curso` : null,
+            cancelados7d ? `${cancelados7d} ${cancelados7d === 1 ? 'cancelado' : 'cancelados'}` : null,
+          ].filter(Boolean).join(' · ')} />
       </div>
 
       {/* Tarifa pactada */}
@@ -614,17 +648,31 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
         }}>{msg.txt}</div>
       )}
 
-      {/* CTA emitir factura */}
+      {/* Facturación. Desde el 5-oct-2026 la factura de cada semana cerrada la emite el
+          servidor solo, los lunes (generar-factura-socio-restaurante v16, modo auto). El botón
+          solo aparece si queda alguna semana cerrada sin facturar (p. ej. el lunes faltaban
+          datos fiscales) y emite UNA semana por pulsación, nunca varias juntas. */}
       <div style={{ marginBottom: 24 }}>
-        <button onClick={abrirPreviewFactura} disabled={!puedeFacturar || cargandoPreview || emitiendo}
-          style={{ ...ds.glossyBtn, opacity: (!puedeFacturar || cargandoPreview || emitiendo) ? 0.5 : 1 }}>
-          {cargandoPreview ? 'Calculando…' : `Revisar y emitir factura${simFactura?.pedidos_count ? ` (${simFactura.pedidos_count} ${simFactura.pedidos_count === 1 ? 'pedido' : 'pedidos'})` : ''}`}
-        </button>
-        {textoSemanaEnCurso(simFactura) && (
-          <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 8, lineHeight: 1.5 }}>
-            Se factura por semanas cerradas (corte los lunes). {textoSemanaEnCurso(simFactura)}
-          </p>
-        )}
+        {puedeFacturar && simFactura?.pedidos_count > 0 ? (
+          <>
+            <button onClick={abrirPreviewFactura} disabled={cargandoPreview || emitiendo}
+              style={{ ...ds.glossyBtn, opacity: (cargandoPreview || emitiendo) ? 0.5 : 1 }}>
+              {cargandoPreview ? 'Calculando…' : `Emitir factura ${rangoPeriodo(simFactura.periodo_inicio, simFactura.periodo_fin)}`}
+            </button>
+            <p style={{ fontSize: type.xs, color: colors.textMute, marginTop: 8, lineHeight: 1.5 }}>
+              Semana sin facturar: {simFactura.pedidos_count} {simFactura.pedidos_count === 1 ? 'pedido' : 'pedidos'} · {euro(simFactura.total)}.
+              {Number(simFactura.semanas_pendientes) > 1 && ` Quedan ${simFactura.semanas_pendientes} semanas: se emite una cada vez.`}
+            </p>
+          </>
+        ) : (fiscalCompletoSocio && fiscalRestauranteOk) ? (
+          <div style={{ ...ds.card, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <FileText size={18} color={colors.textMute} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: type.xs, color: colors.textDim, lineHeight: 1.5 }}>
+              <b style={{ color: colors.text }}>Las facturas se emiten solas cada lunes</b>, una por semana (de lunes a domingo).
+              {textoProximaFactura(simFactura)}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Pedidos 7 días */}
@@ -717,38 +765,57 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12, fontSize: type.xs, color: colors.textMute }}>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10, fontSize: type.xs, color: colors.textMute }}>
             <span>Pendiente de cobro: <b style={{ color: colors.terracotta }}>{euro(totalFacturasPendientes)}</b></span>
             <span>Cobrado: <b style={{ color: colors.sage2 }}>{euro(totalCobrado)}</b></span>
           </div>
-          <Table head={['Número', 'Fecha', 'Pedidos', 'Estado', 'Total', '']}
-            cols="120px 1fr 80px 110px 100px 90px">
-            {historicoFacturas.map(f => {
-              const fb = stateBadge(f.estado === 'pagada' ? 'entregado' : 'pendiente')
+          {/* Una fila compacta por factura: la semana que liquida delante (lo que se busca),
+              número, pedidos y fecha de emisión debajo; importe y estado a la derecha. Antes
+              era una tabla que en el móvil ponía cada dato en su propia línea. */}
+          <div style={{ ...ds.card, padding: 0, overflow: 'hidden', marginBottom: 22 }}>
+            {historicoFacturas.map((f, i) => {
+              const pagada = f.estado === 'pagada'
+              const fb = stateBadge(pagada ? 'entregado' : 'pendiente')
               return (
-                <TableRow key={f.id} cols="120px 1fr 80px 110px 100px 90px">
-                  <span style={{ fontWeight: 600, color: colors.text, fontFamily: type.mono }}>{f.numero}</span>
-                  <span>{f.fecha_emision ? new Date(f.fecha_emision).toLocaleDateString('es-ES') : '—'}</span>
-                  <span>{f.pedidos_count}</span>
-                  <span>
-                    <span style={fb}>{f.estado === 'pagada' ? 'Pagada' : 'Pendiente'}</span>
-                  </span>
-                  <span style={{ fontWeight: 700, color: colors.text, fontVariantNumeric: 'tabular-nums' }}>{euro(f.total)}</span>
-                  <span>
-                    {f.pdf_url ? (
-                      <button onClick={() => abrirPDF(f.pdf_url)}
-                        style={{
-                          ...ds.secondaryBtn, height: 30, fontSize: 11, cursor: 'pointer',
-                          display: 'inline-flex', alignItems: 'center',
-                        }}>PDF</button>
-                    ) : (
-                      <span style={{ fontSize: 11, color: colors.textFaint }}>—</span>
-                    )}
-                  </span>
-                </TableRow>
+                <div key={f.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
+                  borderTop: i ? `1px solid ${colors.border}` : 'none',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: colors.textMute, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Liquidación
+                    </div>
+                    <div style={{ fontSize: type.sm, fontWeight: 700, color: colors.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {rangoPeriodo(f.periodo_inicio, f.periodo_fin)}
+                    </div>
+                    <div style={{ fontSize: 11, color: colors.textMute, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span style={{ fontFamily: type.mono }}>{f.numero}</span>
+                      {' · '}{f.pedidos_count} {f.pedidos_count === 1 ? 'pedido' : 'pedidos'}
+                    </div>
+                    <div style={{ fontSize: 11, color: colors.textFaint, marginTop: 1 }}>
+                      Emitida el {fechaCorta(f.fecha_emision)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                    <span style={{ fontSize: type.base, fontWeight: 800, color: colors.text, fontVariantNumeric: 'tabular-nums' }}>{euro(f.total)}</span>
+                    <span style={fb}>{pagada ? 'Pagada' : 'Pendiente'}</span>
+                  </div>
+                  {f.pdf_url ? (
+                    <button onClick={() => abrirPDF(f.pdf_url)} aria-label={`Ver PDF de la factura ${f.numero}`}
+                      style={{
+                        ...ds.secondaryBtn, height: 40, padding: '0 10px', fontSize: 10.5, cursor: 'pointer', flexShrink: 0,
+                        display: 'inline-flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
+                      }}>
+                      <FileText size={15} />
+                      PDF
+                    </button>
+                  ) : (
+                    <span style={{ width: 44, flexShrink: 0, textAlign: 'center', fontSize: 11, color: colors.textFaint }}>—</span>
+                  )}
+                </div>
               )
             })}
-          </Table>
+          </div>
         </>
       )}
 
@@ -795,7 +862,7 @@ export default function RestauranteDetalle({ establecimiento_id, onBack, hideBac
             <p style={{ fontSize: type.xs, color: colors.textMute, marginBottom: 16 }}>
               {nombre} · {preview.pedidos_count} {preview.pedidos_count === 1 ? 'pedido' : 'pedidos'}
               {preview.periodo_inicio && preview.periodo_fin && (
-                <> · {new Date(preview.periodo_inicio).toLocaleDateString('es-ES')} – {new Date(preview.periodo_fin).toLocaleDateString('es-ES')}</>
+                <> · {rangoPeriodo(preview.periodo_inicio, preview.periodo_fin)}</>
               )}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: type.sm, marginBottom: 16 }}>

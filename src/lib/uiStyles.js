@@ -4,10 +4,58 @@
 //
 // API: mantenemos nombres de tokens existentes (colors.bg, colors.primary, etc.)
 // para no romper imports. Solo cambian los valores hex.
+//
+// 5-oct-2026 — MODO OSCURO. Dos paletas (CLARO / OSCURO) con los MISMOS nombres de token.
+// El tema se decide UNA vez al arrancar (preferencia guardada + lo que diga el móvil) y
+// `colors` se llena con los hex de esa paleta. Se usan hex y no var(--…) a propósito: hay
+// colores que van a sitios donde una variable CSS no vale (atributos stroke/fill de los
+// iconos en el WebView de iPhone, canvas de los marcadores, Google Maps, la barra de estado
+// nativa). Cambiar de tema = guardar la preferencia y recargar la app (cambiarTema).
+// En oscuro `ink`/`text` pasan a ser CLAROS y `cream`/`paper` OSCUROS: los botones
+// "tinta + texto crema" se invierten solos. Nunca pongas '#fff' de texto sobre colors.ink.
+// La misma lógica (clave y media query) está duplicada en index.html para pintar el fondo
+// correcto antes de que cargue React: si se cambia aquí, cambiarla allí.
 
 const FONT = "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif"
 
-export const colors = {
+export const CLAVE_TEMA = 'pidoo_socio_tema' // 'auto' | 'claro' | 'oscuro'
+
+export function preferenciaTema() {
+  try {
+    const v = window.localStorage.getItem(CLAVE_TEMA)
+    return v === 'claro' || v === 'oscuro' ? v : 'auto'
+  } catch (_) { return 'auto' }
+}
+function sistemaOscuro() {
+  try { return !!window.matchMedia?.('(prefers-color-scheme: dark)').matches } catch (_) { return false }
+}
+export function temaEfectivo(pref = preferenciaTema()) {
+  return pref === 'auto' ? (sistemaOscuro() ? 'oscuro' : 'claro') : pref
+}
+// Tema con el que arrancó esta carga de la app. No cambia sin recargar.
+export const TEMA = temaEfectivo()
+export const esOscuro = TEMA === 'oscuro'
+
+// Guarda la preferencia y, si cambia el tema que se ve, recarga para repintar todo.
+export function cambiarTema(pref) {
+  try { window.localStorage.setItem(CLAVE_TEMA, pref) } catch (_) {}
+  if (temaEfectivo(pref) !== TEMA) window.location.reload()
+}
+
+// En "Automático": si el móvil cambió a claro/oscuro mientras la app estaba en segundo
+// plano, al volver se recarga con el tema nuevo. Nunca recarga con la app delante (el
+// socio podría estar cobrando o aceptando un pedido).
+export function vigilarTemaDelMovil() {
+  try {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && preferenciaTema() === 'auto' && temaEfectivo() !== TEMA) {
+        window.location.reload()
+      }
+    })
+  } catch (_) {}
+}
+
+const CLARO = {
   // === Bases (cream world) ===
   cream:    '#F7F3EC',
   cream2:   '#EFE9DD',
@@ -70,7 +118,96 @@ export const colors = {
   shadowMd: '0 4px 12px rgba(26,24,21,0.06), 0 1px 3px rgba(26,24,21,0.04)',
   shadowLg: '0 14px 40px rgba(26,24,21,0.10), 0 4px 12px rgba(26,24,21,0.06)',
   shadowGlossy: 'inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(26,24,21,0.20)',
+
+  // === 5-oct-2026: tonos que estaban escritos a mano en las pantallas ===
+  warningInk:    '#8B6126', // texto marrón sobre warningSoft (avisos)
+  warningStrong: '#B0763B', // "Pausado" / "En pausa"
+  errorBg:       '#FDE8E4', // banner de error de red
+  errorInk:      '#9B3412',
+  whatsappBg:    '#DCF8C6',
+  whatsappInk:   '#128C2E',
+  terracottaDeep: '#A8451F', // extremo oscuro de los degradados de botón (texto blanco encima)
 }
+
+// Misma familia cálida en oscuro: fondo marrón casi negro (no negro puro), tinta crema,
+// terracota algo más viva para que se lea sobre fondo oscuro sin perder el texto blanco
+// de los botones.
+const OSCURO = {
+  cream:    '#14120F',
+  cream2:   '#221F1A',
+  paper:    '#1C1915',
+
+  ink:      '#F3EDE3',
+  ink2:     '#DCD4C7',
+  stone:    '#A89F91',
+  stone2:   '#857C70',
+
+  terracotta:      '#D46A40',
+  terracotta2:     '#EE9670',
+  terracottaSoft:  '#3B241A',
+
+  sage:      '#9AAE88',
+  sage2:     '#B5C7A3',
+  sageSoft:  '#232A1E',
+
+  info:        '#98ABC4',
+  infoSoft:    '#1E2531',
+  danger:      '#E2806F',
+  dangerSoft:  '#3B201C',
+  warning:     '#DDAA63',
+  warningSoft: '#33291A',
+
+  bg:           '#14120F',
+  surface:      '#1C1915',
+  surface2:     '#221F1A',
+  elev:         '#1C1915',
+  elev2:        '#221F1A',
+  border:       '#2F2B25',
+  borderStrong: '#423C33',
+
+  text:      '#F3EDE3',
+  textDim:   '#DCD4C7',
+  textMute:  '#A89F91',
+  textFaint: '#857C70',
+
+  primary:       '#D46A40',
+  primaryDark:   '#EE9670',
+  primarySoft:   '#3B241A',
+  primaryBorder: 'rgba(212,106,64,0.40)',
+
+  stateNew:        '#E2806F',
+  stateNewSoft:    '#3B201C',
+  statePrep:       '#DDAA63',
+  statePrepSoft:   '#33291A',
+  stateOk:         '#9AAE88',
+  stateOkSoft:     '#232A1E',
+  stateNeutral:    '#A89F91',
+  stateNeutralSoft:'#26231E',
+
+  dangerText: '#EE9670',
+
+  shadow:   '0 1px 3px rgba(0,0,0,0.35), 0 1px 1px rgba(0,0,0,0.25)',
+  shadowMd: '0 4px 12px rgba(0,0,0,0.40), 0 1px 3px rgba(0,0,0,0.30)',
+  shadowLg: '0 14px 40px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35)',
+  shadowGlossy: 'inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(0,0,0,0.50)',
+
+  warningInk:    '#E7BF85',
+  warningStrong: '#E0AE6E',
+  errorBg:       '#3B201C',
+  errorInk:      '#F2A48F',
+  whatsappBg:    '#1D3324',
+  whatsappInk:   '#7CD596',
+  terracottaDeep: '#A9502B',
+}
+
+export const colors = { ...(esOscuro ? OSCURO : CLARO) }
+
+// index.css y index.html leen data-theme (fondo del body, variables --c-*).
+try {
+  document.documentElement.setAttribute('data-theme', esOscuro ? 'dark' : 'light')
+  document.documentElement.style.colorScheme = esOscuro ? 'dark' : 'light'
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors.cream)
+} catch (_) {}
 
 export const type = {
   xxs: 11, xs: 12, sm: 13, base: 15, lg: 18, xl: 22,
@@ -107,7 +244,7 @@ export const ds = {
   glossyBtn: {
     padding: '0 18px', height: 42, borderRadius: radius.sm,
     background: `linear-gradient(180deg, ${colors.ink2} 0%, ${colors.ink} 100%)`,
-    color: colors.cream, border: '1px solid #000',
+    color: colors.cream, border: `1px solid ${esOscuro ? colors.ink2 : '#000'}`,
     boxShadow: colors.shadowGlossy,
     fontSize: type.sm, fontWeight: 600, cursor: 'pointer', fontFamily: FONT,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,

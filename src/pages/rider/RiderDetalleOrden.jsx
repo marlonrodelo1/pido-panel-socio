@@ -484,7 +484,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
               <a
                 href={waLink(telefonoCliente, pedido.codigo)}
                 target="_blank" rel="noopener noreferrer"
-                style={contactBtn('#DCF8C6', '#128C2E')}
+                style={contactBtn(colors.whatsappBg, colors.whatsappInk)}
               >
                 <MessageCircle size={15} strokeWidth={2.4} /> WhatsApp
               </a>
@@ -563,7 +563,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
               <div style={{
                 display: 'flex', gap: 8, alignItems: 'flex-start',
                 padding: '10px 12px', borderRadius: 10,
-                background: colors.warningSoft, color: '#8B6126',
+                background: colors.warningSoft, color: colors.warningInk,
                 fontSize: 12.5, fontWeight: 700, lineHeight: 1.4,
               }}>
                 <TriangleAlert size={16} strokeWidth={2.4} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -613,7 +613,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                   <>
                     <button onClick={cobrarConTarjeta} disabled={ocupado} style={{
                       ...primaryBtn(ocupado),
-                      background: colors.ink,
+                      background: colors.ink, color: colors.cream,
                       boxShadow: '0 8px 18px rgba(26,24,21,0.22), inset 0 1px 0 rgba(255,255,255,0.12)',
                     }}>
                       <CreditCard size={17} strokeWidth={2.4} />
@@ -634,7 +634,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                       <div style={{
                         display: 'flex', flexDirection: 'column', gap: 6,
                         padding: '9px 12px', borderRadius: 10,
-                        background: colors.warningSoft, color: '#8B6126',
+                        background: colors.warningSoft, color: colors.warningInk,
                         fontSize: 12, fontWeight: 700, lineHeight: 1.4,
                       }}>
                         {!reqMovil.nfcActivado && <span>El NFC está apagado: actívalo para cobrar con tarjeta.</span>}
@@ -642,7 +642,7 @@ export default function RiderDetalleOrden({ pedido: initial, onBack }) {
                         {!reqMovil.nfcActivado && (
                           <button onClick={abrirAjustesNfc} style={{
                             alignSelf: 'flex-start', padding: '6px 10px', borderRadius: 999,
-                            border: '1px solid #C99551', background: colors.paper, color: '#8B6126',
+                            border: `1px solid ${colors.warning}`, background: colors.paper, color: colors.warningInk,
                             fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Plus Jakarta Sans', sans-serif",
                           }}>Abrir ajustes de NFC</button>
                         )}
@@ -805,8 +805,8 @@ function GananciaCard({ pedido, pacto }) {
 // forma de pago que eligió el cliente, que es lo que el socio necesita en la puerta.
 const TONOS_PAGO = {
   ok:        { bg: colors.sageSoft,    fg: colors.sage2 },
-  aviso:     { bg: colors.warningSoft, fg: '#8B6126' },
-  pendiente: { bg: colors.warningSoft, fg: '#8B6126' },
+  aviso:     { bg: colors.warningSoft, fg: colors.warningInk },
+  pendiente: { bg: colors.warningSoft, fg: colors.warningInk },
   error:     { bg: colors.dangerSoft,  fg: colors.danger },
   neutro:    { bg: colors.cream2,      fg: colors.stone },
 }
@@ -975,7 +975,7 @@ function contactBtn(bg, color) {
 function primaryBtn(disabled) {
   return {
     width: '100%', padding: '14px', borderRadius: 14, border: 'none',
-    background: `linear-gradient(180deg, ${colors.terracotta}, ${colors.terracotta2})`,
+    background: `linear-gradient(180deg, ${colors.terracotta}, ${colors.terracottaDeep})`,
     color: '#fff', fontSize: 15, fontWeight: 800,
     cursor: disabled ? 'wait' : 'pointer', fontFamily: "'Plus Jakarta Sans', sans-serif",
     boxShadow: '0 8px 18px rgba(197,86,44,0.30), inset 0 1px 0 rgba(255,255,255,0.18)',

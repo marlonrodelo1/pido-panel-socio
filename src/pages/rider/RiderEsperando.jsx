@@ -1,76 +1,22 @@
 // RiderEsperando — Pantalla por defecto cuando rider está online esperando.
-// Muestra estado, último GPS, fuentes de pedidos y restaurantes vinculados.
-// 18-jul-2026 (autonomía del socio): toggle por restaurante (reparto_activo del
-// vínculo) + toggles de fuentes (acepta_marketplace/telefonicos/app en socios).
-// Ambos optimistas: la UI cambia YA y el update corre detrás; si falla, revierte.
+// Muestra estado, último GPS y restaurantes vinculados.
+// 18-jul-2026 (autonomía del socio): toggle por restaurante (reparto_activo del vínculo),
+// que vive en el detalle de cada restaurante.
+// 5-oct-2026: fuera la tarjeta "Fuentes de pedidos" (socios.acepta_app/marketplace/
+// telefonicos). Desde el 28-sep el telefónico paga lo mismo que la app, así que ya no había
+// nada que elegir por vía: el socio decide por RESTAURANTE (apagarlo = no recibe sus pedidos
+// por ninguna vía y deja de salir en su marketplace). Las columnas siguen en BD, todas a
+// true, y los edges las siguen leyendo con `!== false`.
 import { useEffect, useState } from 'react'
-import { Bike, MapPin, AlertCircle, X, Store, Phone, Smartphone, ChevronRight } from 'lucide-react'
+import { Bike, MapPin, AlertCircle, X, ChevronRight } from 'lucide-react'
 import { useRider } from '../../context/RiderContext'
 import { supabase } from '../../lib/supabase'
 import { colors } from '../../lib/uiStyles'
-import { useTelefonicoCobraComision } from '../../lib/ganancia'
-
-// Switch pequeño estilo pill. Cambia al instante (el guardado corre detrás).
-function Switch({ on, onToggle, ariaLabel }) {
-  return (
-    <button
-      onClick={onToggle}
-      aria-label={ariaLabel}
-      role="switch"
-      aria-checked={on}
-      style={{
-        width: 42, height: 24, borderRadius: 999, border: 'none', padding: 2,
-        background: on ? colors.sage : colors.stone2, cursor: 'pointer',
-        display: 'flex', alignItems: 'center', flexShrink: 0,
-        justifyContent: on ? 'flex-end' : 'flex-start',
-        transition: 'background .15s',
-      }}
-    >
-      <span style={{
-        width: 20, height: 20, borderRadius: '50%', background: '#fff',
-        boxShadow: '0 1px 3px rgba(26,24,21,0.25)',
-      }} />
-    </button>
-  )
-}
-
-const FUENTES = [
-  {
-    campo: 'acepta_app', icono: Smartphone, titulo: 'App y tienda del restaurante',
-    desc: 'Pedidos de la app Pidoo y de la web del restaurante.',
-    off: 'No recibirás pedidos de la app ni de las tiendas.',
-  },
-  {
-    campo: 'acepta_marketplace', icono: Store, titulo: 'Mi marketplace',
-    desc: 'Pedidos de tu propia tienda pública.',
-    off: 'Tus clientes del marketplace no podrán pedir a domicilio.',
-  },
-  {
-    campo: 'acepta_telefonicos', icono: Phone, titulo: 'Pedidos telefónicos',
-    // 28-sep-2026: con la clave del cambio (comision_telefonico_pct_desde) el telefónico
-    // se cobra lo pactado, como la app. Sin ella, el texto de siempre (descSinComision).
-    desc: 'Pedidos que el restaurante toma por teléfono · cobras lo pactado, como en la app.',
-    descSinComision: 'Envíos que crea el restaurante · solo envío, sin comisión.',
-    off: 'Los restaurantes no podrán mandarte envíos telefónicos.',
-  },
-]
 
 export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
-  const { socio, isOnline, needsLocation, actionError, retryLocation, clearActionError, asignacionesActivas } = useRider() || {}
-  const telConComision = useTelefonicoCobraComision()
+  const { socio, isOnline, needsLocation, actionError, retryLocation, clearActionError, asignacionesActivas, problemasMovil, revisarMovil } = useRider() || {}
   const [restaurantes, setRestaurantes] = useState([])
   const [retrying, setRetrying] = useState(false)
-  // Fuentes: estado local optimista, sembrado desde la fila socios (default true).
-  const [fuentes, setFuentes] = useState({ acepta_app: true, acepta_marketplace: true, acepta_telefonicos: true })
-
-  useEffect(() => {
-    if (!socio) return
-    setFuentes({
-      acepta_app: socio.acepta_app !== false,
-      acepta_marketplace: socio.acepta_marketplace !== false,
-      acepta_telefonicos: socio.acepta_telefonicos !== false,
-    })
-  }, [socio?.id, socio?.acepta_app, socio?.acepta_marketplace, socio?.acepta_telefonicos])
 
   useEffect(() => {
     if (!socio?.id) return
@@ -88,18 +34,6 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
     return () => { cancel = true }
   }, [socio?.id, isOnline])
 
-  // Toggle de fuente (optimista sobre socios.acepta_*).
-  async function toggleFuente(campo) {
-    const next = !fuentes[campo]
-    setFuentes(prev => ({ ...prev, [campo]: next }))
-    const { error } = await supabase.from('socios')
-      .update({ [campo]: next }).eq('id', socio.id)
-    if (error) {
-      console.error('[RiderEsperando] toggle fuente fallo:', error.message)
-      setFuentes(prev => ({ ...prev, [campo]: !next }))
-    }
-  }
-
   return (
     <div style={{
       padding: '16px 16px calc(80px + env(safe-area-inset-bottom, 0px))',
@@ -108,7 +42,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
       {!isOnline && (
         <div style={{
           padding: '14px 16px', borderRadius: 14, marginBottom: 14,
-          background: colors.warningSoft, color: '#8B6126',
+          background: colors.warningSoft, color: colors.warningInk,
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}>
           <AlertCircle size={18} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -121,11 +55,39 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
         </div>
       )}
 
+      {/* v307: En línea, pero el móvil ya no está preparado (quitó el sonido, bajó la alarma,
+          el sistema reseteó un permiso...). Se mira cada vez que vuelve a la app. */}
+      {isOnline && problemasMovil?.length > 0 && (
+        <div style={{
+          padding: '14px 16px', borderRadius: 14, marginBottom: 14,
+          background: colors.errorBg, color: colors.errorInk,
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <AlertCircle size={18} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>Puede que no te suenen los pedidos</div>
+            <div style={{ fontSize: 12, marginTop: 2, opacity: 0.9 }}>
+              {(() => { const t = problemasMovil.map((p) => p.corto || p.titulo).join(', '); return t.charAt(0).toUpperCase() + t.slice(1) + '.' })()}
+            </div>
+            <button
+              onClick={() => revisarMovil?.()}
+              style={{
+                marginTop: 10, padding: '8px 14px', borderRadius: 999, border: 'none',
+                background: colors.errorInk, color: colors.cream, fontWeight: 700, fontSize: 12,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Arreglarlo
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Error de red al conectar/desconectar (desechable) */}
       {actionError && (
         <div style={{
           padding: '12px 14px', borderRadius: 14, marginBottom: 14,
-          background: '#FDE8E4', color: '#9B3412',
+          background: colors.errorBg, color: colors.errorInk,
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}>
           <AlertCircle size={18} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -143,7 +105,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
       {isOnline && needsLocation && (
         <div style={{
           padding: '14px 16px', borderRadius: 14, marginBottom: 14,
-          background: colors.warningSoft, color: '#8B6126',
+          background: colors.warningSoft, color: colors.warningInk,
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}>
           <MapPin size={18} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -157,7 +119,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
               disabled={retrying}
               style={{
                 marginTop: 10, padding: '8px 14px', borderRadius: 999, border: 'none',
-                background: '#8B6126', color: '#fff', fontWeight: 700, fontSize: 12,
+                background: colors.warningInk, color: colors.cream, fontWeight: 700, fontSize: 12,
                 cursor: retrying ? 'wait' : 'pointer', opacity: retrying ? 0.7 : 1,
                 fontFamily: 'inherit',
               }}
@@ -177,7 +139,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             color: colors.sage2, fontWeight: 700, fontSize: 11,
-            background: '#fff', padding: '4px 10px', borderRadius: 999,
+            background: colors.paper, padding: '4px 10px', borderRadius: 999,
             marginBottom: 10,
           }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: colors.sage }} />
@@ -226,49 +188,6 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
         </div>
       )}
 
-      {/* Fuentes de pedidos: el socio decide de qué vías acepta pedidos. */}
-      <div style={{ marginBottom: 18 }}>
-        <div style={{
-          fontSize: 11, fontWeight: 700, color: colors.stone,
-          textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8,
-        }}>
-          Fuentes de pedidos
-        </div>
-        <div style={{
-          borderRadius: 12, background: colors.paper,
-          border: `1px solid ${colors.border}`, overflow: 'hidden',
-        }}>
-          {FUENTES.map((f, i) => {
-            const Icono = f.icono
-            const on = fuentes[f.campo]
-            return (
-              <div key={f.campo} style={{
-                display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px',
-                borderTop: i > 0 ? `1px solid ${colors.border}` : 'none',
-              }}>
-                <div style={{
-                  width: 34, height: 34, borderRadius: 10, flexShrink: 0,
-                  background: on ? colors.sageSoft : colors.cream2,
-                  color: on ? colors.sage2 : colors.stone2,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Icono size={16} strokeWidth={2.2} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: on ? colors.ink : colors.stone }}>
-                    {f.titulo}
-                  </div>
-                  <div style={{ fontSize: 11, color: on ? colors.stone : '#B0763B', marginTop: 1, lineHeight: 1.35 }}>
-                    {on ? ((f.descSinComision && !telConComision) ? f.descSinComision : f.desc) : f.off}
-                  </div>
-                </div>
-                <Switch on={on} onToggle={() => toggleFuente(f.campo)} ariaLabel={f.titulo} />
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
       <div>
         <div style={{
           fontSize: 11, fontWeight: 700, color: colors.stone,
@@ -309,7 +228,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
                 }}>{r.nombre}</div>
                 <div style={{
                   fontSize: 11, marginTop: 1,
-                  color: r._repartoActivo ? colors.stone : '#B0763B',
+                  color: r._repartoActivo ? colors.stone : colors.warningStrong,
                   display: 'flex', alignItems: 'center', gap: 4,
                 }}>
                   {r._repartoActivo ? (
@@ -327,7 +246,7 @@ export default function RiderEsperando({ onOpenPedido, onOpenRestaurante }) {
               {/* Badge "Pausado" + chevron. El on/off vive ahora en el detalle. */}
               {r._estado === 'activa' && !r._repartoActivo && (
                 <span style={{
-                  fontSize: 10, fontWeight: 800, color: '#B0763B',
+                  fontSize: 10, fontWeight: 800, color: colors.warningStrong,
                   background: colors.warningSoft, padding: '3px 8px',
                   borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
                 }}>Pausado</span>
